@@ -7,9 +7,15 @@ el bucle principal del juego.
 """
 
 import math
+import os
 import random
 
 import pygame
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover - opcional para la intro
+    cv2 = None
 
 from personaje import PersonajeHumanoide
 from plataformas import Plataforma, color_desde_hue
@@ -23,9 +29,62 @@ FPS = 60
 
 POS_SPAWN = pygame.Vector2(120, 235)  # centro del punto de aparición del jugador
 
+ESTADO_MENU = "menu"
 ESTADO_JUGANDO = "jugando"
 ESTADO_TRANSICION = "transicion"
 ESTADO_GAME_OVER = "game_over"
+
+
+class IntroVideo:
+    """Reproduce un video de la carpeta assets como menú inicial."""
+
+    def __init__(self, ruta):
+        self.ruta = ruta
+        self.cap = None
+        self.frame_actual = None
+        self.ultimo_frame = 0
+        self._cargar()
+
+    def _cargar(self):
+        if cv2 is None:
+            return
+        self.cap = cv2.VideoCapture(self.ruta)
+        if not self.cap.isOpened():
+            self.cap = None
+            return
+        self._avanzar_frame()
+
+    def _avanzar_frame(self):
+        if self.cap is None:
+            return
+        ok, frame = self.cap.read()
+        if not ok:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ok, frame = self.cap.read()
+        if not ok:
+            self.frame_actual = None
+            return
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self.frame_actual = pygame.image.frombuffer(
+            frame_rgb.tobytes(),
+            (frame.shape[1], frame.shape[0]),
+            "RGB",
+        )
+        self.ultimo_frame = pygame.time.get_ticks()
+
+    def actualizar(self):
+        if self.cap is None or self.frame_actual is None:
+            return
+        ahora = pygame.time.get_ticks()
+        if ahora - self.ultimo_frame >= 1000 // 24:
+            self._avanzar_frame()
+
+    def dibujar(self, superficie):
+        if self.frame_actual is None:
+            superficie.fill((12, 12, 18))
+            return
+        frame = pygame.transform.smoothscale(self.frame_actual, (WIDTH, HEIGHT))
+        superficie.blit(frame, (0, 0))
 
 
 # --------------------------------------------------------------------------
@@ -242,8 +301,9 @@ def main():
     jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
     jugador.rect.center = POS_SPAWN
 
-    estado = ESTADO_JUGANDO
+    estado = ESTADO_MENU
     transicion = None
+    intro = IntroVideo(os.path.join("assets", "image-ezgif.com-gif-to-mp4-converter.mp4"))
 
     jugando = True
     while jugando:
@@ -254,7 +314,9 @@ def main():
             if evento.type == pygame.QUIT:
                 jugando = False
             if evento.type == pygame.KEYDOWN:
-                if estado == ESTADO_JUGANDO and evento.key in (pygame.K_SPACE, pygame.K_UP, pygame.K_w):
+                if estado == ESTADO_MENU:
+                    estado = ESTADO_JUGANDO
+                elif estado == ESTADO_JUGANDO and evento.key in (pygame.K_SPACE, pygame.K_UP, pygame.K_w):
                     jugador.saltar()
                 elif estado == ESTADO_GAME_OVER and evento.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
                     nivel = 0
@@ -266,19 +328,23 @@ def main():
             if (
                 evento.type == pygame.MOUSEBUTTONDOWN
                 and evento.button == pygame.BUTTON_LEFT
-                and estado == ESTADO_GAME_OVER
-                and boton_reintentar.collidepoint(evento.pos)
             ):
-                nivel = 0
-                plataformas, hue_fondo, hue_jugador = generar_nivel(nivel)
-                jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
-                jugador.rect.center = POS_SPAWN
-                transicion = None
-                estado = ESTADO_JUGANDO
+                if estado == ESTADO_MENU:
+                    estado = ESTADO_JUGANDO
+                elif estado == ESTADO_GAME_OVER and boton_reintentar.collidepoint(evento.pos):
+                    nivel = 0
+                    plataformas, hue_fondo, hue_jugador = generar_nivel(nivel)
+                    jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
+                    jugador.rect.center = POS_SPAWN
+                    transicion = None
+                    estado = ESTADO_JUGANDO
 
         # Durante la transición se bloquean los controles y solo se actualiza
         # la entrada visual del jugador al nuevo nivel.
-        if estado == ESTADO_JUGANDO:
+        if estado == ESTADO_MENU:
+            if intro is not None:
+                intro.actualizar()
+        elif estado == ESTADO_JUGANDO:
             jugador.mover(plataformas)
             alpha_overlay = 0
 
@@ -324,39 +390,52 @@ def main():
                 estado = ESTADO_JUGANDO
 
         # --- Renderizado ---
-        dibujar_fondo_segmentado(screen, tiempo, hue_fondo)
+        if estado == ESTADO_MENU:
+            if intro is not None:
+                intro.dibujar(screen)
+            else:
+                dibujar_fondo_segmentado(screen, tiempo, hue_fondo)
+            overlay = pygame.Surface((WIDTH, 90), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 130))
+            screen.blit(overlay, (0, HEIGHT - 90))
+            titulo = font.render("PLATAFORMAS PROCEDURALES", True, (255, 255, 255))
+            screen.blit(titulo, titulo.get_rect(center=(WIDTH // 2, HEIGHT - 56)))
+            instruccion = font.render("PULSA CUALQUIER TECLA O CLICK PARA EMPEZAR", True, (240, 240, 240))
+            screen.blit(instruccion, instruccion.get_rect(center=(WIDTH // 2, HEIGHT - 24)))
+        else:
+            dibujar_fondo_segmentado(screen, tiempo, hue_fondo)
 
-        for particula in particulas:
-            particula.actualizar()
-            particula.dibujar(screen, tiempo)
+            for particula in particulas:
+                particula.actualizar()
+                particula.dibujar(screen, tiempo)
 
-        for plataforma in plataformas:
-            if estado != ESTADO_GAME_OVER:
-                plataforma.actualizar()
-            plataforma.dibujar(screen, tiempo, nivel)
+            for plataforma in plataformas:
+                if estado != ESTADO_GAME_OVER:
+                    plataforma.actualizar()
+                plataforma.dibujar(screen, tiempo, nivel)
 
-        jugador.dibujar(screen)
+            jugador.dibujar(screen)
 
-        if estado == ESTADO_TRANSICION:
-            transicion.dibujar(screen)
+            if estado == ESTADO_TRANSICION:
+                transicion.dibujar(screen)
 
-        panel_texto = pygame.Surface((110, 36), pygame.SRCALPHA)
-        panel_texto.fill((0, 0, 0, 90))
-        screen.blit(panel_texto, (6, 6))
-        texto = font.render(f"Nivel: {nivel}", True, (255, 255, 255))
-        screen.blit(texto, (14, 10))
+            panel_texto = pygame.Surface((110, 36), pygame.SRCALPHA)
+            panel_texto.fill((0, 0, 0, 90))
+            screen.blit(panel_texto, (6, 6))
+            texto = font.render(f"Nivel: {nivel}", True, (255, 255, 255))
+            screen.blit(texto, (14, 10))
 
-        if estado == ESTADO_GAME_OVER:
-            mensaje = font.render("FELICIDADES - la trampa te ha tragado", True, (255, 245, 245))
-            screen.blit(mensaje, mensaje.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 25)))
+            if estado == ESTADO_GAME_OVER:
+                mensaje = font.render("FELICIDADES - la trampa te ha tragado", True, (255, 245, 245))
+                screen.blit(mensaje, mensaje.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 25)))
 
-            color_boton = (36, 28, 55)
-            if boton_reintentar.collidepoint(pygame.mouse.get_pos()):
-                color_boton = (65, 45, 92)
-            pygame.draw.rect(screen, color_boton, boton_reintentar, border_radius=8)
-            pygame.draw.rect(screen, (255, 245, 245), boton_reintentar, 2, border_radius=8)
-            texto_boton = font.render("VOLVER A INTENTAR", True, (255, 255, 255))
-            screen.blit(texto_boton, texto_boton.get_rect(center=boton_reintentar.center))
+                color_boton = (36, 28, 55)
+                if boton_reintentar.collidepoint(pygame.mouse.get_pos()):
+                    color_boton = (65, 45, 92)
+                pygame.draw.rect(screen, color_boton, boton_reintentar, border_radius=8)
+                pygame.draw.rect(screen, (255, 245, 245), boton_reintentar, 2, border_radius=8)
+                texto_boton = font.render("VOLVER A INTENTAR", True, (255, 255, 255))
+                screen.blit(texto_boton, texto_boton.get_rect(center=boton_reintentar.center))
 
         pygame.display.flip()
 

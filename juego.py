@@ -7,16 +7,11 @@ el bucle principal del juego.
 """
 
 import math
-import os
 import random
 
 import pygame
 
-try:
-    import cv2
-except ImportError:  # pragma: no cover - opcional para la intro
-    cv2 = None
-
+from menu import MenuInicio
 from personaje import PersonajeHumanoide
 from plataformas import Plataforma, color_desde_hue
 from transicion import TransicionCaricaturesca
@@ -33,58 +28,6 @@ ESTADO_MENU = "menu"
 ESTADO_JUGANDO = "jugando"
 ESTADO_TRANSICION = "transicion"
 ESTADO_GAME_OVER = "game_over"
-
-
-class IntroVideo:
-    """Reproduce un video de la carpeta assets como menú inicial."""
-
-    def __init__(self, ruta):
-        self.ruta = ruta
-        self.cap = None
-        self.frame_actual = None
-        self.ultimo_frame = 0
-        self._cargar()
-
-    def _cargar(self):
-        if cv2 is None:
-            return
-        self.cap = cv2.VideoCapture(self.ruta)
-        if not self.cap.isOpened():
-            self.cap = None
-            return
-        self._avanzar_frame()
-
-    def _avanzar_frame(self):
-        if self.cap is None:
-            return
-        ok, frame = self.cap.read()
-        if not ok:
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ok, frame = self.cap.read()
-        if not ok:
-            self.frame_actual = None
-            return
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        self.frame_actual = pygame.image.frombuffer(
-            frame_rgb.tobytes(),
-            (frame.shape[1], frame.shape[0]),
-            "RGB",
-        )
-        self.ultimo_frame = pygame.time.get_ticks()
-
-    def actualizar(self):
-        if self.cap is None or self.frame_actual is None:
-            return
-        ahora = pygame.time.get_ticks()
-        if ahora - self.ultimo_frame >= 1000 // 24:
-            self._avanzar_frame()
-
-    def dibujar(self, superficie):
-        if self.frame_actual is None:
-            superficie.fill((12, 12, 18))
-            return
-        frame = pygame.transform.smoothscale(self.frame_actual, (WIDTH, HEIGHT))
-        superficie.blit(frame, (0, 0))
 
 
 # --------------------------------------------------------------------------
@@ -303,8 +246,7 @@ def main():
 
     estado = ESTADO_MENU
     transicion = None
-    intro = IntroVideo(os.path.join("assets", "image-ezgif.com-gif-to-mp4-converter.mp4"))
-
+    menu = MenuInicio(WIDTH, HEIGHT)
     jugando = True
     while jugando:
         clock.tick(FPS)
@@ -313,37 +255,38 @@ def main():
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
                 jugando = False
-            if evento.type == pygame.KEYDOWN:
-                if estado == ESTADO_MENU:
+            if estado == ESTADO_MENU:
+                accion_menu = menu.manejar_evento(evento)
+                if accion_menu == "jugar":
                     estado = ESTADO_JUGANDO
-                elif estado == ESTADO_JUGANDO and evento.key in (pygame.K_SPACE, pygame.K_UP, pygame.K_w):
-                    jugador.saltar()
-                elif estado == ESTADO_GAME_OVER and evento.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
-                    nivel = 0
-                    plataformas, hue_fondo, hue_jugador = generar_nivel(nivel)
-                    jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
-                    jugador.rect.center = POS_SPAWN
-                    transicion = None
-                    estado = ESTADO_JUGANDO
+                elif accion_menu == "salir":
+                    jugando = False
+            if estado == ESTADO_JUGANDO and evento.type == pygame.KEYDOWN and evento.key in (pygame.K_SPACE, pygame.K_UP, pygame.K_w):
+                jugador.saltar()
+            elif estado == ESTADO_GAME_OVER and evento.type == pygame.KEYDOWN and evento.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
+                nivel = 0
+                plataformas, hue_fondo, hue_jugador = generar_nivel(nivel)
+                jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
+                jugador.rect.center = POS_SPAWN
+                transicion = None
+                estado = ESTADO_JUGANDO
             if (
                 evento.type == pygame.MOUSEBUTTONDOWN
                 and evento.button == pygame.BUTTON_LEFT
+                and estado == ESTADO_GAME_OVER
+                and boton_reintentar.collidepoint(evento.pos)
             ):
-                if estado == ESTADO_MENU:
-                    estado = ESTADO_JUGANDO
-                elif estado == ESTADO_GAME_OVER and boton_reintentar.collidepoint(evento.pos):
-                    nivel = 0
-                    plataformas, hue_fondo, hue_jugador = generar_nivel(nivel)
-                    jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
-                    jugador.rect.center = POS_SPAWN
-                    transicion = None
-                    estado = ESTADO_JUGANDO
+                nivel = 0
+                plataformas, hue_fondo, hue_jugador = generar_nivel(nivel)
+                jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
+                jugador.rect.center = POS_SPAWN
+                transicion = None
+                estado = ESTADO_JUGANDO
 
         # Durante la transición se bloquean los controles y solo se actualiza
         # la entrada visual del jugador al nuevo nivel.
         if estado == ESTADO_MENU:
-            if intro is not None:
-                intro.actualizar()
+            menu.actualizar()
         elif estado == ESTADO_JUGANDO:
             jugador.mover(plataformas)
             alpha_overlay = 0
@@ -391,17 +334,7 @@ def main():
 
         # --- Renderizado ---
         if estado == ESTADO_MENU:
-            if intro is not None:
-                intro.dibujar(screen)
-            else:
-                dibujar_fondo_segmentado(screen, tiempo, hue_fondo)
-            overlay = pygame.Surface((WIDTH, 90), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 130))
-            screen.blit(overlay, (0, HEIGHT - 90))
-            titulo = font.render("PLATAFORMAS PROCEDURALES", True, (255, 255, 255))
-            screen.blit(titulo, titulo.get_rect(center=(WIDTH // 2, HEIGHT - 56)))
-            instruccion = font.render("PULSA CUALQUIER TECLA O CLICK PARA EMPEZAR", True, (240, 240, 240))
-            screen.blit(instruccion, instruccion.get_rect(center=(WIDTH // 2, HEIGHT - 24)))
+            menu.dibujar(screen, pygame.mouse.get_pos())
         else:
             dibujar_fondo_segmentado(screen, tiempo, hue_fondo)
 

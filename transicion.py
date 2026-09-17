@@ -182,7 +182,6 @@ class TransicionCaricaturesca:
             escala_x = 0.35 + fase * 1.15
             escala_y = 0.18 + fase * 1.05
             inclinacion = math.sin(fase * math.pi) * 10
-            estado_boca = "sorpresa"
             gesto = fase
         else:
             entrada = self._suave((transcurrido - self.DURACION_SALIDA) / self.DURACION_ENTRADA)
@@ -191,7 +190,6 @@ class TransicionCaricaturesca:
             escala_x = 0.5 + rebote * 0.9
             escala_y = 0.4 + rebote * 0.85
             inclinacion = math.sin(entrada * math.pi * 2.2) * (1.0 - entrada) * 14
-            estado_boca = "sonrisa"
             gesto = 1.0 - entrada
 
         # Cortina de color que se abre/cierra, ahora tintada con el
@@ -234,9 +232,9 @@ class TransicionCaricaturesca:
         )
 
         self._dibujar_cejas(cara, centro_cara, ancho, alto, gesto, paleta, grosor)
-        self._dibujar_ojos(cara, centro_cara, ancho, alto, paleta, grosor)
+        self._dibujar_ojos(cara, centro_cara, ancho, alto, gesto, paleta, grosor)
         self._dibujar_nariz(cara, centro_cara, ancho, alto, paleta, grosor)
-        self._dibujar_boca(cara, centro_cara, ancho, alto, progreso, estado_boca, paleta, grosor)
+        self._dibujar_boca(cara, centro_cara, ancho, alto, gesto, paleta, grosor)
 
         cara_rotada = pygame.transform.rotate(cara, inclinacion)
         destino = centro - pygame.Vector2(cara_rotada.get_width() / 2, cara_rotada.get_height() / 2)
@@ -294,12 +292,17 @@ class TransicionCaricaturesca:
         # Maddocks, no una ceja gruesa pegada al ojo.
         separacion = ancho * 0.26
         y = centro.y - alto * 0.30 - gesto * alto * 0.06
-        largo = ancho * 0.22
-        arco = largo * (0.55 + gesto * 0.55)
+        largo = ancho * 0.24
+        # Un arco más contenido (antes llegaba a 1.1x): con gesto=1 el
+        # arco original formaba un pico puntiagudo en vez de una ceja
+        # arqueada, que es justo el instante de mayor sorpresa y donde
+        # más se notaba lo "raro" del gesto.
+        arco = largo * (0.45 + gesto * 0.35)
         grosor_ceja = max(4, int(grosor * 0.75))
         for lado in (-1, 1):
-            # Ligera asimetría entre cejas para que no se vea calcado.
-            asimetria = 1.0 if lado < 0 else 1.12
+            # Ligera asimetría entre cejas para que no se vea calcado,
+            # pero moderada para no rozar el "ojo bizco" en el pico del gesto.
+            asimetria = 1.0 if lado < 0 else 1.06
             x = centro.x + lado * separacion
             p0 = (x - lado * largo / 2, y + arco * 0.30)
             p1 = (x + lado * largo * 0.05, y - arco * asimetria)
@@ -307,11 +310,14 @@ class TransicionCaricaturesca:
             puntos = self._bezier_cuadratica(p0, p1, p2, pasos=8)
             pygame.draw.lines(superficie, paleta["tinta"], False, puntos, grosor_ceja)
 
-    def _dibujar_ojos(self, superficie, centro, ancho, alto, paleta, grosor):
+    def _dibujar_ojos(self, superficie, centro, ancho, alto, gesto, paleta, grosor):
         # Ojos enormes, muy redondos y ligeramente asimétricos (uno un
         # poco más grande que el otro), con pupila grande y central: la
         # mirada bien abierta y algo boba de los personajes de Maddocks.
-        ojo_cerrado = math.sin(self.parpadeo) > 0.86
+        # El parpadeo se desactiva cerca del pico del gesto: parpadear
+        # justo en el instante de mayor sorpresa se veía como un glitch
+        # (ojos cerrados sobre una boca de shock bien abierta).
+        ojo_cerrado = math.sin(self.parpadeo) > 0.86 and gesto < 0.4
         y = centro.y - alto * 0.16
         separacion = ancho * 0.25
         radio_base = max(13, ancho * 0.165)
@@ -368,50 +374,60 @@ class TransicionCaricaturesca:
                 (x - ancho * 0.10, y - alto * 0.06, ancho * 0.20, alto * 0.12),
             )
 
-    def _dibujar_boca(self, superficie, centro, ancho, alto, progreso, estado, paleta, grosor):
-        x = centro.x
-        if estado == "sorpresa":
-            y = centro.y + alto * 0.32
-            radio = max(7, ancho * (0.08 + progreso * 0.06))
-            pygame.draw.circle(superficie, paleta["tinta"], (x, y), radio + max(1, int(grosor * 0.3)))
-            pygame.draw.circle(superficie, paleta["lengua"], (x, y), radio)
-            return
+    def _dibujar_boca(self, superficie, centro, ancho, alto, gesto, paleta, grosor):
+        """Boca única que se transforma sin cortes entre la "O" de sorpresa
+        y la sonrisa amplia, según ``gesto`` (1 = sorpresa, 0 = sonrisa).
 
-        # Sonrisa gigante, casi de oreja a oreja: la boca se sale un
-        # poco del óvalo de la cara, con una fila de dientes arriba y,
-        # debajo, una franja de color contrastante (a modo de encía o
-        # lengua) en vez de una simple sombra plana.
-        y = centro.y + alto * 0.30
-        ancho_boca = ancho * 0.74
-        alto_boca = alto * 0.42
+        Antes había dos dibujos completamente distintos que se
+        intercambiaban de golpe justo en el pico del gesto (el instante de
+        mayor sorpresa), lo que se veía como un salto brusco. Ahora es una
+        sola forma que interpola tamaño, color de la cavidad y la
+        aparición gradual de dientes/lengua, así el gesto fluye en vez de
+        "saltar".
+        """
+        apertura = max(0.0, min(1.0, gesto))
+        factor_sonrisa = 1.0 - apertura
+        x = centro.x
+        y = centro.y + alto * (0.30 + apertura * 0.02)
+
+        radio_o = max(7, ancho * 0.11)
+        ancho_boca = ancho * 0.74 * factor_sonrisa + radio_o * 2 * apertura
+        alto_boca = alto * 0.42 * factor_sonrisa + radio_o * 2 * apertura
 
         contorno = pygame.Rect(0, 0, ancho_boca + grosor * 1.8, alto_boca + grosor * 1.8)
         contorno.center = (x, y)
         pygame.draw.ellipse(superficie, paleta["tinta"], contorno)
 
+        # La cavidad pasa de un tono lengua (boca "O") a un fondo oscuro
+        # (boca sonriente, donde lo que se ve son los dientes de encima).
         cavidad = pygame.Rect(0, 0, ancho_boca, alto_boca)
         cavidad.center = (x, y)
-        pygame.draw.ellipse(superficie, paleta["tinta"], cavidad)
+        color_cavidad = self._mezclar_color(paleta["tinta"][:3], paleta["lengua"][:3], apertura)
+        pygame.draw.ellipse(superficie, color_cavidad, cavidad)
 
-        # Franja inferior de color (encía/lengua) que se asoma bajo los
-        # dientes, aportando el contraste de dos tonos de la referencia.
-        franja = pygame.Rect(0, 0, ancho_boca * 0.94, alto_boca * 0.55)
-        franja.center = (x, y + alto_boca * 0.16)
-        pygame.draw.ellipse(superficie, paleta["lengua"], franja)
+        # Dientes y franja de encía/lengua: se desvanecen a medida que la
+        # boca se cierra hacia la "O", en vez de aparecer o desaparecer de
+        # golpe.
+        if factor_sonrisa > 0.03:
+            alpha = int(255 * min(1.0, factor_sonrisa * 1.3))
 
-        dientes = pygame.Rect(0, 0, ancho_boca * 0.86, alto_boca * 0.50)
-        dientes.center = (x, y - alto_boca * 0.20)
-        radio_esquina = int(dientes.height * 0.35)
-        pygame.draw.rect(superficie, paleta["brillo"], dientes, border_radius=radio_esquina)
-        pygame.draw.rect(
-            superficie, paleta["tinta"], dientes,
-            max(2, int(grosor * 0.3)), border_radius=radio_esquina,
-        )
-        divisiones = 7
-        for i in range(1, divisiones):
-            lx = dientes.left + dientes.width * i / divisiones
-            pygame.draw.line(
-                superficie, paleta["tinta"],
-                (lx, dientes.top + 2), (lx, dientes.bottom - 2),
-                max(1, int(grosor * 0.22)),
+            franja = pygame.Rect(0, 0, ancho_boca * 0.94, alto_boca * 0.55)
+            franja.center = (x, y + alto_boca * 0.16)
+            pygame.draw.ellipse(superficie, (*paleta["lengua"][:3], alpha), franja)
+
+            dientes = pygame.Rect(0, 0, ancho_boca * 0.86, alto_boca * 0.50)
+            dientes.center = (x, y - alto_boca * 0.20)
+            radio_esquina = max(1, int(dientes.height * 0.35))
+            pygame.draw.rect(superficie, (*paleta["brillo"][:3], alpha), dientes, border_radius=radio_esquina)
+            pygame.draw.rect(
+                superficie, (*paleta["tinta"][:3], alpha), dientes,
+                max(2, int(grosor * 0.3)), border_radius=radio_esquina,
             )
+            divisiones = 7
+            for i in range(1, divisiones):
+                lx = dientes.left + dientes.width * i / divisiones
+                pygame.draw.line(
+                    superficie, (*paleta["tinta"][:3], alpha),
+                    (lx, dientes.top + 2), (lx, dientes.bottom - 2),
+                    max(1, int(grosor * 0.22)),
+                )

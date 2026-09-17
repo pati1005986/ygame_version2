@@ -25,6 +25,11 @@ class PersonajeHumanoide:
         self.plataforma_actual = None  # última plataforma sobre la que aterrizó
         self.direccion = 1
 
+        # --- Muerte por trampa ---
+        self.muriendo = False
+        self.tiempo_muerte = 0.0
+        self.plataforma_devora = None
+
         # --- Animación de caminata ---
         self.tiempo_animacion = 0.0
         self.velocidad_animacion = 0.20
@@ -289,6 +294,32 @@ class PersonajeHumanoide:
             if self.sonido_salto:
                 self.sonido_salto.play()
 
+    def iniciar_engullido(self, plataforma):
+        """Activa la animación de muerte por trampa, como si la plataforma se
+        lo tragara poco a poco."""
+        if self.muriendo:
+            return
+        self.muriendo = True
+        self.plataforma_devora = plataforma
+        self.tiempo_muerte = 0.0
+        self.vel_y = 0
+        self.en_suelo = False
+        self.plataforma_actual = None
+
+    def actualizar_engullido(self):
+        """Avanza la animación de desaparición del personaje dentro de la
+        plataforma sin permitir que siga moviéndose."""
+        if not self.muriendo:
+            return
+        self.tiempo_muerte += 1 / 60
+        self.rect.y += 2.4
+        self.escala_y_objetivo = max(0.08, 1.0 - self.tiempo_muerte * 1.45)
+        self.escala_y = self._lerp(self.escala_y, self.escala_y_objetivo, 0.2)
+
+        if self.plataforma_devora is not None:
+            objetivo_x = self.plataforma_devora.rect.centerx
+            self.rect.x = self._lerp(self.rect.x, objetivo_x, 0.12)
+
     def dibujar(self, superficie):
         """Dibuja el personaje usando bloques, sin cargar imágenes externas."""
         centro_x = self.rect.centerx
@@ -308,6 +339,10 @@ class PersonajeHumanoide:
         bob_cabeza = int(self.bob_cabeza_actual)
         inclinacion = int(round(self.inclinacion_actual))
         estirar = self.escala_y
+
+        if self.muriendo:
+            estirar = max(0.08, 1.0 - self.tiempo_muerte * 1.45)
+            pie_y += int(self.tiempo_muerte * 32)
 
         self._dibujar_sombra(superficie, centro_x, pie_y)
         self._dibujar_particulas(superficie, oscuro)

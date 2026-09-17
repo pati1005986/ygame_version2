@@ -123,8 +123,8 @@ class MenuInicio:
         superficie.blit(panel, (0, self.alto - alto_panel))
 
         for rect, texto, color_base, color_hover in (
-            (self.boton_jugar, "JUGAR", (30, 120, 160), (90, 200, 255)),
-            (self.boton_salir, "SALIR", (110, 35, 70), (255, 120, 150)),
+            (self.boton_jugar, "JUGAR", (2, 2, 2), (90, 200, 255)),
+            (self.boton_salir, "SALIR", (2, 2, 2), (255, 120, 150)),
         ):
             hover = mouse_pos is not None and rect.collidepoint(mouse_pos)
             color = color_hover if hover else color_base

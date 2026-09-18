@@ -141,6 +141,12 @@ def main():
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 36)
     boton_reintentar = pygame.Rect(WIDTH // 2 - 110, HEIGHT // 2 + 45, 220, 52)
+    texto_boton = "VOLVER A INTENTAR"
+    tamano_fuente = 36
+    while tamano_fuente > 16 and pygame.font.SysFont(None, tamano_fuente, bold=True).size(texto_boton)[0] > boton_reintentar.width - 28:
+        tamano_fuente -= 1
+    fuente_boton = pygame.font.SysFont(None, tamano_fuente, bold=True)
+    superficie_texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
     gifs_game_over = []
     for nombre_gif in ("image1.gif", "image2.gif", "image3.gif", "image4.gif"):
         fotogramas, duracion = cargar_gif(
@@ -257,25 +263,28 @@ def main():
             # La escena se dibuja aparte para poder desaturarla como un todo
             # antes de mezclarla con el resto de la interfaz.
             escena = pygame.Surface((WIDTH, HEIGHT))
-            dibujar_fondo_segmentado(escena, tiempo, hue_fondo, WIDTH, HEIGHT)
+            hay_gif_game_over = estado == ESTADO_GAME_OVER and bool(gif_game_over)
 
-            for particula in particulas:
-                particula.actualizar()
-                particula.dibujar(escena, tiempo)
+            if not hay_gif_game_over:
+                dibujar_fondo_segmentado(escena, tiempo, hue_fondo, WIDTH, HEIGHT)
 
-            for plataforma in plataformas:
-                if estado != ESTADO_GAME_OVER:
-                    plataforma.actualizar()
-                plataforma.dibujar(escena, tiempo, nivel)
+                for particula in particulas:
+                    particula.actualizar()
+                    particula.dibujar(escena, tiempo)
 
-            jugador.dibujar(escena)
+                for plataforma in plataformas:
+                    if estado != ESTADO_GAME_OVER:
+                        plataforma.actualizar()
+                    plataforma.dibujar(escena, tiempo, nivel)
 
-            if estado == ESTADO_TRANSICION:
-                transicion.dibujar(escena)
+                jugador.dibujar(escena)
 
-            # Los colores se van perdiendo a medida que suben los niveles.
-            escena = escala_grises(escena, saturacion_nivel(nivel))
-            screen.blit(escena, (0, 0))
+                if estado == ESTADO_TRANSICION:
+                    transicion.dibujar(escena)
+
+                # Los colores se van perdiendo a medida que suben los niveles.
+                escena = escala_grises(escena, saturacion_nivel(nivel))
+                screen.blit(escena, (0, 0))
 
             # La escena se vuelve progresivamente más opaca al avanzar.
             alpha_opacidad = opacidad_nivel(nivel)
@@ -328,13 +337,10 @@ def main():
                         3,
                     )
 
-                texto_boton = "VOLVER A INTENTAR"
-                tamano_fuente = 36
-                while tamano_fuente > 16 and pygame.font.SysFont(None, tamano_fuente, bold=True).size(texto_boton)[0] > ancho_boton - 28:
-                    tamano_fuente -= 1
-                fuente_boton = pygame.font.SysFont(None, tamano_fuente, bold=True)
-                texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
-                screen.blit(texto_boton, texto_boton.get_rect(center=boton_reintentar.center))
+                screen.blit(
+                    superficie_texto_boton,
+                    superficie_texto_boton.get_rect(center=boton_reintentar.center),
+                )
 
         pygame.display.flip()
 

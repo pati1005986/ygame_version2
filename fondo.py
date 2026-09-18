@@ -26,24 +26,30 @@ def _obtener_superficie(clave, tam):
 # en vez de círculos/elipses perfectos. Es la base "psicodélica" del fondo.
 # ---------------------------------------------------------------------------
 
-def _punto_organico(centro, radio, angulo, tiempo, fase, amplitud=0.38):
-    """Deforma un radio con varias ondas superpuestas, como un trazo a mano."""
+def _punto_organico(centro, radio, angulo, tiempo, fase, amplitud=0.42, asimetria=0.0):
+    """Deforma un radio con varias ondas superpuestas, como un trazo a mano.
+
+    `asimetria` rompe la simetría radial (más "dibujado a mano", menos
+    geométrico) añadiendo un lóbulo dominante en una dirección, como una
+    pincelada caricaturesca que nunca es perfectamente redonda.
+    """
     ondulacion = (
         math.sin(angulo * 3 + fase) * amplitud
         + math.sin(angulo * 7 - fase * 1.7 + tiempo * 1.3) * amplitud * 0.45
         + math.sin(angulo * 1.5 + tiempo * 0.6 + fase) * amplitud * 0.55
+        + math.sin(angulo * 2 + fase * 0.6) * asimetria
     )
-    r = radio * max(0.25, 1 + ondulacion)
+    r = radio * max(0.22, 1 + ondulacion)
     return (
         centro[0] + math.cos(angulo) * r,
         centro[1] + math.sin(angulo) * r,
     )
 
 
-def _mancha_organica(capa, centro, radio, color, alpha, tiempo, fase, puntos=26):
+def _mancha_organica(capa, centro, radio, color, alpha, tiempo, fase, puntos=26, asimetria=0.12):
     """Mancha con contorno ondulado: la unidad básica de 'pincelada' del fondo."""
     pts = [
-        _punto_organico(centro, radio, (i / puntos) * math.tau, tiempo, fase)
+        _punto_organico(centro, radio, (i / puntos) * math.tau, tiempo, fase, asimetria=asimetria)
         for i in range(puntos)
     ]
     pygame.draw.polygon(capa, (*color, alpha), pts)
@@ -52,10 +58,55 @@ def _mancha_organica(capa, centro, radio, color, alpha, tiempo, fase, puntos=26)
 def _trazo_contorno(capa, centro, radio, color, alpha, tiempo, fase, grosor=3):
     """Línea de contorno tipo tinta, exagerando el borde de la mancha (caricatura)."""
     pts = [
-        _punto_organico(centro, radio * 1.05, (i / 30) * math.tau, tiempo, fase, 0.5)
+        _punto_organico(centro, radio * 1.05, (i / 30) * math.tau, tiempo, fase, 0.5, asimetria=0.15)
         for i in range(30)
     ]
     pygame.draw.polygon(capa, (*color, alpha), pts, grosor)
+
+
+def _trazo_tinta(capa, centro, radio, tiempo, fase, alpha=150, grosor=4):
+    """Contorno oscuro tipo 'tinta de cómic': el rasgo caricaturesco más
+    reconocible (bordes gruesos casi negros alrededor de formas de color)."""
+    pts = [
+        _punto_organico(centro, radio * 1.08, (i / 34) * math.tau, tiempo, fase, 0.48, asimetria=0.14)
+        for i in range(34)
+    ]
+    pygame.draw.polygon(capa, (18, 14, 28, alpha), pts, grosor)
+
+
+def _puntos_halftone(superficie, ancho, alto, tiempo, hue_base, paso=34, alpha=26):
+    """Textura de puntos estilo cómic/pop-art (halftone), muy sutil, para que
+    el fondo se lea como una lámina impresa en vez de un degradado liso."""
+    capa = _obtener_superficie("halftone", (ancho, alto))
+    fila = 0
+    for y in range(-paso, alto + paso, paso):
+        desfase = (paso // 2) if fila % 2 else 0
+        for x in range(-paso, ancho + paso, paso):
+            cx = x + desfase
+            cy = y
+            onda = math.sin(cx * 0.01 + tiempo * 0.4) + math.cos(cy * 0.013 - tiempo * 0.3)
+            radio_punto = max(1.5, 3.2 + onda * 1.6)
+            hue = (hue_base + (cx / ancho) * 0.15 + tiempo * 0.02) % 1.0
+            color = color_desde_hue(hue, 0.4, 0.4)
+            pygame.draw.circle(capa, (*color, alpha), (cx, cy), int(radio_punto))
+        fila += 1
+    superficie.blit(capa, (0, 0))
+
+
+def _fondo_degradado(superficie, ancho, alto, hue_base, tiempo):
+    """Cielo de fondo en degradado vertical (en vez de un color plano) para
+    dar más profundidad atmosférica al estilo pop/abstracto."""
+    color_arriba = color_desde_hue((hue_base - 0.04) % 1.0, 0.4, 0.97)
+    color_abajo = color_desde_hue((hue_base + 0.05) % 1.0, 0.3, 0.8)
+    franjas = 48
+    alto_franja = math.ceil(alto / franjas) + 1
+    for i in range(franjas):
+        t = i / (franjas - 1)
+        color = [
+            int(color_arriba[c] + (color_abajo[c] - color_arriba[c]) * t)
+            for c in range(3)
+        ]
+        pygame.draw.rect(superficie, color, (0, int(t * alto), ancho, alto_franja))
 
 
 class ParticulaAbstracta:
@@ -85,8 +136,11 @@ class ParticulaAbstracta:
 
         # Mancha principal con borde ondulado (pincelada caricaturesca).
         color_principal = color_desde_hue(hue_base, 0.7, 0.95)
-        _mancha_organica(capa, centro, radio, color_principal, 70, tiempo, self.fase)
-        _trazo_contorno(capa, centro, radio, color_desde_hue(hue_base, 0.85, 0.55), 90, tiempo, self.fase, grosor=3)
+        _mancha_organica(capa, centro, radio, color_principal, 82, tiempo, self.fase, asimetria=0.16)
+        _trazo_contorno(capa, centro, radio, color_desde_hue(hue_base, 0.85, 0.55), 100, tiempo, self.fase, grosor=3)
+        # Contorno de tinta oscura: el "outline" de cómic que hace que la
+        # mancha se lea como un personaje/objeto dibujado, no como una mancha borrosa.
+        _trazo_tinta(capa, centro, radio, tiempo, self.fase, alpha=130, grosor=4)
 
         # Salpicaduras de color complementario para el efecto psicodélico "pop".
         hue_complementario = (hue_base + 0.5) % 1.0
@@ -105,6 +159,18 @@ class ParticulaAbstracta:
 
         base = color_desde_hue(hue_base, 0.5, 0.85)
         pygame.draw.circle(capa, (*base, 35), centro, int(radio * 0.85), 2)
+
+        # Brillo tipo "cel-shading" de caricatura: un óvalo blanco desplazado
+        # que simula luz reflejada, típico del cartoon plano.
+        brillo_pos = (
+            centro[0] - radio * 0.32,
+            centro[1] - radio * 0.38 + math.sin(tiempo * 1.5 + self.fase) * 3,
+        )
+        brillo = pygame.Surface((int(radio * 0.7), int(radio * 0.42)), pygame.SRCALPHA)
+        pygame.draw.ellipse(brillo, (255, 255, 255, 60), brillo.get_rect())
+        brillo_rot = pygame.transform.rotate(brillo, math.degrees(self.fase) % 40 - 20)
+        capa.blit(brillo_rot, brillo_rot.get_rect(center=brillo_pos))
+
         superficie.blit(capa, self.pos - pygame.Vector2(centro))
 
 
@@ -160,7 +226,9 @@ def _dibujar_goteo(superficie, x, y, longitud, hue, tiempo, fase, grosor=6):
     avance = (math.sin(tiempo * 0.5 + fase) * 0.5 + 0.5)  # 0..1, oscila
     largo_actual = longitud * (0.3 + avance * 0.7)
     color = color_desde_hue(hue, 0.75, 0.9)
-    capa = _obtener_superficie(("goteo", id(fase)), (grosor * 4, int(longitud * 1.3) + 20))
+    tamano = (grosor * 4, int(longitud * 1.3) + 20)
+    clave = ("goteo", grosor, int(longitud), tamano[0], tamano[1])
+    capa = _obtener_superficie(clave, tamano)
 
     segmentos = 18
     for i in range(segmentos):
@@ -197,6 +265,8 @@ def _dibujar_caleidoscopio(superficie, centro, radio, hue_base, tiempo, ancho, a
             a = angulo_ini + (angulo_fin - angulo_ini) * (i / pasos_arco)
             puntos.append((cx + math.cos(a) * pulso, cy + math.sin(a) * pulso))
         pygame.draw.polygon(capa, (*color, 26), puntos)
+        # Filo de cada cuña ligeramente marcado, como viñetas de cómic recortadas.
+        pygame.draw.polygon(capa, (*color_desde_hue(hue, 0.9, 0.6), 22), puntos, 2)
 
     superficie.blit(capa, (0, 0))
 
@@ -204,12 +274,18 @@ def _dibujar_caleidoscopio(superficie, centro, radio, hue_base, tiempo, ancho, a
 def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto):
     """Fondo psicodélico: manchas orgánicas, remolinos con goteo y mandala giratorio."""
     hue_base = (hue_fondo + math.sin(tiempo * 0.35) * 0.05) % 1.0
-    superficie.fill(color_desde_hue(hue_base, 0.34, 0.9))
+
+    # Cielo en degradado en vez de color plano: da profundidad atmosférica
+    # antes de apilar las formas caricaturescas encima.
+    _fondo_degradado(superficie, ancho, alto, hue_base, tiempo)
 
     # Mandala de fondo, muy sutil, para dar sensación de movimiento continuo.
     _dibujar_caleidoscopio(
         superficie, (ancho * 0.5, alto * 0.5), max(ancho, alto) * 0.65, hue_base, tiempo, ancho, alto
     )
+
+    # Textura de puntos estilo cómic/pop-art sobre el degradado.
+    _puntos_halftone(superficie, ancho, alto, tiempo, hue_base)
 
     for i in range(6):
         hue = (hue_base + i / 6 + tiempo * 0.025) % 1.0
@@ -225,8 +301,9 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto):
         centro_local = (radio + margen, radio + margen)
 
         # Mancha de bloque con contorno ondulado en vez de elipse perfecta.
-        _mancha_organica(capa, centro_local, radio, color, 48, tiempo, i * 1.7, puntos=24)
-        _trazo_contorno(capa, centro_local, radio, color_pop, 70, tiempo, i * 1.7, grosor=3)
+        _mancha_organica(capa, centro_local, radio, color, 58, tiempo, i * 1.7, puntos=24, asimetria=0.18)
+        _trazo_contorno(capa, centro_local, radio, color_pop, 80, tiempo, i * 1.7, grosor=3)
+        _trazo_tinta(capa, centro_local, radio, tiempo, i * 1.7, alpha=110, grosor=5)
 
         rect_local = pygame.Rect(margen, margen, radio * 2, radio * 2)
         pygame.draw.arc(

@@ -17,6 +17,8 @@ class PersonajeHumanoide:
     def __init__(self, x, y, color):
         # Tamaño aumentado ~25% respecto a la versión original (32x56 -> 40x70)
         self.rect = pygame.Rect(x, y, 40, 70)
+        self.altura_normal = self.rect.height
+        self.altura_agachado = 44
         self.color = color
         self.vel_y = 0
         self.velocidad = 6
@@ -24,6 +26,8 @@ class PersonajeHumanoide:
         self.en_suelo = False
         self.plataforma_actual = None  # última plataforma sobre la que aterrizó
         self.direccion = 1
+        self.agachado = False
+        self.agachado_animacion = 0.0
 
         # --- Muerte por trampa ---
         self.muriendo = False
@@ -179,6 +183,17 @@ class PersonajeHumanoide:
         del personaje.
         """
         teclas = pygame.key.get_pressed()
+        quiere_agacharse = teclas[pygame.K_s] or teclas[pygame.K_DOWN]
+        if quiere_agacharse and not self.agachado:
+            self._cambiar_altura(self.altura_agachado)
+            self.agachado = True
+        elif not quiere_agacharse and self.agachado and self._puede_estar_de_pie(plataformas):
+            self._cambiar_altura(self.altura_normal)
+            self.agachado = False
+
+        objetivo_agachado = 1.0 if self.agachado else 0.0
+        self.agachado_animacion = self._lerp(self.agachado_animacion, objetivo_agachado, 0.28)
+
         dx = 0
         if teclas[pygame.K_LEFT] or teclas[pygame.K_a]:
             dx = -self.velocidad
@@ -286,9 +301,22 @@ class PersonajeHumanoide:
 
         self._actualizar_particulas()
 
+    def _cambiar_altura(self, altura):
+        """Cambia la caja vertical conservando la posición de los pies."""
+        pie_y = self.rect.bottom
+        self.rect.height = altura
+        self.rect.bottom = pie_y
+
+    def _puede_estar_de_pie(self, plataformas):
+        """Comprueba que no haya una plataforma bloqueando la cabeza."""
+        rect_de_pie = self.rect.copy()
+        rect_de_pie.height = self.altura_normal
+        rect_de_pie.bottom = self.rect.bottom
+        return not any(rect_de_pie.colliderect(plataforma.rect) for plataforma in plataformas)
+
     def saltar(self):
         """Inicia un salto si el personaje está apoyado en una plataforma."""
-        if self.en_suelo:
+        if self.en_suelo and not self.agachado:
             self.escala_y = 0.82  # ligera compresión instantánea al despegar
             self.vel_y = self.fuerza_salto
             if self.sonido_salto:
@@ -349,8 +377,11 @@ class PersonajeHumanoide:
 
         # Altura efectiva del cuerpo aplicando squash/stretch, manteniendo
         # los pies apoyados en pie_y.
-        alto_torso = round(26 * estirar / p) * p
-        alto_pierna = round(24 / estirar / p) * p if estirar else 24
+        agachado = self.agachado_animacion
+        alto_torso_normal = round(26 * estirar / p) * p
+        alto_pierna_normal = round(24 / estirar / p) * p if estirar else 24
+        alto_torso = round(self._lerp(alto_torso_normal, 18, agachado) / p) * p
+        alto_pierna = round(self._lerp(alto_pierna_normal, 12, agachado) / p) * p
 
         base_y = pie_y - bob
 
@@ -383,20 +414,21 @@ class PersonajeHumanoide:
         self._bloque(superficie, borde_sombra_x, torso_y, 4, alto_torso, oscuro)
 
         # --- Brazos (con manos: un bloque extra más oscuro en la punta) ---
-        brazo_alto = 20
-        brazo_izq_y = torso_y + 2 - balanceo
-        brazo_der_y = torso_y + 2 + balanceo
-        self._bloque_contorneado(superficie, torso_x - 23, brazo_izq_y, 9, brazo_alto, claro, contorno)
-        self._bloque_contorneado(superficie, torso_x + 14, brazo_der_y, 9, brazo_alto, claro, contorno)
-        self._bloque(superficie, torso_x - 23, brazo_izq_y + brazo_alto - p, 9, p, oscuro)
-        self._bloque(superficie, torso_x + 14, brazo_der_y + brazo_alto - p, 9, p, oscuro)
+        brazo_alto = round(self._lerp(20, 14, agachado) / p) * p
+        brazo_izq_y = torso_y + 2 - balanceo + int(agachado * 6)
+        brazo_der_y = torso_y + 2 + balanceo + int(agachado * 6)
+        brazo_desplazamiento = int(agachado * 5) * self.direccion
+        self._bloque_contorneado(superficie, torso_x - 23 + brazo_desplazamiento, brazo_izq_y, 9, brazo_alto, claro, contorno)
+        self._bloque_contorneado(superficie, torso_x + 14 + brazo_desplazamiento, brazo_der_y, 9, brazo_alto, claro, contorno)
+        self._bloque(superficie, torso_x - 23 + brazo_desplazamiento, brazo_izq_y + brazo_alto - p, 9, p, oscuro)
+        self._bloque(superficie, torso_x + 14 + brazo_desplazamiento, brazo_der_y + brazo_alto - p, 9, p, oscuro)
 
         # --- Cabeza (con un pequeño retraso respecto al torso para dar
         # sensación de "follow-through"). Es notablemente más grande que
         # en la primera versión: la proporción "cabezona" de caricatura
         # deja sitio de sobra para que los rasgos de la cara se lean bien
         # en la grilla de píxeles. ---
-        lado_cabeza = 26
+        lado_cabeza = round(self._lerp(26, 22, agachado) / p) * p
         cabeza_x = torso_x
         cabeza_y = torso_y - lado_cabeza - (bob_cabeza - bob)
         self._bloque_contorneado(

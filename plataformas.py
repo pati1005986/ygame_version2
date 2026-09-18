@@ -20,7 +20,12 @@ def _mezclar(color_a, color_b, factor):
 
 
 class Plataforma:
-    """Plataforma sólida, opcionalmente disfrazada de trampa vibrante."""
+    """Plataforma sólida, opcionalmente disfrazada de trampa vibrante.
+
+    El diseño busca una estética pictórica: capas de color superpuestas,
+    pinceladas sueltas y pequeños acentos que dan la sensación de una pieza
+    pintada a mano en lugar de un bloque geométrico plano.
+    """
 
     COLOR_PELIGRO = (235, 60, 55)
     COLOR_HUECO = (22, 13, 35)
@@ -34,6 +39,61 @@ class Plataforma:
         self.trampa_activada = False
         self.progreso_trampa = 0.0
 
+        # Detalles generados una sola vez para que la textura sea estable
+        # cuadro a cuadro (en vez de parpadear con valores aleatorios nuevos
+        # en cada dibujado).
+        self._generar_detalles()
+
+    # ------------------------------------------------------------------
+    # Preparación de detalles decorativos (una sola vez por plataforma)
+    # ------------------------------------------------------------------
+    def _generar_detalles(self):
+        """Precalcula pinceladas, salpicaduras y acentos propios de esta
+        plataforma para reutilizarlos en cada fotograma."""
+        cantidad_manchas = random.randint(4, 7)
+        self.manchas = [
+            (
+                random.uniform(0.08, 0.9),   # posición x relativa
+                random.uniform(0.15, 0.85),  # posición y relativa
+                random.uniform(0.05, 0.13),  # radio relativo al ancho
+                random.uniform(-0.08, 0.08), # variación de matiz
+                random.randint(60, 130),     # alpha
+                random.choice([True, False]),  # más clara u oscura
+            )
+            for _ in range(cantidad_manchas)
+        ]
+
+        # Puntos de una pincelada curva decorativa (trazo suelto).
+        self.trazo = [
+            (random.uniform(0.1, 0.3), random.uniform(0.2, 0.8)),
+            (random.uniform(0.35, 0.55), random.uniform(0.1, 0.4)),
+            (random.uniform(0.6, 0.9), random.uniform(0.3, 0.75)),
+        ]
+
+        # Salpicaduras finas ("splatter") cerca de una esquina aleatoria.
+        esquina = random.choice([(0.06, 0.15), (0.9, 0.2), (0.15, 0.8), (0.85, 0.75)])
+        self.salpicaduras = [
+            (
+                esquina[0] + random.uniform(-0.06, 0.06),
+                esquina[1] + random.uniform(-0.08, 0.08),
+                random.uniform(1.4, 3.2),
+            )
+            for _ in range(5)
+        ]
+
+        # Grietas radiales que aparecerán solo cuando la trampa se active.
+        if self.es_trampa:
+            self.grietas = [
+                math.tau * i / 7 + random.uniform(-0.18, 0.18) for i in range(7)
+            ]
+            self.goteo = [
+                (random.uniform(0.15, 0.85), random.uniform(0.6, 1.5), random.uniform(0, math.tau))
+                for _ in range(4)
+            ]
+        else:
+            self.grietas = []
+            self.goteo = []
+
     def activar_trampa(self):
         """Abre la trampa y comienza a hundir al personaje."""
         if self.es_trampa:
@@ -44,14 +104,19 @@ class Plataforma:
         if self.trampa_activada:
             self.progreso_trampa = min(1.0, self.progreso_trampa + 0.045)
 
+    # ------------------------------------------------------------------
+    # Dibujado
+    # ------------------------------------------------------------------
     def dibujar(self, superficie, tiempo, nivel):
         """Dibuja la plataforma con una forma abstracta, más pictórica y
         expresiva, inspirada en composiciones de arte contemporáneo."""
         hue = (self.hue + math.sin(tiempo * 0.6 + self.fase) * 0.05 + nivel * 0.03) % 1.0
         color_base = color_desde_hue(hue, 0.68, 0.96)
         color_sombra = color_desde_hue(hue, 0.75, 0.52)
+        color_media = color_desde_hue(hue, 0.7, 0.75)
         color_luz = color_desde_hue(hue, 0.5, 1.0)
         color_acento = color_desde_hue((hue + 0.18) % 1.0, 0.7, 0.9)
+        color_acento2 = color_desde_hue((hue - 0.14) % 1.0, 0.55, 0.85)
 
         vibracion = 0
         if self.es_trampa and not self.trampa_activada:
@@ -59,14 +124,17 @@ class Plataforma:
         rect = self.rect.move(vibracion, 0)
 
         color_halo = self.COLOR_PELIGRO if (self.es_trampa and self.trampa_activada) else color_base
-        self._dibujar_halo(superficie, rect, color_halo)
+        self._dibujar_halo(superficie, rect, color_halo, tiempo)
         self._dibujar_sombra_contacto(superficie, rect)
 
         # Forma base abstracta: bloque irregular con perfiles orgánicos.
         puntos = self._puntos_plataforma(rect)
-        pygame.draw.polygon(superficie, (0, 0, 0), puntos, 3)
+        pygame.draw.polygon(superficie, (0, 0, 0), puntos, 4)
         pygame.draw.polygon(superficie, color_sombra, puntos)
-        pygame.draw.polygon(superficie, color_base, [(p[0] + 4, p[1] + 2) for p in puntos])
+        pygame.draw.polygon(superficie, color_media, [(p[0] + 3, p[1] + 2) for p in puntos])
+        pygame.draw.polygon(superficie, color_base, [(p[0] + 6, p[1] + 4) for p in puntos])
+        # Segunda línea de contorno más fina, a modo de veta de pintura seca.
+        pygame.draw.polygon(superficie, color_sombra, puntos, 1)
 
         # Capa superior luminosa, como una franja de pintura de alta energía.
         puntos_luz = [(p[0] + 8, p[1] + 5) for p in puntos[:4]]
@@ -74,6 +142,11 @@ class Plataforma:
         puntos_luz[1] = (puntos_luz[1][0] - 16, puntos_luz[1][1] + 3)
         pygame.draw.polygon(superficie, color_luz, puntos_luz)
         pygame.draw.polygon(superficie, (0, 0, 0), puntos_luz, 2)
+
+        # Textura pictórica: manchas, trazo curvo y salpicaduras.
+        self._dibujar_textura_pictorica(
+            superficie, rect, color_acento, color_acento2, color_luz
+        )
 
         # Elementos abstractos dentro de la forma: curvas y bloques cromáticos.
         self._dibujar_acento_abstracto(superficie, rect, color_acento, color_sombra, color_luz)
@@ -95,16 +168,35 @@ class Plataforma:
             (rect.left + 2, rect.top + 16),
         ]
 
+    def _dibujar_textura_pictorica(self, superficie, rect, color_a, color_b, color_luz):
+        """Añade manchas translúcidas, un trazo curvo y salpicaduras finas
+        para dar sensación de pintura hecha a mano sobre la plataforma."""
+        capa = pygame.Surface(rect.size, pygame.SRCALPHA)
+
+        for fx, fy, fr, delta_hue, alpha, clara in self.manchas:
+            radio = max(2, int(fr * rect.width))
+            centro = (int(fx * rect.width), int(fy * rect.height))
+            color = color_luz if clara else color_a
+            pygame.draw.circle(capa, (*color, alpha), centro, radio)
+
+        if len(self.trazo) >= 2:
+            puntos_trazo = [
+                (p[0] * rect.width, p[1] * rect.height) for p in self.trazo
+            ]
+            try:
+                pygame.draw.aalines(capa, (*color_b, 160), False, puntos_trazo, 1)
+            except TypeError:
+                pygame.draw.lines(capa, (*color_b, 160), False, puntos_trazo, 2)
+
+        for fx, fy, radio in self.salpicaduras:
+            centro = (int(fx * rect.width), int(fy * rect.height))
+            pygame.draw.circle(capa, (*color_luz, 150), centro, max(1, int(radio)))
+
+        superficie.blit(capa, rect.topleft)
+
     def _dibujar_acento_abstracto(self, superficie, rect, color_acento, color_sombra, color_luz):
         """Añade manchas y líneas abstractas que simulan pintura gestual sobre
         la plataforma."""
-        centro = rect.center
-        radio = rect.width * 0.18
-        circulo = pygame.Surface((radio * 2, radio * 2), pygame.SRCALPHA)
-        pygame.draw.circle(circulo, (*color_acento, 120), (int(radio), int(radio)), int(radio))
-        pygame.draw.circle(circulo, (0, 0, 0, 200), (int(radio), int(radio)), int(radio), 2)
-        superficie.blit(circulo, (centrox := centro[0] - int(radio), centro[1] - int(radio) + 6))
-
         r1 = pygame.Rect(rect.left + 20, rect.top + 9, rect.width * 0.23, max(4, rect.height * 0.38))
         pygame.draw.rect(superficie, color_sombra, r1, border_radius=8)
         pygame.draw.rect(superficie, (0, 0, 0), r1, 2, border_radius=8)
@@ -125,13 +217,36 @@ class Plataforma:
         pygame.draw.polygon(superficie, color_sombra, tri)
         pygame.draw.polygon(superficie, (0, 0, 0), tri, 2)
 
-    def _dibujar_halo(self, superficie, rect, color):
-        """Aura translúcida detrás de la plataforma; se tiñe de rojo cuando
-        la trampa ya está activa."""
+        # Pequeño acento circular extra, como un botón de color puro.
+        centro_acento = (rect.left + int(rect.width * 0.08), rect.top + int(rect.height * 0.55))
+        radio_acento = max(3, int(rect.height * 0.22))
+        pygame.draw.circle(superficie, color_luz, centro_acento, radio_acento)
+        pygame.draw.circle(superficie, (0, 0, 0), centro_acento, radio_acento, 1)
+
+    def _dibujar_halo(self, superficie, rect, color, tiempo):
+        """Aura translúcida detrás de la plataforma, en dos capas para dar
+        profundidad; se tiñe de rojo y pulsa cuando la trampa ya está
+        activa."""
         radio = rect.height * 1.4
         capa = pygame.Surface((radio * 2, radio * 2), pygame.SRCALPHA)
-        pygame.draw.circle(capa, (*color, 55), (radio, radio), radio)
+        pygame.draw.circle(capa, (*color, 30), (radio, radio), radio)
+        pygame.draw.circle(capa, (*color, 55), (radio, radio), radio * 0.62)
         superficie.blit(capa, (rect.centerx - radio, rect.top - radio * 0.6))
+
+        if self.es_trampa and self.trampa_activada:
+            pulso = 0.5 + 0.5 * math.sin(tiempo * 8)
+            radio_anillo = rect.height * (1.1 + 0.4 * pulso)
+            capa_anillo = pygame.Surface((radio_anillo * 2, radio_anillo * 2), pygame.SRCALPHA)
+            pygame.draw.circle(
+                capa_anillo,
+                (*self.COLOR_PELIGRO, int(90 * (1 - pulso))),
+                (radio_anillo, radio_anillo),
+                radio_anillo,
+                3,
+            )
+            superficie.blit(
+                capa_anillo, (rect.centerx - radio_anillo, rect.centery - radio_anillo)
+            )
 
     def _dibujar_sombra_contacto(self, superficie, rect):
         """Sombra elíptica y suave proyectada justo debajo de la plataforma,
@@ -145,10 +260,12 @@ class Plataforma:
         superficie.blit(sombra, (rect.centerx - ancho // 2, rect.bottom - alto // 3))
 
     def _dibujar_trampa(self, superficie, rect, tiempo, color_base):
-        """Antes de activarse: rayas de peligro que laten y una boca apenas
-        entreabierta con dientes, como advertencia. Después de activarse:
-        el agujero crece y se oscurece progresivamente (progreso_trampa)
-        mientras los dientes rodean todo el borde."""
+        """Antes de activarse: rayas de peligro que laten, un par de ojos
+        vigilantes y una boca apenas entreabierta con dientes, como
+        advertencia. Después de activarse: el agujero crece y se oscurece
+        progresivamente (progreso_trampa), aparecen grietas en la superficie
+        y gotas viscosas caen del borde, mientras los dientes rodean todo el
+        borde."""
         abertura = rect.inflate(-12, -5)
 
         if not self.trampa_activada:
@@ -158,7 +275,9 @@ class Plataforma:
 
             boca_cerrada = abertura.inflate(-abertura.width * 0.5, -abertura.height * 0.3)
             pygame.draw.ellipse(superficie, self.COLOR_HUECO, boca_cerrada)
+            pygame.draw.ellipse(superficie, (0, 0, 0), boca_cerrada, 2)
             self._dibujar_dientes(superficie, boca_cerrada, color_base, largo=5)
+            self._dibujar_ojos(superficie, rect, tiempo, pulso)
         else:
             progreso = self.progreso_trampa
             hueco = abertura.inflate(
@@ -166,8 +285,13 @@ class Plataforma:
                 -abertura.height * (1 - progreso) * 0.3,
             )
             color_hueco = _mezclar(self.COLOR_HUECO, self.COLOR_HUECO_PROFUNDO, progreso)
+            self._dibujar_grietas(superficie, rect, hueco, progreso)
             pygame.draw.ellipse(superficie, color_hueco, hueco)
+            pygame.draw.ellipse(
+                superficie, self.COLOR_PELIGRO, hueco, max(1, int(2 * (1 - progreso * 0.5)))
+            )
             self._dibujar_dientes(superficie, hueco, color_base, largo=4 + 5 * progreso)
+            self._dibujar_goteo(superficie, hueco, tiempo, progreso)
 
     def _dibujar_rayas_peligro(self, superficie, rect, color_raya):
         """Rayas diagonales tipo cinta de peligro, recortadas a la forma
@@ -187,13 +311,73 @@ class Plataforma:
         capa.blit(mascara, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
         superficie.blit(capa, rect.topleft)
 
+    def _dibujar_ojos(self, superficie, rect, tiempo, pulso):
+        """Un par de ojos vigilantes justo sobre la boca cerrada, que
+        parpadean lentamente; refuerzan la sensación de que la trampa está
+        "despierta" antes de morder."""
+        parpadeo = math.sin(tiempo * 1.3 + self.fase)
+        alto_ojo = 3 if parpadeo > 0.85 else 5
+        separacion = rect.width * 0.16
+        centro_y = rect.top + rect.height * 0.28
+        for lado in (-1, 1):
+            centro = (rect.centerx + lado * separacion, centro_y)
+            pygame.draw.ellipse(
+                superficie,
+                (250, 240, 235),
+                pygame.Rect(0, 0, 9, alto_ojo).move(centro[0] - 4, centro[1] - alto_ojo / 2),
+            )
+            color_pupila = _mezclar((40, 20, 20), self.COLOR_PELIGRO, 0.3 + 0.4 * pulso)
+            pygame.draw.circle(superficie, color_pupila, (int(centro[0]), int(centro[1])), 2)
+
+    def _dibujar_grietas(self, superficie, rect, hueco, progreso):
+        """Líneas de fractura que se extienden desde el borde del agujero
+        hacia el resto de la plataforma a medida que la trampa avanza."""
+        if not self.grietas:
+            return
+        largo = max(rect.width, rect.height) * 0.55 * progreso
+        for angulo in self.grietas:
+            origen = (
+                hueco.centerx + math.cos(angulo) * (hueco.width / 2),
+                hueco.centery + math.sin(angulo) * (hueco.height / 2),
+            )
+            quiebre = (
+                origen[0] + math.cos(angulo + 0.3) * largo * 0.5,
+                origen[1] + math.sin(angulo + 0.3) * largo * 0.5,
+            )
+            fin = (
+                hueco.centerx + math.cos(angulo) * (hueco.width / 2 + largo),
+                hueco.centery + math.sin(angulo) * (hueco.height / 2 + largo),
+            )
+            pygame.draw.lines(
+                superficie, (25, 12, 12), False, [origen, quiebre, fin], 2
+            )
+
+    def _dibujar_goteo(self, superficie, hueco, tiempo, progreso):
+        """Gotas viscosas que cuelgan del borde inferior del agujero y se
+        alargan a medida que crece la trampa."""
+        for fx, largo_base, fase in self.goteo:
+            x = hueco.left + fx * hueco.width
+            balanceo = math.sin(tiempo * 3 + fase) * 2
+            largo = (6 + largo_base * 10) * progreso
+            y0 = hueco.centery + hueco.height * 0.25
+            y1 = y0 + largo
+            pygame.draw.line(
+                superficie, self.COLOR_HUECO_PROFUNDO, (x, y0), (x + balanceo, y1), 3
+            )
+            pygame.draw.circle(
+                superficie, self.COLOR_HUECO_PROFUNDO, (int(x + balanceo), int(y1)), 3
+            )
+
     def _dibujar_dientes(self, superficie, abertura, color_base, largo=5, cantidad=12):
         """Dientes triangulares distribuidos en torno a todo el perímetro
-        de la abertura (en vez de solo tres, como en la versión original)."""
+        de la abertura, con una base sombreada y una punta iluminada para
+        dar sensación de volumen."""
         radio_x = abertura.width / 2
         radio_y = abertura.height / 2
         if radio_x <= 0 or radio_y <= 0:
             return
+        color_sombra_diente = _mezclar(color_base, (0, 0, 0), 0.45)
+        color_luz_diente = _mezclar(color_base, (255, 255, 255), 0.35)
         for i in range(cantidad):
             angulo = math.tau * i / cantidad
             coseno, seno = math.cos(angulo), math.sin(angulo)
@@ -203,7 +387,21 @@ class Plataforma:
                 abertura.centerx + coseno * (radio_x + largo),
                 abertura.centery + seno * (radio_y + largo),
             )
+            medio = (
+                abertura.centerx + coseno * (radio_x + largo * 0.5),
+                abertura.centery + seno * (radio_y + largo * 0.5),
+            )
             perp = pygame.Vector2(-seno, coseno) * 2.6
             p1 = (base_x + perp.x, base_y + perp.y)
             p2 = (base_x - perp.x, base_y - perp.y)
-            pygame.draw.polygon(superficie, color_base, [p1, p2, punta])
+            pygame.draw.polygon(superficie, color_sombra_diente, [p1, p2, punta])
+            perp_chica = pygame.Vector2(-seno, coseno) * 1.1
+            pygame.draw.polygon(
+                superficie,
+                color_luz_diente,
+                [
+                    (medio[0] + perp_chica.x, medio[1] + perp_chica.y),
+                    (medio[0] - perp_chica.x, medio[1] - perp_chica.y),
+                    punta,
+                ],
+            )

@@ -55,6 +55,7 @@ class MenuInicio:
         if not self.cap.isOpened():
             self.cap = None
             return
+        self.fps_video = self.cap.get(cv2.CAP_PROP_FPS) or 24.0
         self._avanzar_frame()
 
     def _avanzar_frame(self):
@@ -84,7 +85,7 @@ class MenuInicio:
     def actualizar(self):
         if self.cap is not None and self.frame_actual is not None:
             ahora = pygame.time.get_ticks()
-            if ahora - self.ultimo_frame >= 1000 // 24:
+            if ahora - self.ultimo_frame >= 1000 / self.fps_video:
                 self._avanzar_frame()
 
         # Reloj interno para las animaciones de pulso (independiente del video)

@@ -10,7 +10,7 @@ except ImportError:  # pragma: no cover - opcional para la intro
 
 
 class MenuInicio:
-    """Pantalla de inicio con video de fondo y overlay con diseño cuidado."""
+    """Pantalla de inicio con fondo animado y overlay con diseño cuidado."""
 
     # Paleta: acento cian-eléctrico sobre fondo oscuro, coherente con "procedural"
     COLOR_ACENTO = (90, 220, 255)
@@ -18,7 +18,7 @@ class MenuInicio:
     COLOR_TEXTO_TENUE = (170, 180, 190)
     COLOR_FONDO = (10, 12, 18)
 
-    def __init__(self, ancho, alto, nombre_video="upscaled-video.mp4"):
+    def __init__(self, ancho, alto, nombre_video="image.gif"):
         self.ancho = ancho
         self.alto = alto
         self.ruta_video = os.path.join("assets", nombre_video)

@@ -9,6 +9,7 @@ el bucle principal del juego.
 import math
 import random
 
+import numpy as np
 import pygame
 
 from fondo import ParticulaAbstracta, dibujar_fondo_segmentado
@@ -32,8 +33,47 @@ ESTADO_GAME_OVER = "game_over"
 
 
 def opacidad_nivel(nivel):
-    """Devuelve la intensidad de oscurecimiento acumulada por nivel."""
-    return min(150, nivel * 14)
+    """Devuelve la intensidad de oscurecimiento acumulada por nivel.
+
+    Se mantiene deliberadamente sutil: el efecto principal de progresión
+    ahora lo lleva la pérdida de color (``saturacion_nivel``), no un velo
+    negro sobre la pantalla.
+    """
+    return min(40, nivel * 3)
+
+
+def saturacion_nivel(nivel):
+    """Devuelve cuánto color se ha perdido acumuladamente por nivel.
+
+    0.0 significa colores originales; 1.0 significa escala de grises total
+    y homogénea. Se alcanza el gris completo hacia el nivel 12.
+    """
+    return min(1.0, nivel / 12)
+
+
+def escala_grises(superficie, factor):
+    """Mezcla ``superficie`` con su versión en escala de grises.
+
+    Args:
+        superficie: Superficie de Pygame a procesar.
+        factor: 0.0 conserva los colores originales, 1.0 devuelve la
+            superficie completamente desaturada; valores intermedios
+            producen una mezcla proporcional.
+
+    Returns:
+        Una nueva superficie (o la misma, si ``factor`` es 0) con la
+        desaturación aplicada.
+    """
+    if factor <= 0:
+        return superficie
+    factor = min(1.0, factor)
+
+    colores = pygame.surfarray.array3d(superficie).astype(np.float32)
+    pesos_luminosidad = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    gris = (colores @ pesos_luminosidad)[:, :, None]
+
+    mezcla = colores * (1 - factor) + gris * factor
+    return pygame.surfarray.make_surface(mezcla.astype(np.uint8))
 
 
 # --------------------------------------------------------------------------
@@ -179,21 +219,28 @@ def main():
         if estado == ESTADO_MENU:
             menu.dibujar(screen, pygame.mouse.get_pos())
         else:
-            dibujar_fondo_segmentado(screen, tiempo, hue_fondo, WIDTH, HEIGHT)
+            # La escena se dibuja aparte para poder desaturarla como un todo
+            # antes de mezclarla con el resto de la interfaz.
+            escena = pygame.Surface((WIDTH, HEIGHT))
+            dibujar_fondo_segmentado(escena, tiempo, hue_fondo, WIDTH, HEIGHT)
 
             for particula in particulas:
                 particula.actualizar()
-                particula.dibujar(screen, tiempo)
+                particula.dibujar(escena, tiempo)
 
             for plataforma in plataformas:
                 if estado != ESTADO_GAME_OVER:
                     plataforma.actualizar()
-                plataforma.dibujar(screen, tiempo, nivel)
+                plataforma.dibujar(escena, tiempo, nivel)
 
-            jugador.dibujar(screen)
+            jugador.dibujar(escena)
 
             if estado == ESTADO_TRANSICION:
-                transicion.dibujar(screen)
+                transicion.dibujar(escena)
+
+            # Los colores se van perdiendo a medida que suben los niveles.
+            escena = escala_grises(escena, saturacion_nivel(nivel))
+            screen.blit(escena, (0, 0))
 
             # La escena se vuelve progresivamente más opaca al avanzar.
             alpha_opacidad = opacidad_nivel(nivel)

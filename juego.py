@@ -15,6 +15,7 @@ import numpy as np
 import pygame
 
 from fondo import ParticulaAbstracta, dibujar_fondo_segmentado
+from enemigo import generar_entidades
 from menu import MenuInicio
 from personaje import PersonajeHumanoide
 from plataformas import Plataforma, color_desde_hue
@@ -25,6 +26,7 @@ from transicion import TransicionCaricaturesca
 # --------------------------------------------------------------------------
 WIDTH, HEIGHT = 800, 600
 FPS = 60
+PESOS_LUMINOSIDAD = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 
 POS_SPAWN = pygame.Vector2(120, 235)  # centro del punto de aparición del jugador
 
@@ -71,8 +73,7 @@ def escala_grises(superficie, factor):
     factor = min(1.0, factor)
 
     colores = pygame.surfarray.array3d(superficie).astype(np.float32)
-    pesos_luminosidad = np.array([0.299, 0.587, 0.114], dtype=np.float32)
-    gris = (colores @ pesos_luminosidad)[:, :, None]
+    gris = (colores @ PESOS_LUMINOSIDAD)[:, :, None]
 
     mezcla = colores * (1 - factor) + gris * factor
     return pygame.surfarray.make_surface(mezcla.astype(np.uint8))
@@ -127,7 +128,8 @@ def generar_nivel(nivel):
 
     hue_fondo = random.random()
     hue_jugador = random.random()
-    return plataformas, hue_fondo, hue_jugador
+    entidades = generar_entidades(nivel, plataformas, POS_SPAWN)
+    return plataformas, hue_fondo, hue_jugador, entidades
 
 
 # --------------------------------------------------------------------------
@@ -147,6 +149,16 @@ def main():
         tamano_fuente -= 1
     fuente_boton = pygame.font.SysFont(None, tamano_fuente, bold=True)
     superficie_texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
+    escena = pygame.Surface((WIDTH, HEIGHT))
+    fondo_cache = pygame.Surface((WIDTH, HEIGHT))
+    capa_opacidad = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    panel_texto = pygame.Surface((110, 36), pygame.SRCALPHA)
+    panel_texto.fill((0, 0, 0, 90))
+    nivel_mostrado = None
+    texto_nivel = None
+    opacidad_mostrada = None
+    nivel_fondo = None
+    contador_frames = 0
     gifs_game_over = []
     for nombre_gif in ("image1.gif", "image2.gif", "image3.gif", "image4.gif"):
         fotogramas, duracion = cargar_gif(
@@ -156,7 +168,7 @@ def main():
             gifs_game_over.append((fotogramas, duracion))
 
     nivel = 0
-    plataformas, hue_fondo, hue_jugador = generar_nivel(nivel)
+    plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
     particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
 
     jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
@@ -170,6 +182,7 @@ def main():
     menu = MenuInicio(WIDTH, HEIGHT)
     jugando = True
     while jugando:
+        contador_frames += 1
         clock.tick(FPS)
         tiempo = pygame.time.get_ticks() / 1000.0
 
@@ -186,7 +199,7 @@ def main():
                 jugador.saltar()
             elif estado == ESTADO_GAME_OVER and evento.type == pygame.KEYDOWN and evento.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
                 nivel = 0
-                plataformas, hue_fondo, hue_jugador = generar_nivel(nivel)
+                plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
                 jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
                 jugador.rect.center = POS_SPAWN
                 transicion = None
@@ -198,7 +211,7 @@ def main():
                 and boton_reintentar.collidepoint(evento.pos)
             ):
                 nivel = 0
-                plataformas, hue_fondo, hue_jugador = generar_nivel(nivel)
+                plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
                 jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
                 jugador.rect.center = POS_SPAWN
                 transicion = None
@@ -210,12 +223,21 @@ def main():
             menu.actualizar()
         elif estado == ESTADO_JUGANDO:
             jugador.mover(plataformas)
-            alpha_overlay = 0
+            for entidad in entidades:
+                entidad.mover(plataformas, jugador.rect)
 
             plataforma_pisada = jugador.plataforma_actual
             if jugador.en_suelo and plataforma_pisada is not None and plataforma_pisada.es_trampa:
                 plataforma_pisada.activar_trampa()
                 jugador.iniciar_engullido(plataforma_pisada)
+                inicio_game_over = pygame.time.get_ticks()
+                if gifs_game_over:
+                    gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
+                estado = ESTADO_GAME_OVER
+
+            if estado == ESTADO_JUGANDO and any(
+                entidad.rect.colliderect(jugador.rect) for entidad in entidades
+            ):
                 inicio_game_over = pygame.time.get_ticks()
                 if gifs_game_over:
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
@@ -232,7 +254,7 @@ def main():
                 color_origen = jugador.color
                 pos_origen = pygame.Vector2(jugador.rect.center)
 
-                plataformas, hue_fondo, hue_jugador = generar_nivel(nivel)
+                plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
                 color_destino = color_desde_hue(hue_jugador)
 
                 transicion = TransicionCaricaturesca(
@@ -262,11 +284,13 @@ def main():
         else:
             # La escena se dibuja aparte para poder desaturarla como un todo
             # antes de mezclarla con el resto de la interfaz.
-            escena = pygame.Surface((WIDTH, HEIGHT))
             hay_gif_game_over = estado == ESTADO_GAME_OVER and bool(gif_game_over)
 
             if not hay_gif_game_over:
-                dibujar_fondo_segmentado(escena, tiempo, hue_fondo, WIDTH, HEIGHT)
+                if contador_frames % 2 == 0 or nivel != nivel_fondo:
+                    dibujar_fondo_segmentado(fondo_cache, tiempo, hue_fondo, WIDTH, HEIGHT)
+                    nivel_fondo = nivel
+                escena.blit(fondo_cache, (0, 0))
 
                 for particula in particulas:
                     particula.actualizar()
@@ -276,6 +300,9 @@ def main():
                     if estado != ESTADO_GAME_OVER:
                         plataforma.actualizar()
                     plataforma.dibujar(escena, tiempo, nivel)
+
+                for entidad in entidades:
+                    entidad.dibujar(escena, tiempo)
 
                 jugador.dibujar(escena)
 
@@ -289,15 +316,16 @@ def main():
             # La escena se vuelve progresivamente más opaca al avanzar.
             alpha_opacidad = opacidad_nivel(nivel)
             if alpha_opacidad > 0:
-                capa_opacidad = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-                capa_opacidad.fill((0, 0, 0, alpha_opacidad))
+                if alpha_opacidad != opacidad_mostrada:
+                    capa_opacidad.fill((0, 0, 0, alpha_opacidad))
+                    opacidad_mostrada = alpha_opacidad
                 screen.blit(capa_opacidad, (0, 0))
 
-            panel_texto = pygame.Surface((110, 36), pygame.SRCALPHA)
-            panel_texto.fill((0, 0, 0, 90))
             screen.blit(panel_texto, (6, 6))
-            texto = font.render(f"Nivel: {nivel}", True, (255, 255, 255))
-            screen.blit(texto, (14, 10))
+            if nivel != nivel_mostrado:
+                texto_nivel = font.render(f"Nivel: {nivel}", True, (255, 255, 255))
+                nivel_mostrado = nivel
+            screen.blit(texto_nivel, (14, 10))
 
             if estado == ESTADO_GAME_OVER:
                 if gif_game_over:

@@ -288,7 +288,7 @@ def main():
 
             if not hay_gif_game_over:
                 if contador_frames % 2 == 0 or nivel != nivel_fondo:
-                    dibujar_fondo_segmentado(fondo_cache, tiempo, hue_fondo, WIDTH, HEIGHT)
+                    dibujar_fondo_segmentado(fondo_cache, tiempo, hue_fondo, WIDTH, HEIGHT, nivel)
                     nivel_fondo = nivel
                 escena.blit(fondo_cache, (0, 0))
 

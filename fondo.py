@@ -271,21 +271,62 @@ def _dibujar_caleidoscopio(superficie, centro, radio, hue_base, tiempo, ancho, a
     superficie.blit(capa, (0, 0))
 
 
-def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto):
-    """Fondo psicodélico: manchas orgánicas, remolinos con goteo y mandala giratorio."""
-    hue_base = (hue_fondo + math.sin(tiempo * 0.35) * 0.05) % 1.0
+def _dibujar_ciudad(superficie, ancho, alto, hue_fondo, nivel, transicion):
+    """Superpone una silueta urbana para que el fondo gane coherencia con la
+    progresión del juego."""
+    if transicion <= 0:
+        return
 
-    # Cielo en degradado en vez de color plano: da profundidad atmosférica
-    # antes de apilar las formas caricaturescas encima.
+    capa = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+    hue_base = (hue_fondo + 0.08) % 1.0
+    cielo_arriba = color_desde_hue((hue_base - 0.04) % 1.0, 0.2, 0.92)
+    cielo_abajo = color_desde_hue((hue_base + 0.12) % 1.0, 0.15, 0.68)
+
+    for y in range(alto):
+        t = y / max(1, alto)
+        color = [
+            int(cielo_arriba[c] + (cielo_abajo[c] - cielo_arriba[c]) * t)
+            for c in range(3)
+        ]
+        pygame.draw.line(capa, (*color, int(190 * transicion)), (0, y), (ancho, y))
+
+    base_edificio = color_desde_hue((hue_base + 0.15) % 1.0, 0.16, 0.38)
+    borde_edificio = color_desde_hue((hue_base + 0.18) % 1.0, 0.2, 0.24)
+    for x in range(0, ancho, 26):
+        ancho_edif = 20 + ((x * 13 + int(nivel * 11)) % 34)
+        alto_edif = 60 + ((x * 19 + int(nivel * 17)) % (alto // 2))
+        y_edif = alto - alto_edif
+        pygame.draw.rect(capa, (*base_edificio, int(180 * transicion)), (x, y_edif, ancho_edif, alto_edif))
+        pygame.draw.rect(capa, (*borde_edificio, int(210 * transicion)), (x, y_edif, ancho_edif, alto_edif), 2)
+
+        for wx in range(x + 5, x + ancho_edif - 5, 8):
+            for wy in range(y_edif + 8, y_edif + alto_edif - 8, 11):
+                if ((wx + wy + nivel * 13) % 7) < 3:
+                    brillo = 140 + ((wx * 3 + wy) % 60)
+                    color_ventana = (min(255, brillo), min(255, brillo + 20), 160)
+                    pygame.draw.rect(capa, (*color_ventana, int(120 * transicion)), (wx, wy, 4, 6))
+
+    superficie.blit(capa, (0, 0))
+
+
+def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0):
+    """Transición progresiva desde el fondo abstracto hacia un skyline urbano más coherente."""
+    hue_base = (hue_fondo + math.sin(tiempo * 0.35) * 0.05) % 1.0
+    transicion = max(0.0, min(1.0, (nivel - 2) / 8.0))
+
     _fondo_degradado(superficie, ancho, alto, hue_base, tiempo)
 
-    # Mandala de fondo, muy sutil, para dar sensación de movimiento continuo.
+    capa_abstracta = pygame.Surface((ancho, alto), pygame.SRCALPHA)
     _dibujar_caleidoscopio(
-        superficie, (ancho * 0.5, alto * 0.5), max(ancho, alto) * 0.65, hue_base, tiempo, ancho, alto
+        capa_abstracta,
+        (ancho * 0.5, alto * 0.5),
+        max(ancho, alto) * 0.65,
+        hue_base,
+        tiempo,
+        ancho,
+        alto,
     )
-
-    # Textura de puntos estilo cómic/pop-art sobre el degradado.
-    _puntos_halftone(superficie, ancho, alto, tiempo, hue_base)
+    _puntos_halftone(capa_abstracta, ancho, alto, tiempo, hue_base)
 
     for i in range(6):
         hue = (hue_base + i / 6 + tiempo * 0.025) % 1.0
@@ -300,26 +341,24 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto):
         capa = _obtener_superficie(("bloque", i), tam)
         centro_local = (radio + margen, radio + margen)
 
-        # Mancha de bloque con contorno ondulado en vez de elipse perfecta.
-        _mancha_organica(capa, centro_local, radio, color, 58, tiempo, i * 1.7, puntos=24, asimetria=0.18)
-        _trazo_contorno(capa, centro_local, radio, color_pop, 80, tiempo, i * 1.7, grosor=3)
-        _trazo_tinta(capa, centro_local, radio, tiempo, i * 1.7, alpha=110, grosor=5)
+        _mancha_organica(capa, centro_local, radio, color, int(58 * (1.0 - transicion)), tiempo, i * 1.7, puntos=24, asimetria=0.18)
+        _trazo_contorno(capa, centro_local, radio, color_pop, int(80 * (1.0 - transicion)), tiempo, i * 1.7, grosor=3)
+        _trazo_tinta(capa, centro_local, radio, tiempo, i * 1.7, alpha=int(110 * (1.0 - transicion)), grosor=5)
 
         rect_local = pygame.Rect(margen, margen, radio * 2, radio * 2)
         pygame.draw.arc(
             capa,
-            (*color_pop, 130),
+            (*color_pop, int(130 * (1.0 - transicion))),
             rect_local.inflate(18, 18),
             math.radians(20 + i * 18 + tiempo * 14),
             math.radians(190 + i * 18 + tiempo * 14),
             12,
         )
-        superficie.blit(capa, (centro_x - radio - margen, centro_y - radio - margen))
+        capa_abstracta.blit(capa, (centro_x - radio - margen, centro_y - radio - margen))
 
-        # Goteo ocasional cayendo desde algunos bloques, típico del expresionismo abstracto.
         if i % 2 == 0:
             _dibujar_goteo(
-                superficie,
+                capa_abstracta,
                 centro_x + radio * 0.3,
                 centro_y + radio * 0.6,
                 90 + i * 10,
@@ -333,4 +372,7 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto):
         x = (ancho // 3) * (i + 1) - 80
         y = alto // 2 - 100
         radio = 160 + i * 40
-        _dibujar_remolino(superficie, x, y, radio, hue, tiempo, i)
+        _dibujar_remolino(capa_abstracta, x, y, radio, hue, tiempo, i)
+
+    superficie.blit(capa_abstracta, (0, 0))
+    _dibujar_ciudad(superficie, ancho, alto, hue_base, nivel, transicion)

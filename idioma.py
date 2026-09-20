@@ -2,6 +2,8 @@ TRADUCCIONES = {
     "en": {
         "play": "PLAY",
         "options": "OPTIONS",
+        "pause": "PAUSED",
+        "continue": "CONTINUE",
         "exit": "EXIT",
         "resolution": "RESOLUTION",
         "display_mode": "DISPLAY MODE",
@@ -24,6 +26,8 @@ TRADUCCIONES = {
     "es": {
         "play": "JUGAR",
         "options": "OPCIONES",
+        "pause": "PAUSA",
+        "continue": "CONTINUAR",
         "exit": "SALIR",
         "resolution": "RESOLUCION",
         "display_mode": "MODO DE PANTALLA",

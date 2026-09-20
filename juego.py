@@ -19,6 +19,7 @@ from enemigo import generar_entidades
 from idioma import texto
 from menu import MenuInicio
 from opciones import MenuOpciones
+from pausa import MenuPausa
 from personaje import PersonajeHumanoide
 from plataformas import Plataforma, color_desde_hue
 from transicion import TransicionCaricaturesca
@@ -34,6 +35,7 @@ POS_SPAWN = pygame.Vector2(120, 235)  # centro del punto de aparición del jugad
 
 ESTADO_MENU = "menu"
 ESTADO_OPCIONES = "opciones"
+ESTADO_PAUSA = "pausa"
 ESTADO_JUGANDO = "jugando"
 ESTADO_TRANSICION = "transicion"
 ESTADO_GAME_OVER = "game_over"
@@ -218,6 +220,7 @@ def main():
     gif_game_over = []
     duracion_fotograma_gif = 0.1
     menu = MenuInicio(WIDTH, HEIGHT)
+    pausa = MenuPausa(WIDTH, HEIGHT)
     configuracion = {
         "resoluciones": MenuOpciones.RESOLUCIONES,
         "resolucion": 0,
@@ -231,6 +234,7 @@ def main():
         },
     }
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
+    estado_despues_opciones = ESTADO_MENU
     jugando = True
     while jugando:
         contador_frames += 1
@@ -286,8 +290,30 @@ def main():
                 if accion_menu == "jugar":
                     estado = ESTADO_JUGANDO
                 elif accion_menu == "opciones":
+                    estado_despues_opciones = ESTADO_MENU
                     estado = ESTADO_OPCIONES
                 elif accion_menu == "salir":
+                    jugando = False
+            elif estado == ESTADO_PAUSA:
+                evento_pausa = evento
+                if evento.type == pygame.MOUSEBUTTONDOWN:
+                    evento_pausa = pygame.event.Event(
+                        evento.type,
+                        {
+                            "button": evento.button,
+                            "pos": (
+                                int(evento.pos[0] * WIDTH / screen.get_width()),
+                                int(evento.pos[1] * HEIGHT / screen.get_height()),
+                            ),
+                        },
+                    )
+                accion_pausa = pausa.manejar_evento(evento_pausa)
+                if accion_pausa == "continuar":
+                    estado = ESTADO_JUGANDO
+                elif accion_pausa == "opciones":
+                    estado_despues_opciones = ESTADO_PAUSA
+                    estado = ESTADO_OPCIONES
+                elif accion_pausa == "salir":
                     jugando = False
             elif estado == ESTADO_OPCIONES:
                 evento_opciones = evento
@@ -304,13 +330,15 @@ def main():
                     )
                 accion_opciones = opciones.manejar_evento(evento_opciones)
                 if accion_opciones == "volver":
-                    estado = ESTADO_MENU
+                    estado = estado_despues_opciones
                 elif accion_opciones == "aplicar":
                     ancho_nuevo, alto_nuevo = configuracion["resoluciones"][configuracion["resolucion"]]
                     modo_ventana = pygame.FULLSCREEN if configuracion["pantalla_completa"] else 0
                     screen = pygame.display.set_mode((ancho_nuevo, alto_nuevo), modo_ventana)
                     menu.actualizar_tamano(WIDTH, HEIGHT)
                     menu.establecer_idioma(configuracion["idioma"])
+                    pausa.actualizar_tamano(WIDTH, HEIGHT)
+                    pausa.establecer_idioma(configuracion["idioma"])
                     opciones.actualizar_tamano(WIDTH, HEIGHT)
                     pygame.display.set_caption(texto(configuracion["idioma"], "window_title"))
                     texto_boton = texto(configuracion["idioma"], "retry")
@@ -320,9 +348,13 @@ def main():
                     fuente_boton = pygame.font.SysFont(None, tamano_fuente, bold=True)
                     superficie_texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
                     idioma_mostrado = None
-                    estado = ESTADO_MENU
-            if estado == ESTADO_JUGANDO and evento.type == pygame.KEYDOWN and evento.key == configuracion["controles"]["jump"]:
-                jugador.saltar()
+                    estado = estado_despues_opciones
+            if estado == ESTADO_JUGANDO and evento.type == pygame.KEYDOWN:
+                if evento.key == pygame.K_ESCAPE:
+                    pausa.establecer_idioma(configuracion["idioma"])
+                    estado = ESTADO_PAUSA
+                elif evento.key == configuracion["controles"]["jump"]:
+                    jugador.saltar()
             elif estado == ESTADO_GAME_OVER and evento.type == pygame.KEYDOWN and evento.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
                 nivel = 0
                 plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
@@ -426,6 +458,14 @@ def main():
                 int(posicion_raton[1] * HEIGHT / screen.get_height()),
             )
             menu.dibujar(lienzo, posicion_raton_logica)
+            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
+        elif estado == ESTADO_PAUSA:
+            posicion_raton = pygame.mouse.get_pos()
+            posicion_raton_logica = (
+                int(posicion_raton[0] * WIDTH / screen.get_width()),
+                int(posicion_raton[1] * HEIGHT / screen.get_height()),
+            )
+            pausa.dibujar(lienzo, posicion_raton_logica)
             screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
         elif estado == ESTADO_OPCIONES:
             opciones.dibujar(lienzo)

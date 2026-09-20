@@ -221,11 +221,18 @@ class MenuOpciones:
             rect_dibujo.center,
         )
 
+        nombre_idioma_actual = {
+            "en": "english",
+            "es": "spanish",
+            "pt": "portuguese",
+            "ru": "russian",
+        }.get(idioma, "english")
+
         hover = self.boton_idioma.collidepoint(posicion_raton)
         rect_dibujo = self._dibujar_boton_comic(superficie, self.boton_idioma, "", hover)
         self._texto_centrado(
             superficie,
-            f"{texto(idioma, 'language')}: {texto(idioma, 'spanish' if idioma == 'en' else 'english')}",
+            f"{texto(idioma, 'language')}: {texto(idioma, nombre_idioma_actual)}",
             self.fuente,
             rect_dibujo.center,
         )

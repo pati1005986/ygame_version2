@@ -24,8 +24,6 @@ class PersonajeHumanoide:
         self.velocidad = 6
         self.fuerza_salto = -13
         self.en_suelo = False
-        self.salto_actual = 0
-        self.tiempo_doble_salto = 0.0
         self.plataforma_actual = None  # última plataforma sobre la que aterrizó
         self.direccion = 1
         self.agachado = False
@@ -67,6 +65,14 @@ class PersonajeHumanoide:
         self.sonido_salto = self._crear_sonido(620, 0.16, 0.18)
         self.sonido_paso = self._crear_sonido(125, 0.06, 0.10)
         self.sonido_aterrizaje = self._crear_sonido(95, 0.09, 0.14)
+
+        # --- Doble salto ---
+        self.saltos_maximos = 2
+        self.saltos_restantes = self.saltos_maximos
+        self.girando = False  # True mientras dura el giro del doble salto
+        self.angulo_giro = 0.0
+        self.velocidad_giro = 28  # grados por fotograma (~0.21s la vuelta completa a 60 FPS)
+        self.sonido_doble_salto = self._crear_sonido(880, 0.14, 0.16)
 
         # Tamaño de "pixel" para el look pixel art (bloques, no formas suaves)
         self.pixel = 4
@@ -237,13 +243,21 @@ class PersonajeHumanoide:
                     self.rect.top = plataforma.rect.bottom
                     self.vel_y = 0
 
-        if self.en_suelo:
-            self.salto_actual = 0
-        elif self.tiempo_doble_salto > 0:
-            self.tiempo_doble_salto -= 1
-
         aterrizando_ahora = self.en_suelo and estaba_en_aire
         ahora = pygame.time.get_ticks()
+
+        if aterrizando_ahora:
+            # Al tocar suelo se recarga el doble salto y, si venía girando,
+            # se corta el giro en seco para no aterrizar a medio girar.
+            self.saltos_restantes = self.saltos_maximos
+            self.girando = False
+            self.angulo_giro = 0.0
+
+        if self.girando:
+            self.angulo_giro += self.velocidad_giro
+            if self.angulo_giro >= 360:
+                self.angulo_giro = 0.0
+                self.girando = False
 
         # --- Animación suavizada por interpolación (evita cortes bruscos) ---
         caminando = caminando_input and self.en_suelo
@@ -322,19 +336,29 @@ class PersonajeHumanoide:
         return not any(rect_de_pie.colliderect(plataforma.rect) for plataforma in plataformas)
 
     def saltar(self):
-        """Inicia un salto desde el suelo o un segundo salto en el aire."""
-        puede_saltar = self.en_suelo or (not self.en_suelo and self.salto_actual == 1)
-        if puede_saltar and not self.agachado:
+        """Inicia un salto si el personaje está apoyado en una plataforma,
+        o un doble salto con giro si ya está en el aire y aún le queda uno
+        disponible (se recarga al volver a tocar el suelo)."""
+        if self.agachado:
+            return
+
+        if self.en_suelo:
             self.escala_y = 0.82  # ligera compresión instantánea al despegar
             self.vel_y = self.fuerza_salto
-            if self.en_suelo:
-                self.salto_actual = 1
-            else:
-                self.salto_actual = 2
-                self.tiempo_doble_salto = 18.0
-                self._emitir_particulas(6, self.rect.centerx, self.rect.centery, dispersion=12)
+            self.saltos_restantes = self.saltos_maximos - 1
             if self.sonido_salto:
                 self.sonido_salto.play()
+        elif self.saltos_restantes > 0:
+            self.saltos_restantes -= 1
+            self.vel_y = self.fuerza_salto * 0.88  # un poco más débil que el primero
+            self.escala_y = 1.15  # estiramiento (ya está en el aire, no hay compresión de despegue)
+            self.girando = True
+            self.angulo_giro = 0.0
+            self._emitir_particulas(
+                10, self.rect.centerx, self.rect.bottom, dispersion=self.rect.width * 0.6
+            )
+            if self.sonido_doble_salto:
+                self.sonido_doble_salto.play()
 
     def iniciar_engullido(self, plataforma):
         """Activa la animación de muerte por trampa, como si la plataforma se
@@ -347,6 +371,8 @@ class PersonajeHumanoide:
         self.vel_y = 0
         self.en_suelo = False
         self.plataforma_actual = None
+        self.girando = False
+        self.angulo_giro = 0.0
 
     def actualizar_engullido(self):
         """Avanza la animación de desaparición del personaje dentro de la
@@ -363,9 +389,18 @@ class PersonajeHumanoide:
             self.rect.x = self._lerp(self.rect.x, objetivo_x, 0.12)
 
     def dibujar(self, superficie):
-        """Dibuja el personaje usando bloques, sin cargar imágenes externas."""
-        centro_x = self.rect.centerx
-        pie_y = self.rect.bottom
+        """Dibuja el personaje usando bloques, sin cargar imágenes externas.
+
+        El cuerpo se dibuja primero en un lienzo local (``lienzo``) y luego
+        se planta sobre ``superficie`` en las coordenadas del mundo. Esta
+        indirección es la que permite rotarlo como un solo bloque durante
+        el giro del doble salto sin tener que tocar cada pieza; la sombra
+        y las partículas de polvo, en cambio, se pintan directamente sobre
+        ``superficie`` para que se queden ancladas al suelo y no giren
+        con el personaje.
+        """
+        centro_x_mundo = self.rect.centerx
+        pie_y_mundo = self.rect.bottom
         p = self.pixel
 
         # Paleta monocromática: todo deriva de self.color
@@ -381,14 +416,20 @@ class PersonajeHumanoide:
         bob_cabeza = int(self.bob_cabeza_actual)
         inclinacion = int(round(self.inclinacion_actual))
         estirar = self.escala_y
-        animacion_doble_salto = self.tiempo_doble_salto > 0
 
         if self.muriendo:
             estirar = max(0.08, 1.0 - self.tiempo_muerte * 1.45)
-            pie_y += int(self.tiempo_muerte * 32)
+            pie_y_mundo += int(self.tiempo_muerte * 32)
 
-        self._dibujar_sombra(superficie, centro_x, pie_y)
+        self._dibujar_sombra(superficie, centro_x_mundo, pie_y_mundo)
         self._dibujar_particulas(superficie, oscuro)
+
+        # --- Lienzo local para el cuerpo (ver docstring) ---
+        ANCHO_LIENZO = 140
+        ALTO_LIENZO = 180
+        centro_x = ANCHO_LIENZO // 2  # 70: el personaje siempre se dibuja centrado
+        pie_y = 150  # deja sitio de sobra arriba para cabeza + pelo + estiramientos
+        lienzo = pygame.Surface((ANCHO_LIENZO, ALTO_LIENZO), pygame.SRCALPHA)
 
         # Altura efectiva del cuerpo aplicando squash/stretch, manteniendo
         # los pies apoyados en pie_y.
@@ -405,41 +446,38 @@ class PersonajeHumanoide:
         pierna_der_y = base_y - alto_pierna
         desfase_pierna = balanceo // 2
         self._bloque_contorneado(
-            superficie, centro_x - 12 - desfase_pierna, pierna_izq_y, 9, alto_pierna, oscuro, contorno
+            lienzo, centro_x - 12 - desfase_pierna, pierna_izq_y, 9, alto_pierna, oscuro, contorno
         )
         self._bloque_contorneado(
-            superficie, centro_x + 3 + desfase_pierna, pierna_der_y, 9, alto_pierna, oscuro, contorno
+            lienzo, centro_x + 3 + desfase_pierna, pierna_der_y, 9, alto_pierna, oscuro, contorno
         )
 
         # Pies (un poco más anchos que las piernas, para que no parezcan
         # simples listones y den una base más sólida al personaje)
         self._bloque_contorneado(
-            superficie, centro_x - 15 - desfase_pierna, base_y - p, 13, p, muy_oscuro, contorno
+            lienzo, centro_x - 15 - desfase_pierna, base_y - p, 13, p, muy_oscuro, contorno
         )
         self._bloque_contorneado(
-            superficie, centro_x + 2 + desfase_pierna, base_y - p, 13, p, muy_oscuro, contorno
+            lienzo, centro_x + 2 + desfase_pierna, base_y - p, 13, p, muy_oscuro, contorno
         )
 
         # --- Torso (bloque principal, con una ligera inclinación hacia la
         # dirección de avance al caminar) ---
         torso_x = centro_x + inclinacion
         torso_y = base_y - alto_pierna - alto_torso
-        self._bloque_contorneado(superficie, torso_x - 14, torso_y, 28, alto_torso, base, contorno)
+        self._bloque_contorneado(lienzo, torso_x - 14, torso_y, 28, alto_torso, base, contorno)
         borde_sombra_x = torso_x + 10 if self.direccion > 0 else torso_x - 14
-        self._bloque(superficie, borde_sombra_x, torso_y, 4, alto_torso, oscuro)
+        self._bloque(lienzo, borde_sombra_x, torso_y, 4, alto_torso, oscuro)
 
         # --- Brazos (con manos: un bloque extra más oscuro en la punta) ---
         brazo_alto = round(self._lerp(20, 14, agachado) / p) * p
-        brazo_doble_salto = int(math.sin((18.0 - self.tiempo_doble_salto) * 0.7) * 5) if animacion_doble_salto else 0
-        brazo_izq_y = torso_y + 2 - balanceo + int(agachado * 6) - brazo_doble_salto
-        brazo_der_y = torso_y + 2 + balanceo + int(agachado * 6) - brazo_doble_salto
+        brazo_izq_y = torso_y + 2 - balanceo + int(agachado * 6)
+        brazo_der_y = torso_y + 2 + balanceo + int(agachado * 6)
         brazo_desplazamiento = int(agachado * 5) * self.direccion
-        brazo_izq_x = torso_x - 23 + brazo_desplazamiento - (p if animacion_doble_salto else 0)
-        brazo_der_x = torso_x + 14 + brazo_desplazamiento + (p if animacion_doble_salto else 0)
-        self._bloque_contorneado(superficie, brazo_izq_x, brazo_izq_y, 9, brazo_alto, claro, contorno)
-        self._bloque_contorneado(superficie, brazo_der_x, brazo_der_y, 9, brazo_alto, claro, contorno)
-        self._bloque(superficie, brazo_izq_x, brazo_izq_y + brazo_alto - p, 9, p, oscuro)
-        self._bloque(superficie, brazo_der_x, brazo_der_y + brazo_alto - p, 9, p, oscuro)
+        self._bloque_contorneado(lienzo, torso_x - 23 + brazo_desplazamiento, brazo_izq_y, 9, brazo_alto, claro, contorno)
+        self._bloque_contorneado(lienzo, torso_x + 14 + brazo_desplazamiento, brazo_der_y, 9, brazo_alto, claro, contorno)
+        self._bloque(lienzo, torso_x - 23 + brazo_desplazamiento, brazo_izq_y + brazo_alto - p, 9, p, oscuro)
+        self._bloque(lienzo, torso_x + 14 + brazo_desplazamiento, brazo_der_y + brazo_alto - p, 9, p, oscuro)
 
         # --- Cabeza (con un pequeño retraso respecto al torso para dar
         # sensación de "follow-through"). Es notablemente más grande que
@@ -450,12 +488,12 @@ class PersonajeHumanoide:
         cabeza_x = torso_x
         cabeza_y = torso_y - lado_cabeza - (bob_cabeza - bob)
         self._bloque_contorneado(
-            superficie, cabeza_x - lado_cabeza // 2, cabeza_y, lado_cabeza, lado_cabeza, claro, contorno
+            lienzo, cabeza_x - lado_cabeza // 2, cabeza_y, lado_cabeza, lado_cabeza, claro, contorno
         )
         # Sombra de mejilla/mandíbula: solo en la mitad inferior de la
         # cabeza para no atravesar los ojos.
         self._bloque(
-            superficie,
+            lienzo,
             cabeza_x - lado_cabeza // 2 + (lado_cabeza // 2 if self.direccion > 0 else 2),
             cabeza_y + lado_cabeza * 0.5,
             8,
@@ -463,8 +501,19 @@ class PersonajeHumanoide:
             base,
         )
 
-        self._dibujar_pelo(superficie, cabeza_x, cabeza_y, contorno)
-        self._dibujar_cara(superficie, cabeza_x, cabeza_y, lado_cabeza, contorno, blanco_ojo)
+        self._dibujar_pelo(lienzo, cabeza_x, cabeza_y, contorno)
+        self._dibujar_cara(lienzo, cabeza_x, cabeza_y, lado_cabeza, contorno, blanco_ojo)
+
+        # --- Giro del doble salto: se rota el lienzo completo. La rotación
+        # de pygame conserva el centro de la superficie, así que el ancla
+        # de mundo (calculada más abajo) sigue siendo válida tanto si el
+        # lienzo rotó como si no. ---
+        if self.girando:
+            angulo = self.angulo_giro if self.direccion >= 0 else -self.angulo_giro
+            lienzo = pygame.transform.rotate(lienzo, angulo)
+
+        ancla_mundo = (centro_x_mundo, pie_y_mundo - (150 - ALTO_LIENZO // 2))
+        superficie.blit(lienzo, lienzo.get_rect(center=ancla_mundo))
 
     def _dibujar_pelo(self, superficie, centro_x, cabeza_y, color):
         """Un pequeño mechón de pelo alborotado, a juego con los tufts de

@@ -183,6 +183,19 @@ def main():
         if fotogramas:
             gifs_game_over.append((fotogramas, duracion))
 
+    # Flashbacks: aparecen solo a partir del nivel 15 y permanecen unos
+    # segundos como máximo. La primera fase cubre toda la pantalla; después
+    # el GIF queda detrás del escenario jugable como fondo.
+    fotogramas_flashback, duracion_flashback = cargar_gif(
+        os.path.join("assets", "image5.gif"), (WIDTH, HEIGHT)
+    )
+    flashback_activo = False
+    flashback_inicio = 0.0
+    flashback_duracion_total = 0.0
+    flashback_duracion_pantalla = 0.0
+    proximo_flashback = 0.0
+    flashbacks_habilitados = False
+
     nivel = 0
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
     particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
@@ -204,6 +217,21 @@ def main():
         intensidad_shake *= 0.82
         if intensidad_shake < 0.05:
             intensidad_shake = 0.0
+
+        if nivel < 15 or not fotogramas_flashback or estado != ESTADO_JUGANDO:
+            flashback_activo = False
+            flashbacks_habilitados = False
+        elif not flashbacks_habilitados:
+            flashbacks_habilitados = True
+            proximo_flashback = tiempo + random.uniform(3.0, 8.0)
+        elif not flashback_activo and estado == ESTADO_JUGANDO and tiempo >= proximo_flashback:
+            flashback_activo = True
+            flashback_inicio = tiempo
+            flashback_duracion_total = random.uniform(1.0, 2.0)
+            flashback_duracion_pantalla = random.uniform(0.35, 0.65)
+        elif flashback_activo and tiempo - flashback_inicio >= flashback_duracion_total:
+            flashback_activo = False
+            proximo_flashback = tiempo + random.uniform(6.0, 14.0)
 
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
@@ -315,6 +343,14 @@ def main():
             hay_gif_game_over = estado == ESTADO_GAME_OVER and bool(gif_game_over)
 
             if not hay_gif_game_over:
+                tiempo_flashback = tiempo - flashback_inicio
+                indice_flashback = int(tiempo_flashback / duracion_flashback) % len(fotogramas_flashback) if flashback_activo else 0
+                fotograma_flashback = fotogramas_flashback[indice_flashback] if flashback_activo else None
+                flashback_en_fondo = (
+                    fotograma_flashback is not None
+                    and tiempo_flashback >= flashback_duracion_pantalla
+                )
+
                 # El fondo abstracto es lo más pesado de dibujar; con las
                 # optimizaciones de fondo.py ya es mucho más barato, pero
                 # de todas formas no hace falta recalcularlo en cada
@@ -323,7 +359,10 @@ def main():
                 if contador_frames % 3 == 0 or nivel != nivel_fondo:
                     dibujar_fondo_segmentado(fondo_cache, tiempo, hue_fondo, WIDTH, HEIGHT, nivel)
                     nivel_fondo = nivel
-                escena.blit(fondo_cache, (0, 0))
+                if flashback_en_fondo:
+                    escena.blit(fotograma_flashback, (0, 0))
+                else:
+                    escena.blit(fondo_cache, (0, 0))
 
                 for particula in particulas:
                     particula.actualizar()
@@ -353,6 +392,18 @@ def main():
                     screen.blit(escena, offset)
                 else:
                     screen.blit(escena, (0, 0))
+
+            # En la primera fase el recuerdo tapa incluso el escenario. El
+            # HUD se dibuja después para que el jugador conserve la referencia
+            # del nivel mientras la imagen ocupa toda la pantalla.
+            if (
+                flashback_activo
+                and fotogramas_flashback
+                and tiempo - flashback_inicio < flashback_duracion_pantalla
+            ):
+                tiempo_flashback = tiempo - flashback_inicio
+                indice_flashback = int(tiempo_flashback / duracion_flashback) % len(fotogramas_flashback)
+                screen.blit(fotogramas_flashback[indice_flashback], (0, 0))
 
             # La escena se vuelve progresivamente más opaca al avanzar.
             alpha_opacidad = opacidad_nivel(nivel)

@@ -15,10 +15,12 @@ except ImportError:  # pragma: no cover - opcional para la intro
 class MenuInicio:
     """Pantalla de inicio con fondo animado y overlay con diseño cuidado."""
 
-    # Paleta: acento cian-eléctrico sobre fondo oscuro, coherente con "procedural"
-    COLOR_ACENTO = (90, 220, 255)
-    COLOR_TEXTO = (235, 240, 245)
-    COLOR_TEXTO_TENUE = (170, 180, 190)
+    COLOR_BOTON = (255, 138, 61)
+    COLOR_BOTON_HOVER = (255, 179, 71)
+    COLOR_BOTON_SOMBRA = (120, 40, 10)
+    COLOR_BOTON_BORDE = (40, 20, 10)
+    COLOR_TEXTO_BOTON = (40, 20, 10)
+    COLOR_ACENTO = (255, 221, 87)
     COLOR_FONDO = (10, 12, 18)
 
     def __init__(self, ancho, alto, nombre_video="image.gif", idioma="en"):
@@ -32,7 +34,7 @@ class MenuInicio:
 
         self.font_titulo = pygame.font.SysFont("arialblack,arial", 54, bold=True)
         self.font_subtitulo = pygame.font.SysFont("arial", 20)
-        self.font_prompt = pygame.font.SysFont("arial", 22, bold=True)
+        self.font_prompt = pygame.font.SysFont("comicsansms", 22, bold=True)
 
         self.tiempo_inicio = pygame.time.get_ticks()
         self.reloj_pulso = 0.0
@@ -257,32 +259,36 @@ class MenuInicio:
             (self.boton_salir, "salir"),
         ):
             hover = mouse_pos is not None and rect.collidepoint(mouse_pos)
-            datos = self._cache_botones[(nombre, hover)]
-
-            superficie.blit(
-                datos["sombra"],
-                (rect.x + datos["offset_sombra"][0], rect.y + datos["offset_sombra"][1]),
+            rect_dibujo = self._dibujar_boton_comic(superficie, rect, hover)
+            clave = {"jugar": "play", "opciones": "options", "salir": "exit"}[nombre]
+            self._texto_centrado(
+                superficie,
+                texto(self.idioma, clave),
+                self.font_prompt,
+                rect_dibujo.center,
+                self.COLOR_TEXTO_BOTON,
             )
-            superficie.blit(
-                datos["forma"],
-                (rect.x + datos["offset_forma"][0], rect.y + datos["offset_forma"][1]),
-            )
 
-            # Resplandor: sigue el mismo pulso que la línea de acento y se
-            # intensifica un poco más al pasar el mouse por encima.
-            intensidad = (1.0 if hover else 0.55) * pulso
-            for i in range(4):
-                radio = int((10 + i * 8) * (1.0 + 0.12 * pulso))
-                x = rect.centerx + (-28 + i * 18)
-                y = rect.centery + (-12 + i * 6)
-                color = self._hue_to_rgb((0.5 + i * 0.15) % 1.0, 0.8, 0.7)
-                pygame.draw.ellipse(
-                    superficie,
-                    (*color, int(110 * intensidad)),
-                    (x - radio, y - radio, radio * 2, radio * 2),
-                )
+    def _dibujar_boton_comic(self, superficie, rect, hover=False, radio=14):
+        desplazamiento_sombra = 6 if not hover else 3
+        rect_sombra = rect.move(desplazamiento_sombra, desplazamiento_sombra)
+        pygame.draw.rect(superficie, self.COLOR_BOTON_SOMBRA, rect_sombra, border_radius=radio)
 
-            superficie.blit(datos["label"], datos["label"].get_rect(center=rect.center))
+        color_relleno = self.COLOR_BOTON_HOVER if hover else self.COLOR_BOTON
+        rect_dibujo = rect.move(-3 if hover else 0, -3 if hover else 0)
+        pygame.draw.rect(superficie, color_relleno, rect_dibujo, border_radius=radio)
+        pygame.draw.rect(superficie, self.COLOR_BOTON_BORDE, rect_dibujo, width=3, border_radius=radio)
+
+        brillo = pygame.Rect(
+            rect_dibujo.x + 8,
+            rect_dibujo.y + 4,
+            max(rect_dibujo.width - 16, 0),
+            rect_dibujo.height // 3,
+        )
+        superficie_brillo = pygame.Surface(brillo.size, pygame.SRCALPHA)
+        superficie_brillo.fill((255, 255, 255, 60))
+        superficie.blit(superficie_brillo, brillo.topleft)
+        return rect_dibujo
 
     def _hue_to_rgb(self, hue, saturation, lightness):
         hue = hue % 1.0
@@ -314,6 +320,10 @@ class MenuInicio:
         )
         principal = font.render(texto, True, color)
         superficie.blit(principal, principal.get_rect(center=centro))
+
+    def _texto_centrado(self, superficie, contenido, fuente, centro, color):
+        imagen = fuente.render(contenido, True, color)
+        superficie.blit(imagen, imagen.get_rect(center=centro))
 
     # ------------------------------------------------------------------
     def manejar_evento(self, evento):

@@ -434,6 +434,7 @@ def main():
                     color_destino,
                     pos_origen,
                     POS_SPAWN,
+                    nivel=nivel,
                 )
                 jugador.vel_y = 0
                 estado = ESTADO_TRANSICION

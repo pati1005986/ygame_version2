@@ -190,6 +190,15 @@ def main():
         if fotogramas:
             gifs_game_over.append((fotogramas, duracion))
 
+    secuencia_game_over = []
+    for nombre_gif in ("image7.gif", "image8.gif", "image9.gif"):
+        fotogramas, duracion = cargar_gif(
+            os.path.join("assets", nombre_gif), (WIDTH, HEIGHT)
+        )
+        if fotogramas:
+            secuencia_game_over.append((fotogramas, duracion))
+    duracion_imagen_game_over = 3.0
+
     # Flashbacks: aparecen unos segundos como fondo y nunca cubren al jugador
     # ni la interfaz. image6 se reserva para los niveles iniciales y image5
     # para los niveles avanzados.
@@ -219,6 +228,7 @@ def main():
     inicio_game_over = pygame.time.get_ticks()
     gif_game_over = []
     duracion_fotograma_gif = 0.1
+    indice_imagen_game_over = 0
     menu = MenuInicio(WIDTH, HEIGHT)
     pausa = MenuPausa(WIDTH, HEIGHT)
     configuracion = {
@@ -402,7 +412,10 @@ def main():
                 jugador.iniciar_engullido(plataforma_pisada)
                 inicio_game_over = pygame.time.get_ticks()
                 intensidad_shake = 9.0
-                if gifs_game_over:
+                indice_imagen_game_over = 0
+                if nivel >= 15 and secuencia_game_over:
+                    gif_game_over, duracion_fotograma_gif = secuencia_game_over[0]
+                elif gifs_game_over:
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
                 estado = ESTADO_GAME_OVER
 
@@ -411,7 +424,10 @@ def main():
             ):
                 inicio_game_over = pygame.time.get_ticks()
                 intensidad_shake = 9.0
-                if gifs_game_over:
+                indice_imagen_game_over = 0
+                if nivel >= 15 and secuencia_game_over:
+                    gif_game_over, duracion_fotograma_gif = secuencia_game_over[0]
+                elif gifs_game_over:
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
                 estado = ESTADO_GAME_OVER
 
@@ -543,6 +559,13 @@ def main():
             lienzo.blit(texto_nivel, (14, 10))
 
             if estado == ESTADO_GAME_OVER:
+                if nivel >= 15 and secuencia_game_over:
+                    indice_imagen_game_over = min(
+                        int((pygame.time.get_ticks() - inicio_game_over) / 1000 / duracion_imagen_game_over),
+                        len(secuencia_game_over) - 1,
+                    )
+                    gif_game_over, duracion_fotograma_gif = secuencia_game_over[indice_imagen_game_over]
+
                 if gif_game_over:
                     indice_gif = int(
                         (pygame.time.get_ticks() - inicio_game_over)

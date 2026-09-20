@@ -183,16 +183,20 @@ def main():
         if fotogramas:
             gifs_game_over.append((fotogramas, duracion))
 
-    # Flashbacks: aparecen solo a partir del nivel 15 y permanecen unos
-    # segundos como máximo. La primera fase cubre toda la pantalla; después
-    # el GIF queda detrás del escenario jugable como fondo.
-    fotogramas_flashback, duracion_flashback = cargar_gif(
+    # Flashbacks: aparecen unos segundos como fondo y nunca cubren al jugador
+    # ni la interfaz. image6 se reserva para los niveles iniciales y image5
+    # para los niveles avanzados.
+    fotogramas_flashback_inicial, duracion_flashback_inicial = cargar_gif(
+        os.path.join("assets", "image6.gif"), (WIDTH, HEIGHT)
+    )
+    fotogramas_flashback_avanzado, duracion_flashback_avanzado = cargar_gif(
         os.path.join("assets", "image5.gif"), (WIDTH, HEIGHT)
     )
     flashback_activo = False
     flashback_inicio = 0.0
     flashback_duracion_total = 0.0
-    flashback_duracion_pantalla = 0.0
+    fotogramas_flashback = []
+    duracion_flashback = 0.1
     proximo_flashback = 0.0
     flashbacks_habilitados = False
 
@@ -218,17 +222,28 @@ def main():
         if intensidad_shake < 0.05:
             intensidad_shake = 0.0
 
-        if nivel < 15 or not fotogramas_flashback or estado != ESTADO_JUGANDO:
+        if 1 <= nivel <= 5:
+            fotogramas_disponibles = fotogramas_flashback_inicial
+            duracion_disponible = duracion_flashback_inicial
+        elif nivel >= 15:
+            fotogramas_disponibles = fotogramas_flashback_avanzado
+            duracion_disponible = duracion_flashback_avanzado
+        else:
+            fotogramas_disponibles = []
+            duracion_disponible = 0.1
+
+        if estado != ESTADO_JUGANDO or not fotogramas_disponibles:
             flashback_activo = False
             flashbacks_habilitados = False
         elif not flashbacks_habilitados:
             flashbacks_habilitados = True
+            fotogramas_flashback = fotogramas_disponibles
+            duracion_flashback = duracion_disponible
             proximo_flashback = tiempo + random.uniform(3.0, 8.0)
         elif not flashback_activo and estado == ESTADO_JUGANDO and tiempo >= proximo_flashback:
             flashback_activo = True
             flashback_inicio = tiempo
             flashback_duracion_total = random.uniform(1.0, 2.0)
-            flashback_duracion_pantalla = random.uniform(0.35, 0.65)
         elif flashback_activo and tiempo - flashback_inicio >= flashback_duracion_total:
             flashback_activo = False
             proximo_flashback = tiempo + random.uniform(6.0, 14.0)
@@ -346,10 +361,6 @@ def main():
                 tiempo_flashback = tiempo - flashback_inicio
                 indice_flashback = int(tiempo_flashback / duracion_flashback) % len(fotogramas_flashback) if flashback_activo else 0
                 fotograma_flashback = fotogramas_flashback[indice_flashback] if flashback_activo else None
-                flashback_en_fondo = (
-                    fotograma_flashback is not None
-                    and tiempo_flashback >= flashback_duracion_pantalla
-                )
 
                 # El fondo abstracto es lo más pesado de dibujar; con las
                 # optimizaciones de fondo.py ya es mucho más barato, pero
@@ -359,7 +370,7 @@ def main():
                 if contador_frames % 3 == 0 or nivel != nivel_fondo:
                     dibujar_fondo_segmentado(fondo_cache, tiempo, hue_fondo, WIDTH, HEIGHT, nivel)
                     nivel_fondo = nivel
-                if flashback_en_fondo:
+                if fotograma_flashback is not None:
                     escena.blit(fotograma_flashback, (0, 0))
                 else:
                     escena.blit(fondo_cache, (0, 0))
@@ -392,18 +403,6 @@ def main():
                     screen.blit(escena, offset)
                 else:
                     screen.blit(escena, (0, 0))
-
-            # En la primera fase el recuerdo tapa incluso el escenario. El
-            # HUD se dibuja después para que el jugador conserve la referencia
-            # del nivel mientras la imagen ocupa toda la pantalla.
-            if (
-                flashback_activo
-                and fotogramas_flashback
-                and tiempo - flashback_inicio < flashback_duracion_pantalla
-            ):
-                tiempo_flashback = tiempo - flashback_inicio
-                indice_flashback = int(tiempo_flashback / duracion_flashback) % len(fotogramas_flashback)
-                screen.blit(fotogramas_flashback[indice_flashback], (0, 0))
 
             # La escena se vuelve progresivamente más opaca al avanzar.
             alpha_opacidad = opacidad_nivel(nivel)

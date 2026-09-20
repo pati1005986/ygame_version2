@@ -44,6 +44,22 @@ class MenuInicio:
 
         self._cargar_video()
 
+        # --- Cachés de renderizado ---
+        # La viñeta, el degradado del panel y cada botón (normal/hover) son
+        # idénticos en cada fotograma; antes se reconstruían por completo
+        # 60 veces por segundo (líneas del degradado, polígonos del botón,
+        # incluso el texto con font.render). Se calculan una sola vez aquí
+        # y en dibujar() solo se hace un blit barato, dejando el
+        # presupuesto de CPU para el pulso animado de abajo.
+        self._capa_vineta = self._construir_vineta()
+        self._capa_panel_base = self._construir_panel_base()
+        self._cache_botones = {
+            ("jugar", False): self._construir_boton(self.boton_jugar, "JUGAR", (2, 2, 2)),
+            ("jugar", True): self._construir_boton(self.boton_jugar, "JUGAR", (90, 200, 255), hover=True),
+            ("salir", False): self._construir_boton(self.boton_salir, "SALIR", (2, 2, 2)),
+            ("salir", True): self._construir_boton(self.boton_salir, "SALIR", (255, 120, 150), hover=True),
+        }
+
     # ------------------------------------------------------------------
     # Carga y reproducción de video
     # ------------------------------------------------------------------
@@ -104,77 +120,122 @@ class MenuInicio:
         self._dibujar_panel_inferior(superficie, mouse_pos)
 
     def _dibujar_vineta(self, superficie):
-        """Oscurece bordes arriba/abajo para que el texto siempre sea legible,
-        sin depender del contenido del video."""
-        vineta_superior = pygame.Surface((self.ancho, 140), pygame.SRCALPHA)
+        """Aplica la viñeta superior precalculada (ver ``_construir_vineta``)."""
+        superficie.blit(self._capa_vineta, (0, 0))
+
+    def _construir_vineta(self):
+        """Degradado que oscurece el borde superior para que el texto sea
+        legible sobre cualquier fotograma del video. No depende de nada que
+        cambie fotograma a fotograma, así que se calcula una sola vez."""
+        capa = pygame.Surface((self.ancho, 140), pygame.SRCALPHA)
         for y in range(140):
             alpha = int(150 * (1 - y / 140))
-            pygame.draw.line(vineta_superior, (0, 0, 0, alpha), (0, y), (self.ancho, y))
-        superficie.blit(vineta_superior, (0, 0))
+            pygame.draw.line(capa, (0, 0, 0, alpha), (0, y), (self.ancho, y))
+        return capa
 
-    def _dibujar_panel_inferior(self, superficie, mouse_pos=None):
+    def _construir_panel_base(self):
+        """Degradado del panel inferior, sin la línea de acento (esa se
+        redibuja aparte cada fotograma para poder darle un pulso de brillo
+        sin tener que reconstruir todo el panel)."""
         alto_panel = 170
-        panel = pygame.Surface((self.ancho, alto_panel), pygame.SRCALPHA)
-
+        capa = pygame.Surface((self.ancho, alto_panel), pygame.SRCALPHA)
         for y in range(alto_panel):
             alpha = int(190 * (y / alto_panel))
-            pygame.draw.line(panel, (0, 0, 0, alpha), (0, y), (self.ancho, y))
+            pygame.draw.line(capa, (0, 0, 0, alpha), (0, y), (self.ancho, y))
+        return capa
 
-        pygame.draw.line(panel, (*self.COLOR_ACENTO, 200), (0, 0), (self.ancho, 0), 2)
-        superficie.blit(panel, (0, self.alto - alto_panel))
+    def _construir_boton(self, rect, texto, color, hover=False):
+        """Precalcula la forma del botón (polígono + barras + sombra + el
+        texto ya renderizado) para un estado dado (normal u hover).
 
-        for rect, texto, color_base, color_hover in (
-            (self.boton_jugar, "JUGAR", (2, 2, 2), (90, 200, 255)),
-            (self.boton_salir, "SALIR", (2, 2, 2), (255, 120, 150)),
-        ):
+        Devuelve un diccionario listo para blitear en cada fotograma: nada
+        de esto vuelve a dibujarse punto por punto en el bucle principal.
+        """
+        escala = 1.12 if hover else 1.0
+        forma = pygame.Surface((int(rect.width * escala), int(rect.height * escala)), pygame.SRCALPHA)
+        cx = forma.get_width() // 2
+        cy = forma.get_height() // 2
+
+        puntos = [
+            (cx - 70, 8),
+            (cx + 60, 0),
+            (cx + 78, cy - 10),
+            (cx + 70, cy + 24),
+            (cx + 82, cy + 32),
+            (cx + 52, forma.get_height() - 8),
+            (cx - 58, forma.get_height() - 2),
+            (cx - 75, cy + 20),
+            (cx - 84, cy - 6),
+        ]
+        pygame.draw.polygon(forma, (*color, 220), puntos)
+
+        barras = pygame.Surface((forma.get_width(), forma.get_height()), pygame.SRCALPHA)
+        for i in range(6):
+            x = 18 + i * 12
+            ancho = 12 + i * 3
+            alto = forma.get_height() * (0.28 + i * 0.06)
+            y = forma.get_height() - alto - 6
+            r = pygame.Rect(x, y, ancho, alto)
+            pygame.draw.ellipse(barras, (*self._hue_to_rgb(0.55 + i * 0.08, 0.8, 0.7), 120), r)
+        forma.blit(barras, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+
+        sombra = pygame.Surface((forma.get_width(), forma.get_height()), pygame.SRCALPHA)
+        pygame.draw.polygon(sombra, (0, 0, 0, 90), puntos)
+
+        label = self.font_prompt.render(texto, True, (255, 255, 255))
+
+        return {
+            "forma": forma,
+            "sombra": sombra,
+            "label": label,
+            "offset_forma": (
+                -int((escala - 1) * rect.width / 2),
+                -int((escala - 1) * rect.height / 2),
+            ),
+            "offset_sombra": (8, 10),
+        }
+
+    def _dibujar_panel_inferior(self, superficie, mouse_pos=None):
+        superficie.blit(self._capa_panel_base, (0, self.alto - self._capa_panel_base.get_height()))
+
+        # Pulso barato (un valor de seno por fotograma) para que la línea
+        # de acento y el resplandor de los botones respiren un poco en vez
+        # de quedar completamente estáticos, sin recrear ninguna Surface.
+        pulso = 0.65 + 0.35 * math.sin(self.reloj_pulso * 2.4)
+        y_linea = self.alto - self._capa_panel_base.get_height()
+        alpha_acento = int(140 + 100 * pulso)
+        pygame.draw.line(
+            superficie, (*self.COLOR_ACENTO, alpha_acento), (0, y_linea), (self.ancho, y_linea), 2
+        )
+
+        for rect, nombre in ((self.boton_jugar, "jugar"), (self.boton_salir, "salir")):
             hover = mouse_pos is not None and rect.collidepoint(mouse_pos)
-            color = color_hover if hover else color_base
+            datos = self._cache_botones[(nombre, hover)]
 
-            escala = 1.12 if hover else 1.0
-            forma = pygame.Surface((int(rect.width * escala), int(rect.height * escala)), pygame.SRCALPHA)
-            cx = forma.get_width() // 2
-            cy = forma.get_height() // 2
+            superficie.blit(
+                datos["sombra"],
+                (rect.x + datos["offset_sombra"][0], rect.y + datos["offset_sombra"][1]),
+            )
+            superficie.blit(
+                datos["forma"],
+                (rect.x + datos["offset_forma"][0], rect.y + datos["offset_forma"][1]),
+            )
 
-            puntos = [
-                (cx - 70, 8),
-                (cx + 60, 0),
-                (cx + 78, cy - 10),
-                (cx + 70, cy + 24),
-                (cx + 82, cy + 32),
-                (cx + 52, forma.get_height() - 8),
-                (cx - 58, forma.get_height() - 2),
-                (cx - 75, cy + 20),
-                (cx - 84, cy - 6),
-            ]
-            pygame.draw.polygon(forma, (*color, 220), puntos)
-
-            barras = pygame.Surface((forma.get_width(), forma.get_height()), pygame.SRCALPHA)
-            for i in range(6):
-                x = 18 + i * 12
-                ancho = 12 + i * 3
-                alto = forma.get_height() * (0.28 + i * 0.06)
-                y = forma.get_height() - alto - 6
-                r = pygame.Rect(x, y, ancho, alto)
-                pygame.draw.ellipse(barras, (*self._hue_to_rgb(0.55 + i * 0.08, 0.8, 0.7), 120), r)
-            forma.blit(barras, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
-
-            sombra = pygame.Surface((forma.get_width(), forma.get_height()), pygame.SRCALPHA)
-            pygame.draw.polygon(sombra, (0, 0, 0, 90), puntos)
-            superficie.blit(sombra, (rect.x + 8, rect.y + 10))
-            superficie.blit(forma, (rect.x - int((escala - 1) * rect.width / 2), rect.y - int((escala - 1) * rect.height / 2)))
-
+            # Resplandor: sigue el mismo pulso que la línea de acento y se
+            # intensifica un poco más al pasar el mouse por encima.
+            intensidad = (1.0 if hover else 0.55) * pulso
             for i in range(4):
-                radio = 10 + i * 8
+                radio = int((10 + i * 8) * (1.0 + 0.12 * pulso))
                 x = rect.centerx + (-28 + i * 18)
                 y = rect.centery + (-12 + i * 6)
+                color = self._hue_to_rgb((0.5 + i * 0.15) % 1.0, 0.8, 0.7)
                 pygame.draw.ellipse(
                     superficie,
-                    (*self._hue_to_rgb((0.5 + i * 0.15) % 1.0, 0.8, 0.7), 110),
+                    (*color, int(110 * intensidad)),
                     (x - radio, y - radio, radio * 2, radio * 2),
                 )
 
-            label = self.font_prompt.render(texto, True, (255, 255, 255))
-            superficie.blit(label, label.get_rect(center=rect.center))
+            superficie.blit(datos["label"], datos["label"].get_rect(center=rect.center))
 
     def _hue_to_rgb(self, hue, saturation, lightness):
         hue = hue % 1.0

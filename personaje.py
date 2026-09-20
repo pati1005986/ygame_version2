@@ -182,7 +182,7 @@ class PersonajeHumanoide:
         rect = sombra.get_rect(center=(centro_x, pie_y + 2))
         superficie.blit(sombra, rect.topleft)
 
-    def mover(self, plataformas):
+    def mover(self, plataformas, controles=None):
         """Lee el teclado, aplica gravedad y resuelve colisiones.
 
         ``plataformas`` debe contener objetos con un atributo ``rect`` de
@@ -191,7 +191,12 @@ class PersonajeHumanoide:
         del personaje.
         """
         teclas = pygame.key.get_pressed()
-        quiere_agacharse = teclas[pygame.K_s] or teclas[pygame.K_DOWN]
+        controles = controles or {
+            "left": pygame.K_a,
+            "right": pygame.K_d,
+            "down": pygame.K_s,
+        }
+        quiere_agacharse = teclas[controles["down"]] or teclas[pygame.K_DOWN]
         if quiere_agacharse and not self.agachado:
             self._cambiar_altura(self.altura_agachado)
             self.agachado = True
@@ -203,9 +208,9 @@ class PersonajeHumanoide:
         self.agachado_animacion = self._lerp(self.agachado_animacion, objetivo_agachado, 0.28)
 
         dx = 0
-        if teclas[pygame.K_LEFT] or teclas[pygame.K_a]:
+        if teclas[controles["left"]] or teclas[pygame.K_LEFT]:
             dx = -self.velocidad
-        if teclas[pygame.K_RIGHT] or teclas[pygame.K_d]:
+        if teclas[controles["right"]] or teclas[pygame.K_RIGHT]:
             dx = self.velocidad
 
         caminando_input = dx != 0

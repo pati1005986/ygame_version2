@@ -313,16 +313,142 @@ def _dibujar_caleidoscopio(superficie, centro, radio, hue_base, tiempo, ancho, a
 _CACHE_CIUDAD = {}
 
 
+def _dibujar_halo_celeste(capa, ancho, alto, hue_base, transicion):
+    """Sol/luna de ambiente detrás del skyline: le da a la ciudad un punto
+    focal luminoso en vez de dejar los edificios contra un degradado plano."""
+    centro = (int(ancho * 0.76), int(alto * 0.2))
+    color = color_desde_hue((hue_base + 0.5) % 1.0, 0.3, 0.95)
+    radio_max = min(ancho, alto) * 0.22
+
+    for i in range(5, 0, -1):
+        r = int(radio_max * i / 5)
+        alpha = int(22 * transicion * (1 - i / 5 * 0.5))
+        pygame.draw.circle(capa, (*color, alpha), centro, r)
+
+    pygame.draw.circle(capa, (*color, int(130 * transicion)), centro, int(radio_max * 0.3))
+    pygame.draw.circle(
+        capa,
+        (*color_desde_hue((hue_base + 0.5) % 1.0, 0.15, 0.99), int(90 * transicion)),
+        centro,
+        int(radio_max * 0.16),
+    )
+
+
+def _dibujar_capa_edificios(capa, ancho, alto, hue_base, nivel, transicion, lejos):
+    """Dibuja una fila de edificios. Se llama dos veces (``lejos=True`` y
+    ``lejos=False``) para lograr una silueta con parallax: una capa lejana
+    achatada y desdibujada por la niebla atmosférica, detrás de una capa
+    cercana más alta, oscura y con detalle (ventanas, techos variados,
+    antenas, tanques de agua) — en vez de una única fila de cajas idénticas.
+    """
+    if lejos:
+        paso = 34
+        sal = 5
+        color_edif = color_desde_hue((hue_base + 0.09) % 1.0, 0.12, 0.58)
+        color_borde = color_desde_hue((hue_base + 0.09) % 1.0, 0.12, 0.5)
+        alpha_mult = 0.5
+        alto_max = max(40, int(alto * 0.32))
+    else:
+        paso = 27
+        sal = 17
+        color_edif = color_desde_hue((hue_base + 0.16) % 1.0, 0.2, 0.32)
+        color_borde = (18, 14, 28)  # contorno tipo tinta, igual que el resto del fondo
+        alpha_mult = 1.0
+        alto_max = max(60, int(alto * 0.52))
+
+    for x in range(0, ancho, paso):
+        indice = x // paso
+        ancho_edif = paso - (2 if lejos else 4) + ((x * 13 + nivel * 11 + sal) % (6 if lejos else 10))
+        alto_edif = int(70 + ((x * 19 + nivel * 17 + sal * 7) % alto_max))
+        y_edif = alto - alto_edif
+
+        pygame.draw.rect(
+            capa, (*color_edif, int(180 * transicion * alpha_mult)), (x, y_edif, ancho_edif, alto_edif)
+        )
+        pygame.draw.rect(
+            capa, (*color_borde, int(210 * transicion * alpha_mult)), (x, y_edif, ancho_edif, alto_edif), 2
+        )
+
+        if lejos:
+            continue  # la capa lejana es solo silueta: sin remates ni ventanas
+
+        # --- Remate del techo: varía por edificio para romper la monotonía
+        # de "todo son cajas idénticas" que tenía el diseño anterior. ---
+        tipo_techo = (indice + nivel) % 4
+        if tipo_techo == 0:
+            # Escalonado (ziggurat): un bloque más angosto encima.
+            inset = max(3, ancho_edif // 5)
+            remate = (x + inset, y_edif - 10, max(2, ancho_edif - inset * 2), 10)
+            pygame.draw.rect(capa, (*color_edif, int(180 * transicion)), remate)
+            pygame.draw.rect(capa, (*color_borde, int(210 * transicion)), remate, 1)
+        elif tipo_techo == 1:
+            # Techo a dos aguas, como un remate clásico de tejado.
+            cima = (x + ancho_edif / 2, y_edif - 16)
+            triangulo = [cima, (x, y_edif), (x + ancho_edif, y_edif)]
+            pygame.draw.polygon(capa, (*color_edif, int(190 * transicion)), triangulo)
+            pygame.draw.polygon(capa, (*color_borde, int(210 * transicion)), triangulo, 1)
+        elif tipo_techo == 2:
+            # Antena de radio con lucecita en la punta.
+            base_antena = (x + ancho_edif * 0.5, y_edif)
+            punta_antena = (base_antena[0], y_edif - 26)
+            pygame.draw.line(capa, (*color_borde, int(220 * transicion)), base_antena, punta_antena, 2)
+            pygame.draw.circle(
+                capa,
+                (*color_desde_hue((hue_base + 0.55) % 1.0, 0.85, 0.95), int(200 * transicion)),
+                (int(punta_antena[0]), int(punta_antena[1])),
+                3,
+            )
+        else:
+            # Tanque de agua sobre patas: un detalle clásico de skyline urbano.
+            radio_tanque = max(5, ancho_edif // 4)
+            centro_tanque = (int(x + ancho_edif * 0.5), int(y_edif - radio_tanque - 4))
+            for dx in (-radio_tanque * 0.6, radio_tanque * 0.6):
+                pygame.draw.line(
+                    capa,
+                    (*color_borde, int(200 * transicion)),
+                    (centro_tanque[0] + dx, centro_tanque[1] + radio_tanque),
+                    (centro_tanque[0] + dx * 1.4, y_edif),
+                    2,
+                )
+            pygame.draw.circle(capa, (*color_edif, int(200 * transicion)), centro_tanque, radio_tanque)
+            pygame.draw.circle(capa, (*color_borde, int(210 * transicion)), centro_tanque, radio_tanque, 2)
+
+        # --- Ventanas: alternan entre un cálido (interiores con luz) y un
+        # frío (cristal reflejando el cielo), en vez del amarillo único de
+        # antes, y más de la mitad de la fachada queda a oscuras para que
+        # la que sí está iluminada resalte. ---
+        for wx in range(x + 5, x + ancho_edif - 5, 8):
+            for wy in range(y_edif + 8, y_edif + alto_edif - 8, 11):
+                clave_ventana = (wx * 3 + wy * 5 + nivel * 13) % 9
+                if clave_ventana >= 4:
+                    continue
+                if clave_ventana < 2:
+                    color_ventana = color_desde_hue((hue_base + 0.13) % 1.0, 0.55, 0.75)  # ámbar cálido
+                else:
+                    color_ventana = color_desde_hue((hue_base + 0.55) % 1.0, 0.35, 0.65)  # reflejo frío del cielo
+                pygame.draw.rect(capa, (*color_ventana, int(150 * transicion)), (wx, wy, 4, 6))
+
+
+def _dibujar_luces_calle(capa, ancho, alto, hue_base, transicion):
+    """Puntitos cálidos a ras de suelo: sugieren farolas sin necesidad de
+    dibujar postes, y anclan visualmente la ciudad al piso del escenario."""
+    color = color_desde_hue((hue_base + 0.12) % 1.0, 0.75, 0.85)
+    y = alto - 2
+    for x in range(14, ancho, 46):
+        pygame.draw.circle(capa, (*color, int(50 * transicion)), (x, y), 7)
+        pygame.draw.circle(capa, (*color, int(150 * transicion)), (x, y), 2)
+
+
 def _dibujar_ciudad(superficie, ancho, alto, hue_fondo, nivel, transicion):
-    """Superpone una silueta urbana para que el fondo gane coherencia con la
+    """Superpone un skyline urbano con parallax (una capa lejana difusa y
+    una cercana con detalle) para que el fondo gane coherencia con la
     progresión del juego.
 
-    Rendimiento: el doble bucle que dibuja ventana por ventana es el trozo
-    más pesado de esta función y, sin embargo, el resultado solo depende
-    de ``nivel`` (y de un matiz que se redondea a continuación), no de
-    ``tiempo``. Antes se reconstruía en cada fotograma aunque no cambiara
-    nada visible; ahora se cachea por nivel y solo se vuelve a dibujar al
-    subir de nivel.
+    Rendimiento: todo esto solo depende de ``nivel`` (y de un matiz que se
+    redondea a continuación), no de ``tiempo``, así que se cachea por nivel
+    y solo se reconstruye al subir de nivel; por eso el diseño puede
+    permitirse ser bastante más elaborado sin costar nada en el bucle
+    principal.
     """
     if transicion <= 0:
         return
@@ -351,21 +477,10 @@ def _dibujar_ciudad(superficie, ancho, alto, hue_fondo, nivel, transicion):
         ]
         pygame.draw.line(capa, (*color, int(190 * transicion)), (0, y), (ancho, y))
 
-    base_edificio = color_desde_hue((hue_base + 0.15) % 1.0, 0.16, 0.38)
-    borde_edificio = color_desde_hue((hue_base + 0.18) % 1.0, 0.2, 0.24)
-    for x in range(0, ancho, 26):
-        ancho_edif = 20 + ((x * 13 + int(nivel * 11)) % 34)
-        alto_edif = 60 + ((x * 19 + int(nivel * 17)) % (alto // 2))
-        y_edif = alto - alto_edif
-        pygame.draw.rect(capa, (*base_edificio, int(180 * transicion)), (x, y_edif, ancho_edif, alto_edif))
-        pygame.draw.rect(capa, (*borde_edificio, int(210 * transicion)), (x, y_edif, ancho_edif, alto_edif), 2)
-
-        for wx in range(x + 5, x + ancho_edif - 5, 8):
-            for wy in range(y_edif + 8, y_edif + alto_edif - 8, 11):
-                if ((wx + wy + nivel * 13) % 7) < 3:
-                    brillo = 140 + ((wx * 3 + wy) % 60)
-                    color_ventana = (min(255, brillo), min(255, brillo + 20), 160)
-                    pygame.draw.rect(capa, (*color_ventana, int(120 * transicion)), (wx, wy, 4, 6))
+    _dibujar_halo_celeste(capa, ancho, alto, hue_base, transicion)
+    _dibujar_capa_edificios(capa, ancho, alto, hue_base, nivel, transicion, lejos=True)
+    _dibujar_capa_edificios(capa, ancho, alto, hue_base, nivel, transicion, lejos=False)
+    _dibujar_luces_calle(capa, ancho, alto, hue_base, transicion)
 
     _CACHE_CIUDAD[clave] = capa
     superficie.blit(capa, (0, 0))

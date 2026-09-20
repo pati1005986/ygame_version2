@@ -3,6 +3,8 @@ import math
 
 import pygame
 
+from opciones import MenuOpciones
+
 try:
     import cv2
 except ImportError:  # pragma: no cover - opcional para la intro
@@ -33,14 +35,15 @@ class MenuInicio:
         self.tiempo_inicio = pygame.time.get_ticks()
         self.reloj_pulso = 0.0
 
-        boton_ancho = 170
+        boton_ancho = 150
         boton_alto = 54
-        espacio_entre_botones = 22
-        x_izq = (self.ancho - (boton_ancho * 2 + espacio_entre_botones)) // 2
+        espacio_entre_botones = 16
+        x_izq = (self.ancho - (boton_ancho * 3 + espacio_entre_botones * 2)) // 2
         y_boton = self.alto - 120
 
         self.boton_jugar = pygame.Rect(x_izq, y_boton, boton_ancho, boton_alto)
-        self.boton_salir = pygame.Rect(x_izq + boton_ancho + espacio_entre_botones, y_boton, boton_ancho, boton_alto)
+        self.boton_opciones = pygame.Rect(x_izq + boton_ancho + espacio_entre_botones, y_boton, boton_ancho, boton_alto)
+        self.boton_salir = pygame.Rect(x_izq + (boton_ancho + espacio_entre_botones) * 2, y_boton, boton_ancho, boton_alto)
 
         self._cargar_video()
 
@@ -56,6 +59,30 @@ class MenuInicio:
         self._cache_botones = {
             ("jugar", False): self._construir_boton(self.boton_jugar, "JUGAR", (2, 2, 2)),
             ("jugar", True): self._construir_boton(self.boton_jugar, "JUGAR", (90, 200, 255), hover=True),
+            ("opciones", False): self._construir_boton(self.boton_opciones, "OPCIONES", (2, 2, 2)),
+            ("opciones", True): self._construir_boton(self.boton_opciones, "OPCIONES", (90, 200, 255), hover=True),
+            ("salir", False): self._construir_boton(self.boton_salir, "SALIR", (2, 2, 2)),
+            ("salir", True): self._construir_boton(self.boton_salir, "SALIR", (255, 120, 150), hover=True),
+        }
+
+    def actualizar_tamano(self, ancho, alto):
+        self.ancho = ancho
+        self.alto = alto
+        boton_ancho = 150
+        boton_alto = 54
+        espacio_entre_botones = 16
+        x_izq = (self.ancho - (boton_ancho * 3 + espacio_entre_botones * 2)) // 2
+        y_boton = self.alto - 120
+        self.boton_jugar = pygame.Rect(x_izq, y_boton, boton_ancho, boton_alto)
+        self.boton_opciones = pygame.Rect(x_izq + boton_ancho + espacio_entre_botones, y_boton, boton_ancho, boton_alto)
+        self.boton_salir = pygame.Rect(x_izq + (boton_ancho + espacio_entre_botones) * 2, y_boton, boton_ancho, boton_alto)
+        self._capa_vineta = self._construir_vineta()
+        self._capa_panel_base = self._construir_panel_base()
+        self._cache_botones = {
+            ("jugar", False): self._construir_boton(self.boton_jugar, "JUGAR", (2, 2, 2)),
+            ("jugar", True): self._construir_boton(self.boton_jugar, "JUGAR", (90, 200, 255), hover=True),
+            ("opciones", False): self._construir_boton(self.boton_opciones, "OPCIONES", (2, 2, 2)),
+            ("opciones", True): self._construir_boton(self.boton_opciones, "OPCIONES", (90, 200, 255), hover=True),
             ("salir", False): self._construir_boton(self.boton_salir, "SALIR", (2, 2, 2)),
             ("salir", True): self._construir_boton(self.boton_salir, "SALIR", (255, 120, 150), hover=True),
         }
@@ -208,7 +235,11 @@ class MenuInicio:
             superficie, (*self.COLOR_ACENTO, alpha_acento), (0, y_linea), (self.ancho, y_linea), 2
         )
 
-        for rect, nombre in ((self.boton_jugar, "jugar"), (self.boton_salir, "salir")):
+        for rect, nombre in (
+            (self.boton_jugar, "jugar"),
+            (self.boton_opciones, "opciones"),
+            (self.boton_salir, "salir"),
+        ):
             hover = mouse_pos is not None and rect.collidepoint(mouse_pos)
             datos = self._cache_botones[(nombre, hover)]
 
@@ -275,6 +306,8 @@ class MenuInicio:
 
         if self.boton_jugar.collidepoint(evento.pos):
             return "jugar"
+        if self.boton_opciones.collidepoint(evento.pos):
+            return "opciones"
         if self.boton_salir.collidepoint(evento.pos):
             return "salir"
         return None

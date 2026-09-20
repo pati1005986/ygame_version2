@@ -17,6 +17,7 @@ import pygame
 from fondo import ParticulaAbstracta, dibujar_fondo_segmentado
 from enemigo import generar_entidades
 from menu import MenuInicio
+from opciones import MenuOpciones
 from personaje import PersonajeHumanoide
 from plataformas import Plataforma, color_desde_hue
 from transicion import TransicionCaricaturesca
@@ -31,6 +32,7 @@ PESOS_LUMINOSIDAD = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 POS_SPAWN = pygame.Vector2(120, 235)  # centro del punto de aparición del jugador
 
 ESTADO_MENU = "menu"
+ESTADO_OPCIONES = "opciones"
 ESTADO_JUGANDO = "jugando"
 ESTADO_TRANSICION = "transicion"
 ESTADO_GAME_OVER = "game_over"
@@ -213,6 +215,18 @@ def main():
     gif_game_over = []
     duracion_fotograma_gif = 0.1
     menu = MenuInicio(WIDTH, HEIGHT)
+    configuracion = {
+        "resoluciones": MenuOpciones.RESOLUCIONES,
+        "resolucion": 0,
+        "idioma": "en",
+        "controles": {
+            "left": pygame.K_a,
+            "right": pygame.K_d,
+            "jump": pygame.K_SPACE,
+            "down": pygame.K_s,
+        },
+    }
+    opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
     jugando = True
     while jugando:
         contador_frames += 1
@@ -255,9 +269,21 @@ def main():
                 accion_menu = menu.manejar_evento(evento)
                 if accion_menu == "jugar":
                     estado = ESTADO_JUGANDO
+                elif accion_menu == "opciones":
+                    estado = ESTADO_OPCIONES
                 elif accion_menu == "salir":
                     jugando = False
-            if estado == ESTADO_JUGANDO and evento.type == pygame.KEYDOWN and evento.key in (pygame.K_SPACE, pygame.K_UP, pygame.K_w):
+            elif estado == ESTADO_OPCIONES:
+                accion_opciones = opciones.manejar_evento(evento)
+                if accion_opciones == "volver":
+                    estado = ESTADO_MENU
+                elif accion_opciones == "aplicar":
+                    ancho_nuevo, alto_nuevo = configuracion["resoluciones"][configuracion["resolucion"]]
+                    screen = pygame.display.set_mode((ancho_nuevo, alto_nuevo))
+                    menu.actualizar_tamano(ancho_nuevo, alto_nuevo)
+                    opciones.actualizar_tamano(ancho_nuevo, alto_nuevo)
+                    estado = ESTADO_MENU
+            if estado == ESTADO_JUGANDO and evento.type == pygame.KEYDOWN and evento.key == configuracion["controles"]["jump"]:
                 jugador.saltar()
             elif estado == ESTADO_GAME_OVER and evento.type == pygame.KEYDOWN and evento.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
                 nivel = 0
@@ -285,7 +311,7 @@ def main():
             menu.actualizar()
         elif estado == ESTADO_JUGANDO:
             en_aire_antes = not jugador.en_suelo
-            jugador.mover(plataformas)
+            jugador.mover(plataformas, configuracion["controles"])
             for entidad in entidades:
                 entidad.mover(plataformas, jugador.rect)
 
@@ -352,6 +378,8 @@ def main():
         # --- Renderizado ---
         if estado == ESTADO_MENU:
             menu.dibujar(screen, pygame.mouse.get_pos())
+        elif estado == ESTADO_OPCIONES:
+            opciones.dibujar(screen)
         else:
             # La escena se dibuja aparte para poder desaturarla como un todo
             # antes de mezclarla con el resto de la interfaz.

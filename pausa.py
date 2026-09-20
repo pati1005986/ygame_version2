@@ -140,7 +140,7 @@ class MenuPausa:
         superficie.blit(imagen, imagen.get_rect(center=centro))
 
     def _dibujar_boton_comic(self, superficie, rect, contenido, hover, fase=0.0):
-        """Boton estilo comic: sombra desplazada, rebote al hover, borde grueso redondeado."""
+        """Botón más abstracto y multicolor, con capas de color, brillo y formas diagonales."""
         escala = 1.0 + (0.06 * math.sin(fase * 6.0) + 0.06 if hover else 0.0)
         ancho_b = int(rect.width * escala)
         alto_b = int(rect.height * escala)
@@ -153,8 +153,36 @@ class MenuPausa:
         radio = 18
         pygame.draw.rect(superficie, self.COLOR_BOTON_SOMBRA, rect_sombra, border_radius=radio)
 
-        color_relleno = self.COLOR_BOTON_HOVER if hover else self.COLOR_BOTON
-        pygame.draw.rect(superficie, color_relleno, rect_animado, border_radius=radio)
+        capa_boton = pygame.Surface(rect_animado.size, pygame.SRCALPHA)
+        paleta = [
+            (255, 109, 92),
+            (255, 200, 93),
+            (99, 224, 173),
+            (126, 148, 255),
+            (255, 118, 190),
+            (90, 220, 255),
+            (255, 235, 120),
+        ]
+        for indice, color in enumerate(paleta):
+            ancho = max(14, rect_animado.width // len(paleta) - 2)
+            x = 4 + indice * (ancho + 3)
+            y = 4 + (indice % 2) * 3
+            pygame.draw.rect(capa_boton, (*color, 170 + indice * 8), (x, y, ancho, rect_animado.height - 10), border_radius=radio)
+
+        puntos_abstractos = [
+            (0, rect_animado.height * 0.2),
+            (rect_animado.width * 0.25, 0),
+            (rect_animado.width * 0.72, 0),
+            (rect_animado.width, rect_animado.height * 0.36),
+            (rect_animado.width, rect_animado.height),
+            (rect_animado.width * 0.35, rect_animado.height),
+            (0, rect_animado.height * 0.78),
+        ]
+        pygame.draw.polygon(capa_boton, (255, 255, 255, 35), puntos_abstractos)
+        pygame.draw.polygon(capa_boton, (255, 255, 255, 70), [(0, 8), (rect_animado.width * 0.82, 0), (rect_animado.width, rect_animado.height * 0.32), (rect_animado.width * 0.56, rect_animado.height * 0.3)])
+        pygame.draw.rect(capa_boton, (255, 255, 255, 48), (8, 5, rect_animado.width - 16, rect_animado.height // 3), border_radius=radio)
+        superficie.blit(capa_boton, rect_animado.topleft)
+
         pygame.draw.rect(superficie, self.COLOR_BOTON_BORDE, rect_animado, width=4, border_radius=radio)
 
         brillo = pygame.Rect(rect_animado.x + 10, rect_animado.y + 6, rect_animado.width - 20, rect_animado.height // 3)

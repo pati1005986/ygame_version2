@@ -190,12 +190,7 @@ class MenuInicio:
         return capa
 
     def _construir_boton(self, rect, texto, color, hover=False):
-        """Precalcula la forma del botón (polígono + barras + sombra + el
-        texto ya renderizado) para un estado dado (normal u hover).
-
-        Devuelve un diccionario listo para blitear en cada fotograma: nada
-        de esto vuelve a dibujarse punto por punto en el bucle principal.
-        """
+        """Precalcula la forma del botón con capas abstractas y colores vivos."""
         escala = 1.12 if hover else 1.0
         forma = pygame.Surface((int(rect.width * escala), int(rect.height * escala)), pygame.SRCALPHA)
         cx = forma.get_width() // 2
@@ -212,16 +207,32 @@ class MenuInicio:
             (cx - 75, cy + 20),
             (cx - 84, cy - 6),
         ]
-        pygame.draw.polygon(forma, (*color, 220), puntos)
+
+        paleta = [
+            (255, 108, 92),
+            (255, 201, 90),
+            (98, 224, 168),
+            (128, 145, 255),
+            (255, 117, 190),
+        ]
+        for indice, tono in enumerate(paleta):
+            capa = pygame.Surface((forma.get_width(), forma.get_height()), pygame.SRCALPHA)
+            rect_parche = pygame.Rect(8 + indice * 10, 4 + indice * 2, forma.get_width() - 14 - indice * 18, forma.get_height() - 10)
+            pygame.draw.rect(capa, (*tono, 150 + indice * 18), rect_parche, border_radius=18)
+            pygame.draw.ellipse(capa, (*tono, 120), (0, 0, forma.get_width(), forma.get_height() * 0.6))
+            forma.blit(capa, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+
+        pygame.draw.polygon(forma, (*color, 200), puntos)
+        pygame.draw.polygon(forma, (255, 255, 255, 60), [(cx - 60, 14), (cx + 58, 10), (cx + 40, cy - 4), (cx - 48, cy + 6)], 0)
+        pygame.draw.polygon(forma, (255, 255, 255, 70), [(cx - 52, cy), (cx + 68, cy - 10), (cx + 52, forma.get_height() - 10), (cx - 44, forma.get_height() - 8)], 0)
 
         barras = pygame.Surface((forma.get_width(), forma.get_height()), pygame.SRCALPHA)
         for i in range(6):
-            x = 18 + i * 12
+            x = 20 + i * 12
             ancho = 12 + i * 3
-            alto = forma.get_height() * (0.28 + i * 0.06)
+            alto = forma.get_height() * (0.24 + i * 0.07)
             y = forma.get_height() - alto - 6
-            r = pygame.Rect(x, y, ancho, alto)
-            pygame.draw.ellipse(barras, (*self._hue_to_rgb(0.55 + i * 0.08, 0.8, 0.7), 120), r)
+            pygame.draw.ellipse(barras, (*self._hue_to_rgb(0.15 + i * 0.12, 0.8, 0.7), 110), (x, y, ancho, alto))
         forma.blit(barras, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
 
         sombra = pygame.Surface((forma.get_width(), forma.get_height()), pygame.SRCALPHA)
@@ -274,10 +285,43 @@ class MenuInicio:
         rect_sombra = rect.move(desplazamiento_sombra, desplazamiento_sombra)
         pygame.draw.rect(superficie, self.COLOR_BOTON_SOMBRA, rect_sombra, border_radius=radio)
 
-        color_relleno = self.COLOR_BOTON_HOVER if hover else self.COLOR_BOTON
         rect_dibujo = rect.move(-3 if hover else 0, -3 if hover else 0)
-        pygame.draw.rect(superficie, color_relleno, rect_dibujo, border_radius=radio)
+        capa_boton = pygame.Surface(rect_dibujo.size, pygame.SRCALPHA)
+        paleta = [
+            (255, 109, 92),
+            (255, 200, 93),
+            (99, 224, 173),
+            (126, 148, 255),
+            (255, 118, 190),
+            (90, 220, 255),
+            (255, 235, 120),
+        ]
+
+        for indice, color in enumerate(paleta):
+            ancho = max(12, rect_dibujo.width // len(paleta) - 2)
+            x = 4 + indice * (ancho + 3)
+            y = 4 + (indice % 2) * 3
+            pygame.draw.rect(
+                capa_boton,
+                (*color, 165 + indice * 8),
+                (x, y, ancho, rect_dibujo.height - 10),
+                border_radius=radio,
+            )
+
+        puntos_abstractos = [
+            (0, rect_dibujo.height * 0.2),
+            (rect_dibujo.width * 0.25, 0),
+            (rect_dibujo.width * 0.72, 0),
+            (rect_dibujo.width, rect_dibujo.height * 0.36),
+            (rect_dibujo.width, rect_dibujo.height),
+            (rect_dibujo.width * 0.35, rect_dibujo.height),
+            (0, rect_dibujo.height * 0.78),
+        ]
+        pygame.draw.polygon(capa_boton, (255, 255, 255, 35), puntos_abstractos)
+        pygame.draw.polygon(capa_boton, (255, 255, 255, 70), [(0, 8), (rect_dibujo.width * 0.82, 0), (rect_dibujo.width, rect_dibujo.height * 0.32), (rect_dibujo.width * 0.56, rect_dibujo.height * 0.3)])
+        pygame.draw.rect(capa_boton, (255, 255, 255, 48), (8, 5, rect_dibujo.width - 16, rect_dibujo.height // 3), border_radius=radio)
         pygame.draw.rect(superficie, self.COLOR_BOTON_BORDE, rect_dibujo, width=3, border_radius=radio)
+        superficie.blit(capa_boton, rect_dibujo.topleft)
 
         brillo = pygame.Rect(
             rect_dibujo.x + 8,

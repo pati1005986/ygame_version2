@@ -21,6 +21,13 @@ class EntidadGris:
     """Enemigo simple: patrulla su plataforma y persigue al jugador si lo
     detecta cerca, sin más gesto que una franja vacía en vez de rostro.
 
+    Puede saltar en dos situaciones muy concretas -nunca al azar-: para
+    cruzar un hueco entre plataformas mientras patrulla, o para alcanzar al
+    jugador cuando lo persigue y lo detecta claramente por encima. Cada
+    salto lleva un instante de anticipación (se agacha) y otro de aterrizaje
+    (se aplasta y levanta una nube de polvo), para que se lea como un gesto
+    deliberado y no como un tirón brusco.
+
     Args:
         x: Posición horizontal inicial del rectángulo de colisión.
         y: Posición vertical inicial del rectángulo de colisión.
@@ -40,6 +47,20 @@ class EntidadGris:
         self.pixel = 4
         self.fase = random.uniform(0, math.tau)
         self.activa = True  # permite congelarla desde fuera si hace falta
+
+        # --- salto ---
+        self.fuerza_salto = -11.5
+        self.temporizador_salto = 0  # cuadros restantes de enfriamiento
+        self.enfriamiento_salto = 30
+        self.distancia_max_salto_patrulla = 78
+        self.altura_min_salto_persecucion = 42
+        self.altura_max_salto_persecucion = 160
+        self.cuadros_anticipacion = 0
+        self.anticipacion_total = 7
+        self.saltando_hacia = self.direccion
+        self.cuadros_aterrizaje = 0
+        self.aterrizaje_total = 9
+        self._particulas_polvo = []
 
     # ------------------------------------------------------------------
     # Utilidades de dibujo (mismo estilo de bloques que PersonajeHumanoide,
@@ -65,31 +86,130 @@ class EntidadGris:
         self._bloque(superficie, x, y, ancho, alto, color)
 
     # ------------------------------------------------------------------
+    # Salto: decisión y física
+    # ------------------------------------------------------------------
+    def _buscar_salto_de_borde(self, plataformas):
+        """Si el suelo se acaba justo delante y hay otra plataforma
+        alcanzable de un salto, devuelve la dirección a la que conviene
+        saltar; si no, ``None`` (y entonces se sigue dando la vuelta como
+        antes). Evita que la entidad se lance a huecos imposibles."""
+        if self.plataforma_actual is None:
+            return None
+
+        borde_actual = self.plataforma_actual.rect
+        cerca_del_borde = (
+            self.direccion > 0 and self.rect.right >= borde_actual.right - 4
+        ) or (
+            self.direccion < 0 and self.rect.left <= borde_actual.left + 4
+        )
+        if not cerca_del_borde:
+            return None
+
+        for plataforma in plataformas:
+            if plataforma is self.plataforma_actual or plataforma.es_trampa:
+                continue
+            if self.direccion > 0:
+                hueco = plataforma.rect.left - borde_actual.right
+            else:
+                hueco = borde_actual.left - plataforma.rect.right
+            if not (0 < hueco <= self.distancia_max_salto_patrulla):
+                continue
+            diferencia_altura = plataforma.rect.top - borde_actual.top
+            if -70 <= diferencia_altura <= 34:
+                return self.direccion
+        return None
+
+    def _iniciar_anticipacion_salto(self, direccion_destino):
+        self.cuadros_anticipacion = self.anticipacion_total
+        self.saltando_hacia = direccion_destino
+
+    def _crear_polvo_aterrizaje(self):
+        centro_x = self.rect.centerx
+        pie_y = self.rect.bottom
+        for despl in (-10, 0, 10):
+            self._particulas_polvo.append(
+                {
+                    "x": centro_x + despl,
+                    "y": pie_y,
+                    "vx": despl * 0.15,
+                    "vy": -1.2,
+                    "vida": 14,
+                    "vida_max": 14,
+                }
+            )
+
+    def _actualizar_particulas(self):
+        vivas = []
+        for particula in self._particulas_polvo:
+            particula["x"] += particula["vx"]
+            particula["y"] += particula["vy"]
+            particula["vy"] += 0.15
+            particula["vida"] -= 1
+            if particula["vida"] > 0:
+                vivas.append(particula)
+        self._particulas_polvo = vivas
+
+    # ------------------------------------------------------------------
     # Movimiento
     # ------------------------------------------------------------------
     def mover(self, plataformas, objetivo_rect=None):
         """Aplica gravedad, resuelve colisiones con las plataformas y decide
-        si patrulla o persigue al jugador.
+        si patrulla, persigue al jugador o salta.
 
         ``objetivo_rect`` es opcional: si se pasa el rect del jugador y está
         lo bastante cerca (``rango_deteccion``) y a una altura parecida, la
         entidad avanza hacia él en vez de seguir su patrulla habitual. Al
         perseguir puede llegar a caminar fuera del borde de su plataforma
-        (y caer), lo que abre una vía de escape legítima para el jugador.
+        (y caer) si el jugador está por debajo o lejos, lo que abre una vía
+        de escape legítima para el jugador; solo salta cuando el jugador
+        está claramente por encima y cerca.
+
+        El salto en sí nunca es instantáneo: primero hay un breve instante
+        de anticipación (se agacha, sin avanzar) y luego, al aterrizar, unos
+        cuadros de aplastamiento con una nube de polvo. Esto evita el efecto
+        de "tirón" que hace ver torpe a una IA saltando.
         """
         if not self.activa:
             return
 
+        if self.temporizador_salto > 0:
+            self.temporizador_salto -= 1
+
         persiguiendo = False
+        dx = dy = 0
         if objetivo_rect is not None:
             dx = objetivo_rect.centerx - self.rect.centerx
-            dy = abs(objetivo_rect.centery - self.rect.centery)
-            if abs(dx) < self.rango_deteccion and dy < 80:
+            dy = objetivo_rect.centery - self.rect.centery
+            if abs(dx) < self.rango_deteccion and abs(dy) < 80:
                 persiguiendo = True
                 self.direccion = 1 if dx > 0 else -1
 
-        velocidad = self.velocidad_persecucion if persiguiendo else self.velocidad_patrulla
-        dx_mov = velocidad * self.direccion
+        if self.cuadros_anticipacion > 0:
+            # Tomando impulso: se detiene un instante en vez de saltar de
+            # golpe, para que el gesto se note antes de que ocurra.
+            self.cuadros_anticipacion -= 1
+            dx_mov = 0
+            if self.cuadros_anticipacion == 0 and self.en_suelo:
+                self.vel_y = self.fuerza_salto
+                self.en_suelo = False
+                self.direccion = self.saltando_hacia
+                self.temporizador_salto = self.enfriamiento_salto
+        else:
+            velocidad = self.velocidad_persecucion if persiguiendo else self.velocidad_patrulla
+            dx_mov = velocidad * self.direccion
+
+            puede_evaluar_salto = self.en_suelo and self.temporizador_salto <= 0
+            if puede_evaluar_salto:
+                if (
+                    persiguiendo
+                    and -self.altura_max_salto_persecucion <= dy <= -self.altura_min_salto_persecucion
+                    and abs(dx) < 140
+                ):
+                    self._iniciar_anticipacion_salto(self.direccion)
+                elif not persiguiendo:
+                    candidato = self._buscar_salto_de_borde(plataformas)
+                    if candidato is not None:
+                        self._iniciar_anticipacion_salto(candidato)
 
         self.vel_y += 0.6
         dy_mov = self.vel_y
@@ -103,6 +223,7 @@ class EntidadGris:
                     self.rect.left = plataforma.rect.right
                 self.direccion *= -1
 
+        estaba_en_suelo = self.en_suelo
         self.rect.y += dy_mov
         self.en_suelo = False
         self.plataforma_actual = None
@@ -117,9 +238,23 @@ class EntidadGris:
                     self.rect.top = plataforma.rect.bottom
                     self.vel_y = 0
 
-        # En patrulla (sin perseguir), da la vuelta al llegar al borde de su
-        # propia plataforma para no caminar hacia el vacío por accidente.
-        if self.en_suelo and not persiguiendo and self.plataforma_actual is not None:
+        if self.en_suelo and not estaba_en_suelo:
+            self.cuadros_aterrizaje = self.aterrizaje_total
+            self._crear_polvo_aterrizaje()
+        elif self.cuadros_aterrizaje > 0:
+            self.cuadros_aterrizaje -= 1
+
+        self._actualizar_particulas()
+
+        # En patrulla (sin perseguir ni saltar), da la vuelta al llegar al
+        # borde de su propia plataforma para no caminar hacia el vacío por
+        # accidente -salvo que ya se haya decidido saltar el hueco arriba.
+        if (
+            self.en_suelo
+            and not persiguiendo
+            and self.cuadros_anticipacion == 0
+            and self.plataforma_actual is not None
+        ):
             borde = self.plataforma_actual.rect
             if self.rect.right >= borde.right and self.direccion > 0:
                 self.direccion = -1
@@ -131,8 +266,8 @@ class EntidadGris:
     # ------------------------------------------------------------------
     def dibujar(self, superficie, tiempo):
         """Dibuja la entidad con silueta más definida, máscara facial y
-        detalles de armadura para que se sienta más amenazante sin perder la
-        estética minimalista del juego."""
+        detalles de armadura, más una pose que cambia según si está
+        patrullando, agachándose para saltar, en el aire o aterrizando."""
         centro_x = self.rect.centerx
         pie_y = self.rect.bottom
 
@@ -145,38 +280,37 @@ class EntidadGris:
 
         self._dibujar_sombra(superficie, centro_x, pie_y)
         self._dibujar_halo(superficie, tiempo)
+        self._dibujar_particulas(superficie)
 
-        # Cuerpo principal con armadura compacta y hombros más anchos.
-        alto_cuerpo = self.rect.height - 18
+        en_el_aire = not self.en_suelo
+        anticipando = self.cuadros_anticipacion > 0
+        aterrizando = self.cuadros_aterrizaje > 0 and not en_el_aire
+
+        # Compresion/estiramiento vertical con bloques (nada de escalar
+        # superficies, para no perder el aspecto pixelado): se agacha antes
+        # de saltar, se estira un poco mientras sube y se aplasta al caer.
+        compresion = 0
+        if anticipando:
+            compresion = 4
+        elif aterrizando:
+            progreso = self.cuadros_aterrizaje / self.aterrizaje_total
+            compresion = int(6 * progreso)
+        estiramiento = 4 if (en_el_aire and self.vel_y < -1) else 0
+
+        alto_cuerpo = self.rect.height - 18 - compresion + estiramiento
         cuerpo_y = pie_y - alto_cuerpo
+
         self._bloque_contorneado(
             superficie, centro_x - 15, cuerpo_y + 4, 30, alto_cuerpo - 8, base, contorno
         )
-
-        # Placas laterales y refuerzo de hombros.
-        self._bloque_contorneado(
-            superficie, centro_x - 20, cuerpo_y + 8, 6, 20, oscuro, contorno
-        )
-        self._bloque_contorneado(
-            superficie, centro_x + 14, cuerpo_y + 8, 6, 20, oscuro, contorno
-        )
-
-        # Cinturón / costura central para dar sensación de estructura.
+        self._bloque_contorneado(superficie, centro_x - 20, cuerpo_y + 8, 6, 20, oscuro, contorno)
+        self._bloque_contorneado(superficie, centro_x + 14, cuerpo_y + 8, 6, 20, oscuro, contorno)
         self._bloque(superficie, centro_x - 9, cuerpo_y + 12, 18, 4, medio)
 
-        # Piernas y rodillas más definidas.
-        ancho_pierna = 8
-        x_izq = centro_x - 11
-        x_der = centro_x + 3
-        y_pierna = cuerpo_y + 18
-        alta_pierna = 22
-        self._bloque_contorneado(superficie, x_izq, y_pierna, ancho_pierna, alta_pierna, medio, contorno)
-        self._bloque_contorneado(superficie, x_der, y_pierna, ancho_pierna, alta_pierna, medio, contorno)
-        self._bloque(superficie, x_izq + 1, y_pierna + 12, 6, 4, oscuro)
-        self._bloque(superficie, x_der + 1, y_pierna + 12, 6, 4, oscuro)
+        self._dibujar_piernas(
+            superficie, centro_x, cuerpo_y, tiempo, medio, oscuro, contorno, en_el_aire, anticipando
+        )
 
-        # Cabeza con máscara: más alta, más angular, con una franja central
-        # que parece una “ranura de visión” vacía.
         lado_cabeza = 22
         cabeza_y = cuerpo_y - lado_cabeza - 4
         self._bloque_contorneado(
@@ -188,28 +322,54 @@ class EntidadGris:
             claro,
             contorno,
         )
-
-        # Coronilla / elemento de energía flotante.
         self._bloque(superficie, centro_x - 8, cabeza_y - 5, 16, 4, medio)
 
-        # Máscara con dos rendijas oscuras y una línea central ligeramente más
-        # luminosa para reforzar el vacío de la mirada.
         p = self.pixel
-        ancho_ranura = p * 3
         y_ranura = cabeza_y + 9
         self._bloque(superficie, centro_x - 10, y_ranura, 7, p, sombra_oscura)
         self._bloque(superficie, centro_x + 3, y_ranura, 7, p, sombra_oscura)
         self._bloque(superficie, centro_x - 2, y_ranura - 1, 4, p + 2, contorno)
 
-        # Sombra lateral para “peso” y dirección de movimiento.
         lado_sombra_x = centro_x + 10 if self.direccion > 0 else centro_x - 15
         self._bloque(superficie, lado_sombra_x, cuerpo_y + 2, 4, alto_cuerpo - 6, oscuro)
 
+    def _dibujar_piernas(self, superficie, centro_x, cuerpo_y, tiempo, medio, oscuro, contorno, en_el_aire, anticipando):
+        ancho_pierna = 8
+        y_pierna = cuerpo_y + 18
+        alta_pierna = 22
+
+        if en_el_aire:
+            # Piernas recogidas hacia el cuerpo, como en pleno salto.
+            alta_pierna = 14
+            x_izq = centro_x - 8
+            x_der = centro_x
+            self._bloque_contorneado(superficie, x_izq, y_pierna, ancho_pierna, alta_pierna, medio, contorno)
+            self._bloque_contorneado(superficie, x_der, y_pierna, ancho_pierna, alta_pierna, medio, contorno)
+            return
+
+        if anticipando:
+            # Postura mas ancha y flexionada, tomando impulso.
+            x_izq = centro_x - 14
+            x_der = centro_x + 6
+        else:
+            # Balanceo sutil de las piernas al caminar, en vez de una
+            # postura estatica.
+            desfase = int(round(2 * math.sin(tiempo * 10 + self.fase)))
+            x_izq = centro_x - 11 + desfase
+            x_der = centro_x + 3 - desfase
+
+        self._bloque_contorneado(superficie, x_izq, y_pierna, ancho_pierna, alta_pierna, medio, contorno)
+        self._bloque_contorneado(superficie, x_der, y_pierna, ancho_pierna, alta_pierna, medio, contorno)
+        self._bloque(superficie, x_izq + 1, y_pierna + 12, 6, 4, oscuro)
+        self._bloque(superficie, x_der + 1, y_pierna + 12, 6, 4, oscuro)
+
     def _dibujar_sombra(self, superficie, centro_x, pie_y):
         """Sombra de contacto simple, igual de discreta que el resto de su
-        diseño."""
-        sombra = pygame.Surface((28, 6), pygame.SRCALPHA)
-        sombra.fill((0, 0, 0, 110))
+        diseño. Se encoge un poco mientras la entidad está en el aire, para
+        reforzar la sensación de altura del salto."""
+        ancho_sombra = 28 if self.en_suelo else 18
+        sombra = pygame.Surface((ancho_sombra, 6), pygame.SRCALPHA)
+        sombra.fill((0, 0, 0, 110 if self.en_suelo else 70))
         rect = sombra.get_rect(center=(centro_x, pie_y + 2))
         superficie.blit(sombra, rect.topleft)
 
@@ -223,6 +383,17 @@ class EntidadGris:
         alpha = int(26 + 14 * pulso)
         pygame.draw.circle(capa, (150, 150, 150, alpha), (radio, radio), radio)
         superficie.blit(capa, (self.rect.centerx - radio, self.rect.centery - radio))
+
+    def _dibujar_particulas(self, superficie):
+        """Nube de polvo discreta al aterrizar; se disuelve sola en unos
+        cuadros y nunca se acumula porque ``_actualizar_particulas`` la
+        limpia en ``mover``."""
+        for particula in self._particulas_polvo:
+            alpha = int(160 * (particula["vida"] / particula["vida_max"]))
+            radio = 3
+            capa = pygame.Surface((radio * 2, radio * 2), pygame.SRCALPHA)
+            pygame.draw.circle(capa, (190, 190, 190, alpha), (radio, radio), radio)
+            superficie.blit(capa, (particula["x"] - radio, particula["y"] - radio))
 
 
 # --------------------------------------------------------------------------

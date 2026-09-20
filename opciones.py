@@ -27,9 +27,10 @@ class MenuOpciones:
         centro = self.ancho // 2
         self.boton_resolucion = pygame.Rect(centro - 190, 130, 380, 48)
         self.boton_idioma = pygame.Rect(centro - 190, 194, 380, 48)
+        self.boton_pantalla = pygame.Rect(centro - 190, 258, 380, 48)
         self.boton_volver = pygame.Rect(centro - 190, self.alto - 72, 180, 48)
         self.boton_guardar = pygame.Rect(centro + 10, self.alto - 72, 180, 48)
-        inicio_controles = 285
+        inicio_controles = 325
         self.botones_controles = {
             nombre: pygame.Rect(centro - 190, inicio_controles + indice * 48, 380, 38)
             for indice, nombre in enumerate(self.CONTROLES)
@@ -69,6 +70,13 @@ class MenuOpciones:
             self.fuente,
             self.boton_idioma.center,
         )
+        modo = "fullscreen" if self.configuracion.get("pantalla_completa", False) else "windowed"
+        self._texto_centrado(
+            superficie,
+            f"{texto(idioma, 'display_mode')}: {texto(idioma, modo)}",
+            self.fuente,
+            self.boton_pantalla.center,
+        )
 
         etiquetas = {
             "left": "move_left",
@@ -89,7 +97,7 @@ class MenuOpciones:
                 superficie,
                 texto(idioma, "press_key"),
                 self.fuente_pequena,
-                (self.ancho // 2, 265),
+                (self.ancho // 2, 305),
                 (255, 210, 120),
             )
 
@@ -119,6 +127,8 @@ class MenuOpciones:
             ) % len(self.RESOLUCIONES)
         elif self.boton_idioma.collidepoint(evento.pos):
             self.configuracion["idioma"] = alternar_idioma(self.configuracion["idioma"])
+        elif self.boton_pantalla.collidepoint(evento.pos):
+            self.configuracion["pantalla_completa"] = not self.configuracion.get("pantalla_completa", False)
         elif self.boton_volver.collidepoint(evento.pos):
             return "volver"
         elif self.boton_guardar.collidepoint(evento.pos):

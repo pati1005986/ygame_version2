@@ -221,6 +221,7 @@ def main():
     configuracion = {
         "resoluciones": MenuOpciones.RESOLUCIONES,
         "resolucion": 0,
+    "pantalla_completa": False,
         "idioma": "en",
         "controles": {
             "left": pygame.K_a,
@@ -306,7 +307,8 @@ def main():
                     estado = ESTADO_MENU
                 elif accion_opciones == "aplicar":
                     ancho_nuevo, alto_nuevo = configuracion["resoluciones"][configuracion["resolucion"]]
-                    screen = pygame.display.set_mode((ancho_nuevo, alto_nuevo))
+                    modo_ventana = pygame.FULLSCREEN if configuracion["pantalla_completa"] else 0
+                    screen = pygame.display.set_mode((ancho_nuevo, alto_nuevo), modo_ventana)
                     menu.actualizar_tamano(WIDTH, HEIGHT)
                     menu.establecer_idioma(configuracion["idioma"])
                     opciones.actualizar_tamano(WIDTH, HEIGHT)

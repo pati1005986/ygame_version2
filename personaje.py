@@ -24,6 +24,8 @@ class PersonajeHumanoide:
         self.velocidad = 6
         self.fuerza_salto = -13
         self.en_suelo = False
+        self.salto_actual = 0
+        self.tiempo_doble_salto = 0.0
         self.plataforma_actual = None  # última plataforma sobre la que aterrizó
         self.direccion = 1
         self.agachado = False
@@ -235,6 +237,11 @@ class PersonajeHumanoide:
                     self.rect.top = plataforma.rect.bottom
                     self.vel_y = 0
 
+        if self.en_suelo:
+            self.salto_actual = 0
+        elif self.tiempo_doble_salto > 0:
+            self.tiempo_doble_salto -= 1
+
         aterrizando_ahora = self.en_suelo and estaba_en_aire
         ahora = pygame.time.get_ticks()
 
@@ -315,10 +322,17 @@ class PersonajeHumanoide:
         return not any(rect_de_pie.colliderect(plataforma.rect) for plataforma in plataformas)
 
     def saltar(self):
-        """Inicia un salto si el personaje está apoyado en una plataforma."""
-        if self.en_suelo and not self.agachado:
+        """Inicia un salto desde el suelo o un segundo salto en el aire."""
+        puede_saltar = self.en_suelo or (not self.en_suelo and self.salto_actual == 1)
+        if puede_saltar and not self.agachado:
             self.escala_y = 0.82  # ligera compresión instantánea al despegar
             self.vel_y = self.fuerza_salto
+            if self.en_suelo:
+                self.salto_actual = 1
+            else:
+                self.salto_actual = 2
+                self.tiempo_doble_salto = 18.0
+                self._emitir_particulas(6, self.rect.centerx, self.rect.centery, dispersion=12)
             if self.sonido_salto:
                 self.sonido_salto.play()
 
@@ -367,6 +381,7 @@ class PersonajeHumanoide:
         bob_cabeza = int(self.bob_cabeza_actual)
         inclinacion = int(round(self.inclinacion_actual))
         estirar = self.escala_y
+        animacion_doble_salto = self.tiempo_doble_salto > 0
 
         if self.muriendo:
             estirar = max(0.08, 1.0 - self.tiempo_muerte * 1.45)
@@ -415,13 +430,16 @@ class PersonajeHumanoide:
 
         # --- Brazos (con manos: un bloque extra más oscuro en la punta) ---
         brazo_alto = round(self._lerp(20, 14, agachado) / p) * p
-        brazo_izq_y = torso_y + 2 - balanceo + int(agachado * 6)
-        brazo_der_y = torso_y + 2 + balanceo + int(agachado * 6)
+        brazo_doble_salto = int(math.sin((18.0 - self.tiempo_doble_salto) * 0.7) * 5) if animacion_doble_salto else 0
+        brazo_izq_y = torso_y + 2 - balanceo + int(agachado * 6) - brazo_doble_salto
+        brazo_der_y = torso_y + 2 + balanceo + int(agachado * 6) - brazo_doble_salto
         brazo_desplazamiento = int(agachado * 5) * self.direccion
-        self._bloque_contorneado(superficie, torso_x - 23 + brazo_desplazamiento, brazo_izq_y, 9, brazo_alto, claro, contorno)
-        self._bloque_contorneado(superficie, torso_x + 14 + brazo_desplazamiento, brazo_der_y, 9, brazo_alto, claro, contorno)
-        self._bloque(superficie, torso_x - 23 + brazo_desplazamiento, brazo_izq_y + brazo_alto - p, 9, p, oscuro)
-        self._bloque(superficie, torso_x + 14 + brazo_desplazamiento, brazo_der_y + brazo_alto - p, 9, p, oscuro)
+        brazo_izq_x = torso_x - 23 + brazo_desplazamiento - (p if animacion_doble_salto else 0)
+        brazo_der_x = torso_x + 14 + brazo_desplazamiento + (p if animacion_doble_salto else 0)
+        self._bloque_contorneado(superficie, brazo_izq_x, brazo_izq_y, 9, brazo_alto, claro, contorno)
+        self._bloque_contorneado(superficie, brazo_der_x, brazo_der_y, 9, brazo_alto, claro, contorno)
+        self._bloque(superficie, brazo_izq_x, brazo_izq_y + brazo_alto - p, 9, p, oscuro)
+        self._bloque(superficie, brazo_der_x, brazo_der_y + brazo_alto - p, 9, p, oscuro)
 
         # --- Cabeza (con un pequeño retraso respecto al torso para dar
         # sensación de "follow-through"). Es notablemente más grande que

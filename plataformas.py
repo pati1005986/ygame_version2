@@ -94,6 +94,41 @@ class Plataforma:
             self.grietas = []
             self.goteo = []
 
+        # Rendimiento: las manchas/trazo/salpicaduras no dependen de
+        # `tiempo` ni cambian tras crearse, pero antes se redibujaban en
+        # una Surface nueva en CADA fotograma para CADA plataforma (hasta
+        # 14 en pantalla). Se precalcula una sola vez aquí, usando el
+        # matiz base (sin la pequeña oscilación de `tiempo`), y luego solo
+        # se hace un blit barato en cada fotograma.
+        self._capa_textura = None
+
+    def _construir_capa_textura(self):
+        color_acento = color_desde_hue((self.hue + 0.18) % 1.0, 0.7, 0.9)
+        color_acento2 = color_desde_hue((self.hue - 0.14) % 1.0, 0.55, 0.85)
+        color_luz = color_desde_hue(self.hue, 0.5, 1.0)
+        capa = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+
+        for fx, fy, fr, delta_hue, alpha, clara in self.manchas:
+            radio = max(2, int(fr * self.rect.width))
+            centro = (int(fx * self.rect.width), int(fy * self.rect.height))
+            color = color_luz if clara else color_acento
+            pygame.draw.circle(capa, (*color, alpha), centro, radio)
+
+        if len(self.trazo) >= 2:
+            puntos_trazo = [
+                (p[0] * self.rect.width, p[1] * self.rect.height) for p in self.trazo
+            ]
+            try:
+                pygame.draw.aalines(capa, (*color_acento2, 160), False, puntos_trazo, 1)
+            except TypeError:
+                pygame.draw.lines(capa, (*color_acento2, 160), False, puntos_trazo, 2)
+
+        for fx, fy, radio in self.salpicaduras:
+            centro = (int(fx * self.rect.width), int(fy * self.rect.height))
+            pygame.draw.circle(capa, (*color_luz, 150), centro, max(1, int(radio)))
+
+        self._capa_textura = capa
+
     def activar_trampa(self):
         """Abre la trampa y comienza a hundir al personaje."""
         if self.es_trampa:
@@ -143,10 +178,8 @@ class Plataforma:
         pygame.draw.polygon(superficie, color_luz, puntos_luz)
         pygame.draw.polygon(superficie, (0, 0, 0), puntos_luz, 2)
 
-        # Textura pictórica: manchas, trazo curvo y salpicaduras.
-        self._dibujar_textura_pictorica(
-            superficie, rect, color_acento, color_acento2, color_luz
-        )
+        # Textura pictórica: manchas, trazo curvo y salpicaduras (precalculadas).
+        self._dibujar_textura_pictorica(superficie, rect)
 
         # Elementos abstractos dentro de la forma: curvas y bloques cromáticos.
         self._dibujar_acento_abstracto(superficie, rect, color_acento, color_sombra, color_luz)
@@ -168,31 +201,14 @@ class Plataforma:
             (rect.left + 2, rect.top + 16),
         ]
 
-    def _dibujar_textura_pictorica(self, superficie, rect, color_a, color_b, color_luz):
-        """Añade manchas translúcidas, un trazo curvo y salpicaduras finas
-        para dar sensación de pintura hecha a mano sobre la plataforma."""
-        capa = pygame.Surface(rect.size, pygame.SRCALPHA)
+    def _dibujar_textura_pictorica(self, superficie, rect):
+        """Pinta la textura pictórica precalculada (ver ``_construir_capa_textura``).
 
-        for fx, fy, fr, delta_hue, alpha, clara in self.manchas:
-            radio = max(2, int(fr * rect.width))
-            centro = (int(fx * rect.width), int(fy * rect.height))
-            color = color_luz if clara else color_a
-            pygame.draw.circle(capa, (*color, alpha), centro, radio)
-
-        if len(self.trazo) >= 2:
-            puntos_trazo = [
-                (p[0] * rect.width, p[1] * rect.height) for p in self.trazo
-            ]
-            try:
-                pygame.draw.aalines(capa, (*color_b, 160), False, puntos_trazo, 1)
-            except TypeError:
-                pygame.draw.lines(capa, (*color_b, 160), False, puntos_trazo, 2)
-
-        for fx, fy, radio in self.salpicaduras:
-            centro = (int(fx * rect.width), int(fy * rect.height))
-            pygame.draw.circle(capa, (*color_luz, 150), centro, max(1, int(radio)))
-
-        superficie.blit(capa, rect.topleft)
+        Solo hace un blit: nada de esto se reconstruye por fotograma.
+        """
+        if self._capa_textura is None:
+            self._construir_capa_textura()
+        superficie.blit(self._capa_textura, rect.topleft)
 
     def _dibujar_acento_abstracto(self, superficie, rect, color_acento, color_sombra, color_luz):
         """Añade manchas y líneas abstractas que simulan pintura gestual sobre

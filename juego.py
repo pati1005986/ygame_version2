@@ -67,16 +67,31 @@ def escala_grises(superficie, factor):
     Returns:
         Una nueva superficie (o la misma, si ``factor`` es 0) con la
         desaturación aplicada.
+
+    Rendimiento: esto se ejecuta en TODA la pantalla, en TODOS los
+    fotogramas a partir de nivel 1 (``pygame.surfarray.array3d`` +
+    operación numpy + ``make_surface`` sobre 800x600). Es de las
+    operaciones más caras del bucle principal. Se reduce el coste
+    procesando una copia más pequeña (1/3 de tamaño) y reescalando el
+    resultado de vuelta: el numpy trabaja sobre ~9 veces menos píxeles,
+    y como esto es una mezcla de color suave (no detalle fino), la
+    pérdida de nitidez es imperceptible en movimiento.
     """
     if factor <= 0:
         return superficie
     factor = min(1.0, factor)
 
-    colores = pygame.surfarray.array3d(superficie).astype(np.float32)
+    ancho, alto = superficie.get_size()
+    reduccion = 3
+    tam_chico = (max(1, ancho // reduccion), max(1, alto // reduccion))
+    chica = pygame.transform.scale(superficie, tam_chico)
+
+    colores = pygame.surfarray.array3d(chica).astype(np.float32)
     gris = (colores @ PESOS_LUMINOSIDAD)[:, :, None]
 
     mezcla = colores * (1 - factor) + gris * factor
-    return pygame.surfarray.make_surface(mezcla.astype(np.uint8))
+    resultado_chico = pygame.surfarray.make_surface(mezcla.astype(np.uint8))
+    return pygame.transform.scale(resultado_chico, (ancho, alto))
 
 
 def cargar_gif(ruta, tamano):
@@ -159,6 +174,7 @@ def main():
     opacidad_mostrada = None
     nivel_fondo = None
     contador_frames = 0
+    intensidad_shake = 0.0  # sacudida de cámara: da sensación de impacto/velocidad
     gifs_game_over = []
     for nombre_gif in ("image1.gif", "image2.gif", "image3.gif", "image4.gif"):
         fotogramas, duracion = cargar_gif(
@@ -185,6 +201,9 @@ def main():
         contador_frames += 1
         clock.tick(FPS)
         tiempo = pygame.time.get_ticks() / 1000.0
+        intensidad_shake *= 0.82
+        if intensidad_shake < 0.05:
+            intensidad_shake = 0.0
 
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
@@ -222,15 +241,23 @@ def main():
         if estado == ESTADO_MENU:
             menu.actualizar()
         elif estado == ESTADO_JUGANDO:
+            en_aire_antes = not jugador.en_suelo
             jugador.mover(plataformas)
             for entidad in entidades:
                 entidad.mover(plataformas, jugador.rect)
+
+            # Pequeña sacudida de cámara al aterrizar: es barato (solo un
+            # offset al hacer blit) y ayuda mucho a que los saltos se
+            # sientan con más impacto/velocidad.
+            if jugador.en_suelo and en_aire_antes:
+                intensidad_shake = max(intensidad_shake, 3.5)
 
             plataforma_pisada = jugador.plataforma_actual
             if jugador.en_suelo and plataforma_pisada is not None and plataforma_pisada.es_trampa:
                 plataforma_pisada.activar_trampa()
                 jugador.iniciar_engullido(plataforma_pisada)
                 inicio_game_over = pygame.time.get_ticks()
+                intensidad_shake = 9.0
                 if gifs_game_over:
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
                 estado = ESTADO_GAME_OVER
@@ -239,6 +266,7 @@ def main():
                 entidad.rect.colliderect(jugador.rect) for entidad in entidades
             ):
                 inicio_game_over = pygame.time.get_ticks()
+                intensidad_shake = 9.0
                 if gifs_game_over:
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
                 estado = ESTADO_GAME_OVER
@@ -287,7 +315,12 @@ def main():
             hay_gif_game_over = estado == ESTADO_GAME_OVER and bool(gif_game_over)
 
             if not hay_gif_game_over:
-                if contador_frames % 2 == 0 or nivel != nivel_fondo:
+                # El fondo abstracto es lo más pesado de dibujar; con las
+                # optimizaciones de fondo.py ya es mucho más barato, pero
+                # de todas formas no hace falta recalcularlo en cada
+                # fotograma: sus formas se mueven lento y a 20 Hz (cada 3
+                # fotogramas a 60 FPS) sigue viéndose fluido.
+                if contador_frames % 3 == 0 or nivel != nivel_fondo:
                     dibujar_fondo_segmentado(fondo_cache, tiempo, hue_fondo, WIDTH, HEIGHT, nivel)
                     nivel_fondo = nivel
                 escena.blit(fondo_cache, (0, 0))
@@ -311,7 +344,15 @@ def main():
 
                 # Los colores se van perdiendo a medida que suben los niveles.
                 escena = escala_grises(escena, saturacion_nivel(nivel))
-                screen.blit(escena, (0, 0))
+                if intensidad_shake > 0:
+                    screen.fill((0, 0, 0))
+                    offset = (
+                        random.uniform(-intensidad_shake, intensidad_shake),
+                        random.uniform(-intensidad_shake, intensidad_shake),
+                    )
+                    screen.blit(escena, offset)
+                else:
+                    screen.blit(escena, (0, 0))
 
             # La escena se vuelve progresivamente más opaca al avanzar.
             alpha_opacidad = opacidad_nivel(nivel)

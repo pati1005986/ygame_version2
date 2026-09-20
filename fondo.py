@@ -74,20 +74,30 @@ def _trazo_tinta(capa, centro, radio, tiempo, fase, alpha=150, grosor=4):
     pygame.draw.polygon(capa, (18, 14, 28, alpha), pts, grosor)
 
 
-def _puntos_halftone(superficie, ancho, alto, tiempo, hue_base, paso=34, alpha=26):
+def _puntos_halftone(superficie, ancho, alto, tiempo, hue_base, paso=52, alpha=26):
     """Textura de puntos estilo cómic/pop-art (halftone), muy sutil, para que
-    el fondo se lea como una lámina impresa en vez de un degradado liso."""
+    el fondo se lea como una lámina impresa en vez de un degradado liso.
+
+    Rendimiento: el paso de la grilla se subió de 34 a 52px (menos de la
+    mitad de puntos) y el color solo se recalcula cada pocas columnas en
+    vez de en cada punto individual: la conversión HSV->RGB (``color_desde_hue``)
+    es lo más caro de este bucle y el matiz apenas cambia entre puntos
+    vecinos, así que reutilizarlo es imperceptible mientras ahorra muchas
+    llamadas por fotograma.
+    """
     capa = _obtener_superficie("halftone", (ancho, alto))
     fila = 0
     for y in range(-paso, alto + paso, paso):
         desfase = (paso // 2) if fila % 2 else 0
-        for x in range(-paso, ancho + paso, paso):
+        color = None
+        for indice_col, x in enumerate(range(-paso, ancho + paso, paso)):
             cx = x + desfase
             cy = y
             onda = math.sin(cx * 0.01 + tiempo * 0.4) + math.cos(cy * 0.013 - tiempo * 0.3)
             radio_punto = max(1.5, 3.2 + onda * 1.6)
-            hue = (hue_base + (cx / ancho) * 0.15 + tiempo * 0.02) % 1.0
-            color = color_desde_hue(hue, 0.4, 0.4)
+            if color is None or indice_col % 3 == 0:
+                hue = (hue_base + (cx / ancho) * 0.15 + tiempo * 0.02) % 1.0
+                color = color_desde_hue(hue, 0.4, 0.4)
             pygame.draw.circle(capa, (*color, alpha), (cx, cy), int(radio_punto))
         fila += 1
     superficie.blit(capa, (0, 0))
@@ -124,11 +134,26 @@ class ParticulaAbstracta:
         self.secciones = random.randint(8, 15)
         self.giro = random.uniform(0.7, 1.6)
 
+        # Rendimiento: dibujar esta mancha implica crear una Surface nueva
+        # y trazar varios polígonos orgánicos con muchos puntos; hacerlo en
+        # cada fotograma para las 12 partículas es caro. La forma se
+        # recalcula solo cada pocos fotogramas (la animación es lenta, así
+        # que no se nota) y mientras tanto se reutiliza la última capa,
+        # reposicionada según el movimiento real de la partícula.
+        self._capa_cache = None
+        self._centro_cache = None
+        self._contador_regen = random.randint(0, 4)  # desfasado entre partículas
+
     def actualizar(self):
         self.pos.x = (self.pos.x + self.vel.x) % self.ancho
         self.pos.y = (self.pos.y + self.vel.y) % self.alto
 
     def dibujar(self, superficie, tiempo):
+        self._contador_regen += 1
+        if self._capa_cache is not None and self._contador_regen % 4 != 0:
+            superficie.blit(self._capa_cache, self.pos - self._centro_cache)
+            return
+
         hue_base = (self.hue + tiempo * 0.02) % 1.0
         radio = self.radio + math.sin(tiempo * 2 + self.fase) * 8
         capa = pygame.Surface((radio * 2.6, radio * 2.6), pygame.SRCALPHA)
@@ -171,7 +196,9 @@ class ParticulaAbstracta:
         brillo_rot = pygame.transform.rotate(brillo, math.degrees(self.fase) % 40 - 20)
         capa.blit(brillo_rot, brillo_rot.get_rect(center=brillo_pos))
 
-        superficie.blit(capa, self.pos - pygame.Vector2(centro))
+        self._capa_cache = capa
+        self._centro_cache = pygame.Vector2(centro)
+        superficie.blit(capa, self.pos - self._centro_cache)
 
 
 _VUELTAS_REMOLINO = 2.8
@@ -179,15 +206,26 @@ _HILOS_REMOLINO = 4
 
 
 def _dibujar_remolino(superficie, x, y, radio, hue, tiempo, indice):
-    """Espiral con grosor pulsante y goteo final, como una pincelada de acrílico."""
+    """Espiral con grosor pulsante y goteo final, como una pincelada de acrílico.
+
+    Rendimiento: esta era la función más costosa de todo el fondo. Con 4
+    hilos y hasta 160 pasos por remolino, cada redibujado del fondo podía
+    llegar a llamar ``color_desde_hue`` (conversión HSV->RGB) y
+    ``pygame.draw.line`` más de 600 veces solo aquí, multiplicado por los
+    3 remolinos del fondo. Se reduce el número de pasos y se recalcula el
+    color cada varios segmentos en vez de en cada uno: el degradado de
+    color a lo largo del brazo sigue viéndose suave porque el matiz
+    cambia poco entre segmentos vecinos.
+    """
     tam = (radio * 2, radio * 2)
     capa = _obtener_superficie(("remolino", indice), tam)
     centro = pygame.Vector2(radio, radio)
-    pasos = min(160, max(60, int(radio * 0.95)))
+    pasos = min(70, max(30, int(radio * 0.45)))
 
     for hilo in range(_HILOS_REMOLINO):
         fase_hilo = hilo * (math.tau / _HILOS_REMOLINO)
         anterior = None
+        color = None
         for paso in range(pasos + 1):
             t = paso / pasos
             angulo = (
@@ -202,9 +240,10 @@ def _dibujar_remolino(superficie, x, y, radio, hue, tiempo, indice):
                 int(centro.y + math.sin(angulo) * distancia),
             )
             if anterior is not None:
-                color = color_desde_hue(
-                    (hue + t * 0.4 + hilo / _HILOS_REMOLINO * 0.18 + tiempo * 0.05) % 1.0, 0.85, 1.0
-                )
+                if color is None or paso % 4 == 0:
+                    color = color_desde_hue(
+                        (hue + t * 0.4 + hilo / _HILOS_REMOLINO * 0.18 + tiempo * 0.05) % 1.0, 0.85, 1.0
+                    )
                 grosor = max(1, int(6 * (1 - t) + 2 * math.sin(tiempo * 3 + hilo)) + 1)
                 pygame.draw.line(capa, (*color, 170), anterior, punto, grosor)
             anterior = punto
@@ -271,11 +310,33 @@ def _dibujar_caleidoscopio(superficie, centro, radio, hue_base, tiempo, ancho, a
     superficie.blit(capa, (0, 0))
 
 
+_CACHE_CIUDAD = {}
+
+
 def _dibujar_ciudad(superficie, ancho, alto, hue_fondo, nivel, transicion):
     """Superpone una silueta urbana para que el fondo gane coherencia con la
-    progresión del juego."""
+    progresión del juego.
+
+    Rendimiento: el doble bucle que dibuja ventana por ventana es el trozo
+    más pesado de esta función y, sin embargo, el resultado solo depende
+    de ``nivel`` (y de un matiz que se redondea a continuación), no de
+    ``tiempo``. Antes se reconstruía en cada fotograma aunque no cambiara
+    nada visible; ahora se cachea por nivel y solo se vuelve a dibujar al
+    subir de nivel.
+    """
     if transicion <= 0:
         return
+
+    hue_cache = round(hue_fondo, 2)
+    clave = (nivel, hue_cache, ancho, alto)
+    capa = _CACHE_CIUDAD.get(clave)
+    if capa is not None:
+        superficie.blit(capa, (0, 0))
+        return
+
+    # Solo se conserva la última ciudad generada: el nivel avanza en un
+    # único sentido, así que no hace falta guardar todo el historial.
+    _CACHE_CIUDAD.clear()
 
     capa = pygame.Surface((ancho, alto), pygame.SRCALPHA)
     hue_base = (hue_fondo + 0.08) % 1.0
@@ -306,6 +367,7 @@ def _dibujar_ciudad(superficie, ancho, alto, hue_fondo, nivel, transicion):
                     color_ventana = (min(255, brillo), min(255, brillo + 20), 160)
                     pygame.draw.rect(capa, (*color_ventana, int(120 * transicion)), (wx, wy, 4, 6))
 
+    _CACHE_CIUDAD[clave] = capa
     superficie.blit(capa, (0, 0))
 
 

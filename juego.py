@@ -157,6 +157,7 @@ def main():
     """Inicializa Pygame y ejecuta el bucle de eventos, física y renderizado."""
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    lienzo = pygame.Surface((WIDTH, HEIGHT))
     pygame.display.set_caption(texto("en", "window_title"))
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 36)
@@ -268,7 +269,19 @@ def main():
             if evento.type == pygame.QUIT:
                 jugando = False
             if estado == ESTADO_MENU:
-                accion_menu = menu.manejar_evento(evento)
+                evento_menu = evento
+                if evento.type == pygame.MOUSEBUTTONDOWN:
+                    evento_menu = pygame.event.Event(
+                        evento.type,
+                        {
+                            "button": evento.button,
+                            "pos": (
+                                int(evento.pos[0] * WIDTH / screen.get_width()),
+                                int(evento.pos[1] * HEIGHT / screen.get_height()),
+                            ),
+                        },
+                    )
+                accion_menu = menu.manejar_evento(evento_menu)
                 if accion_menu == "jugar":
                     estado = ESTADO_JUGANDO
                 elif accion_menu == "opciones":
@@ -276,15 +289,27 @@ def main():
                 elif accion_menu == "salir":
                     jugando = False
             elif estado == ESTADO_OPCIONES:
-                accion_opciones = opciones.manejar_evento(evento)
+                evento_opciones = evento
+                if evento.type == pygame.MOUSEBUTTONDOWN:
+                    evento_opciones = pygame.event.Event(
+                        evento.type,
+                        {
+                            "button": evento.button,
+                            "pos": (
+                                int(evento.pos[0] * WIDTH / screen.get_width()),
+                                int(evento.pos[1] * HEIGHT / screen.get_height()),
+                            ),
+                        },
+                    )
+                accion_opciones = opciones.manejar_evento(evento_opciones)
                 if accion_opciones == "volver":
                     estado = ESTADO_MENU
                 elif accion_opciones == "aplicar":
                     ancho_nuevo, alto_nuevo = configuracion["resoluciones"][configuracion["resolucion"]]
                     screen = pygame.display.set_mode((ancho_nuevo, alto_nuevo))
-                    menu.actualizar_tamano(ancho_nuevo, alto_nuevo)
+                    menu.actualizar_tamano(WIDTH, HEIGHT)
                     menu.establecer_idioma(configuracion["idioma"])
-                    opciones.actualizar_tamano(ancho_nuevo, alto_nuevo)
+                    opciones.actualizar_tamano(WIDTH, HEIGHT)
                     pygame.display.set_caption(texto(configuracion["idioma"], "window_title"))
                     texto_boton = texto(configuracion["idioma"], "retry")
                     tamano_fuente = 36
@@ -307,7 +332,12 @@ def main():
                 evento.type == pygame.MOUSEBUTTONDOWN
                 and evento.button == pygame.BUTTON_LEFT
                 and estado == ESTADO_GAME_OVER
-                and boton_reintentar.collidepoint(evento.pos)
+                and boton_reintentar.collidepoint(
+                    (
+                        int(evento.pos[0] * WIDTH / screen.get_width()),
+                        int(evento.pos[1] * HEIGHT / screen.get_height()),
+                    )
+                )
             ):
                 nivel = 0
                 plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
@@ -388,9 +418,16 @@ def main():
 
         # --- Renderizado ---
         if estado == ESTADO_MENU:
-            menu.dibujar(screen, pygame.mouse.get_pos())
+            posicion_raton = pygame.mouse.get_pos()
+            posicion_raton_logica = (
+                int(posicion_raton[0] * WIDTH / screen.get_width()),
+                int(posicion_raton[1] * HEIGHT / screen.get_height()),
+            )
+            menu.dibujar(lienzo, posicion_raton_logica)
+            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
         elif estado == ESTADO_OPCIONES:
-            opciones.dibujar(screen)
+            opciones.dibujar(lienzo)
+            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
         else:
             # La escena se dibuja aparte para poder desaturarla como un todo
             # antes de mezclarla con el resto de la interfaz.
@@ -434,14 +471,14 @@ def main():
                 # Los colores se van perdiendo a medida que suben los niveles.
                 escena = escala_grises(escena, saturacion_nivel(nivel))
                 if intensidad_shake > 0:
-                    screen.fill((0, 0, 0))
+                    lienzo.fill((0, 0, 0))
                     offset = (
                         random.uniform(-intensidad_shake, intensidad_shake),
                         random.uniform(-intensidad_shake, intensidad_shake),
                     )
-                    screen.blit(escena, offset)
+                    lienzo.blit(escena, offset)
                 else:
-                    screen.blit(escena, (0, 0))
+                    lienzo.blit(escena, (0, 0))
 
             # La escena se vuelve progresivamente más opaca al avanzar.
             alpha_opacidad = opacidad_nivel(nivel)
@@ -449,9 +486,9 @@ def main():
                 if alpha_opacidad != opacidad_mostrada:
                     capa_opacidad.fill((0, 0, 0, alpha_opacidad))
                     opacidad_mostrada = alpha_opacidad
-                screen.blit(capa_opacidad, (0, 0))
+                lienzo.blit(capa_opacidad, (0, 0))
 
-            screen.blit(panel_texto, (6, 6))
+            lienzo.blit(panel_texto, (6, 6))
             if nivel != nivel_mostrado or configuracion["idioma"] != idioma_mostrado:
                 texto_nivel = font.render(
                     f"{texto(configuracion['idioma'], 'level')}: {nivel}",
@@ -460,7 +497,7 @@ def main():
                 )
                 nivel_mostrado = nivel
                 idioma_mostrado = configuracion["idioma"]
-            screen.blit(texto_nivel, (14, 10))
+            lienzo.blit(texto_nivel, (14, 10))
 
             if estado == ESTADO_GAME_OVER:
                 if gif_game_over:
@@ -469,10 +506,15 @@ def main():
                         / (duracion_fotograma_gif * 1000)
                     ) % len(gif_game_over)
                     fotograma_gif = gif_game_over[indice_gif]
-                    screen.blit(fotograma_gif, (0, 0))
+                    lienzo.blit(fotograma_gif, (0, 0))
 
                 ahora_boton = pygame.time.get_ticks() / 1000.0
-                hover_boton = boton_reintentar.collidepoint(pygame.mouse.get_pos())
+                posicion_raton = pygame.mouse.get_pos()
+                posicion_raton_logica = (
+                    int(posicion_raton[0] * WIDTH / screen.get_width()),
+                    int(posicion_raton[1] * HEIGHT / screen.get_height()),
+                )
+                hover_boton = boton_reintentar.collidepoint(posicion_raton_logica)
                 pulso_boton = (math.sin(ahora_boton * 4.0) + 1.0) * 0.5
                 escala_boton = 1.04 + pulso_boton * 0.025 if hover_boton else 1.0
                 centro_boton = pygame.Vector2(boton_reintentar.center)
@@ -488,22 +530,24 @@ def main():
                 ]
                 color_boton = (55, 30, 75) if hover_boton else (30, 22, 48)
                 color_borde = (255, 170, 220) if hover_boton else (215, 125, 190)
-                pygame.draw.polygon(screen, (8, 5, 18), [(x + 5, y + 7) for x, y in puntos_boton])
-                pygame.draw.polygon(screen, color_boton, puntos_boton)
-                pygame.draw.polygon(screen, color_borde, puntos_boton, 2)
+                pygame.draw.polygon(lienzo, (8, 5, 18), [(x + 5, y + 7) for x, y in puntos_boton])
+                pygame.draw.polygon(lienzo, color_boton, puntos_boton)
+                pygame.draw.polygon(lienzo, color_borde, puntos_boton, 2)
                 if hover_boton:
                     pygame.draw.line(
-                        screen,
+                        lienzo,
                         (255, int(150 + pulso_boton * 80), 235),
                         puntos_boton[0],
                         puntos_boton[1],
                         3,
                     )
 
-                screen.blit(
+                lienzo.blit(
                     superficie_texto_boton,
                     superficie_texto_boton.get_rect(center=boton_reintentar.center),
                 )
+
+            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
 
         pygame.display.flip()
 

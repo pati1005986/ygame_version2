@@ -215,6 +215,9 @@ def main():
     duracion_flashback = 0.1
     proximo_flashback = 0.0
     flashbacks_habilitados = False
+    flashback_nivel_10_activo = False
+    inicio_flashback_nivel_10 = 0.0
+    duracion_flashback_nivel_10 = 3.0
 
     nivel = 0
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
@@ -439,6 +442,9 @@ def main():
             )
             if salio_de_pantalla:
                 nivel += 1
+                if nivel == 10:
+                    flashback_nivel_10_activo = True
+                    inicio_flashback_nivel_10 = tiempo
                 color_origen = jugador.color
                 pos_origen = pygame.Vector2(jugador.rect.center)
 
@@ -466,6 +472,9 @@ def main():
         elif estado == ESTADO_TRANSICION:
             if transicion.actualizar(jugador):
                 estado = ESTADO_JUGANDO
+
+        if flashback_nivel_10_activo and tiempo - inicio_flashback_nivel_10 >= duracion_flashback_nivel_10:
+            flashback_nivel_10_activo = False
 
         # --- Renderizado ---
         if estado == ESTADO_MENU:
@@ -611,6 +620,18 @@ def main():
                 lienzo.blit(
                     superficie_texto_boton,
                     superficie_texto_boton.get_rect(center=boton_reintentar.center),
+                )
+
+            if flashback_nivel_10_activo:
+                lienzo.fill((0, 0, 0))
+                texto_flashback = font.render(
+                    texto(configuracion["idioma"], "level_10_flashback"),
+                    True,
+                    (255, 255, 255),
+                )
+                lienzo.blit(
+                    texto_flashback,
+                    texto_flashback.get_rect(center=(WIDTH // 2, HEIGHT // 2)),
                 )
 
             screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))

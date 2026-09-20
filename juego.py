@@ -16,6 +16,7 @@ import pygame
 
 from fondo import ParticulaAbstracta, dibujar_fondo_segmentado
 from enemigo import generar_entidades
+from idioma import texto
 from menu import MenuInicio
 from opciones import MenuOpciones
 from personaje import PersonajeHumanoide
@@ -156,11 +157,11 @@ def main():
     """Inicializa Pygame y ejecuta el bucle de eventos, física y renderizado."""
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Plataformas Procedurales - Lienzo Abstracto")
+    pygame.display.set_caption(texto("en", "window_title"))
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 36)
     boton_reintentar = pygame.Rect(WIDTH // 2 - 110, HEIGHT // 2 + 45, 220, 52)
-    texto_boton = "VOLVER A INTENTAR"
+    texto_boton = texto("en", "retry")
     tamano_fuente = 36
     while tamano_fuente > 16 and pygame.font.SysFont(None, tamano_fuente, bold=True).size(texto_boton)[0] > boton_reintentar.width - 28:
         tamano_fuente -= 1
@@ -172,6 +173,7 @@ def main():
     panel_texto = pygame.Surface((110, 36), pygame.SRCALPHA)
     panel_texto.fill((0, 0, 0, 90))
     nivel_mostrado = None
+    idioma_mostrado = None
     texto_nivel = None
     opacidad_mostrada = None
     nivel_fondo = None
@@ -281,7 +283,16 @@ def main():
                     ancho_nuevo, alto_nuevo = configuracion["resoluciones"][configuracion["resolucion"]]
                     screen = pygame.display.set_mode((ancho_nuevo, alto_nuevo))
                     menu.actualizar_tamano(ancho_nuevo, alto_nuevo)
+                    menu.establecer_idioma(configuracion["idioma"])
                     opciones.actualizar_tamano(ancho_nuevo, alto_nuevo)
+                    pygame.display.set_caption(texto(configuracion["idioma"], "window_title"))
+                    texto_boton = texto(configuracion["idioma"], "retry")
+                    tamano_fuente = 36
+                    while tamano_fuente > 16 and pygame.font.SysFont(None, tamano_fuente, bold=True).size(texto_boton)[0] > boton_reintentar.width - 28:
+                        tamano_fuente -= 1
+                    fuente_boton = pygame.font.SysFont(None, tamano_fuente, bold=True)
+                    superficie_texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
+                    idioma_mostrado = None
                     estado = ESTADO_MENU
             if estado == ESTADO_JUGANDO and evento.type == pygame.KEYDOWN and evento.key == configuracion["controles"]["jump"]:
                 jugador.saltar()
@@ -441,9 +452,14 @@ def main():
                 screen.blit(capa_opacidad, (0, 0))
 
             screen.blit(panel_texto, (6, 6))
-            if nivel != nivel_mostrado:
-                texto_nivel = font.render(f"Nivel: {nivel}", True, (255, 255, 255))
+            if nivel != nivel_mostrado or configuracion["idioma"] != idioma_mostrado:
+                texto_nivel = font.render(
+                    f"{texto(configuracion['idioma'], 'level')}: {nivel}",
+                    True,
+                    (255, 255, 255),
+                )
                 nivel_mostrado = nivel
+                idioma_mostrado = configuracion["idioma"]
             screen.blit(texto_nivel, (14, 10))
 
             if estado == ESTADO_GAME_OVER:

@@ -1,21 +1,17 @@
 import pygame
 
+from idioma import alternar_idioma, texto
+
 
 class MenuOpciones:
     """Pantalla independiente para configurar el juego.
 
-    La interfaz se mantiene en ingles porque es el unico idioma disponible.
     ``configuracion`` se modifica en el sitio para que el bucle principal pueda
     reutilizarla al volver al menu.
     """
 
     RESOLUCIONES = ((800, 600), (640, 480), (480, 360))
-    CONTROLES = (
-        ("left", "MOVE LEFT"),
-        ("right", "MOVE RIGHT"),
-        ("jump", "JUMP"),
-        ("down", "CROUCH"),
-    )
+    CONTROLES = ("left", "right", "jump", "down")
 
     def __init__(self, ancho, alto, configuracion):
         self.ancho = ancho
@@ -36,7 +32,7 @@ class MenuOpciones:
         inicio_controles = 285
         self.botones_controles = {
             nombre: pygame.Rect(centro - 190, inicio_controles + indice * 48, 380, 38)
-            for indice, (nombre, _) in enumerate(self.CONTROLES)
+            for indice, nombre in enumerate(self.CONTROLES)
         }
 
     def actualizar_tamano(self, ancho, alto):
@@ -51,28 +47,38 @@ class MenuOpciones:
     def _nombre_tecla(self, nombre):
         return pygame.key.name(self.configuracion["controles"][nombre]).upper()
 
+    def establecer_idioma(self, idioma):
+        self.configuracion["idioma"] = idioma
+
     def dibujar(self, superficie):
         superficie.fill((10, 12, 18))
         pygame.draw.rect(superficie, (18, 27, 38), (0, 0, self.ancho, self.alto))
-        self._texto_centrado(superficie, "OPTIONS", self.fuente_titulo, (self.ancho // 2, 55))
+        idioma = self.configuracion["idioma"]
+        self._texto_centrado(superficie, texto(idioma, "options"), self.fuente_titulo, (self.ancho // 2, 55))
 
         resolucion = self.configuracion["resoluciones"][self.configuracion["resolucion"]]
         self._texto_centrado(
             superficie,
-            f"RESOLUTION: {resolucion[0]} X {resolucion[1]}",
+            f"{texto(idioma, 'resolution')}: {resolucion[0]} X {resolucion[1]}",
             self.fuente,
             self.boton_resolucion.center,
         )
         self._texto_centrado(
             superficie,
-            "LANGUAGE: ENGLISH",
+            f"{texto(idioma, 'language')}: {texto(idioma, 'spanish' if idioma == 'en' else 'english')}",
             self.fuente,
             self.boton_idioma.center,
         )
 
-        for nombre, texto in self.CONTROLES:
+        etiquetas = {
+            "left": "move_left",
+            "right": "move_right",
+            "jump": "jump",
+            "down": "crouch",
+        }
+        for nombre in self.CONTROLES:
             rect = self.botones_controles[nombre]
-            etiqueta = f"{texto}: {self._nombre_tecla(nombre)}"
+            etiqueta = f"{texto(idioma, etiquetas[nombre])}: {self._nombre_tecla(nombre)}"
             color = (90, 220, 255) if self.tecla_esperada == nombre else (235, 240, 245)
             pygame.draw.rect(superficie, (30, 42, 55), rect)
             pygame.draw.rect(superficie, color, rect, 2)
@@ -81,16 +87,16 @@ class MenuOpciones:
         if self.tecla_esperada:
             self._texto_centrado(
                 superficie,
-                "PRESS A KEY... ESC CANCELS",
+                texto(idioma, "press_key"),
                 self.fuente_pequena,
                 (self.ancho // 2, 265),
                 (255, 210, 120),
             )
 
-        for rect, texto in ((self.boton_volver, "BACK"), (self.boton_guardar, "APPLY")):
+        for rect, clave in ((self.boton_volver, "back"), (self.boton_guardar, "apply")):
             pygame.draw.rect(superficie, (24, 34, 45), rect)
             pygame.draw.rect(superficie, (90, 220, 255), rect, 2)
-            self._texto_centrado(superficie, texto, self.fuente, rect.center)
+            self._texto_centrado(superficie, texto(idioma, clave), self.fuente, rect.center)
 
     def manejar_evento(self, evento):
         if self.tecla_esperada:
@@ -112,7 +118,7 @@ class MenuOpciones:
                 self.configuracion["resolucion"] + 1
             ) % len(self.RESOLUCIONES)
         elif self.boton_idioma.collidepoint(evento.pos):
-            self.configuracion["idioma"] = "en"
+            self.configuracion["idioma"] = alternar_idioma(self.configuracion["idioma"])
         elif self.boton_volver.collidepoint(evento.pos):
             return "volver"
         elif self.boton_guardar.collidepoint(evento.pos):

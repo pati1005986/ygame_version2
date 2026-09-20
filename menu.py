@@ -3,6 +3,7 @@ import math
 
 import pygame
 
+from idioma import texto
 from opciones import MenuOpciones
 
 try:
@@ -20,9 +21,10 @@ class MenuInicio:
     COLOR_TEXTO_TENUE = (170, 180, 190)
     COLOR_FONDO = (10, 12, 18)
 
-    def __init__(self, ancho, alto, nombre_video="image.gif"):
+    def __init__(self, ancho, alto, nombre_video="image.gif", idioma="en"):
         self.ancho = ancho
         self.alto = alto
+        self.idioma = idioma
         self.ruta_video = os.path.join("assets", nombre_video)
         self.cap = None
         self.frame_actual = None
@@ -57,12 +59,26 @@ class MenuInicio:
         self._capa_vineta = self._construir_vineta()
         self._capa_panel_base = self._construir_panel_base()
         self._cache_botones = {
-            ("jugar", False): self._construir_boton(self.boton_jugar, "JUGAR", (2, 2, 2)),
-            ("jugar", True): self._construir_boton(self.boton_jugar, "JUGAR", (90, 200, 255), hover=True),
-            ("opciones", False): self._construir_boton(self.boton_opciones, "OPCIONES", (2, 2, 2)),
-            ("opciones", True): self._construir_boton(self.boton_opciones, "OPCIONES", (90, 200, 255), hover=True),
-            ("salir", False): self._construir_boton(self.boton_salir, "SALIR", (2, 2, 2)),
-            ("salir", True): self._construir_boton(self.boton_salir, "SALIR", (255, 120, 150), hover=True),
+            ("jugar", False): self._construir_boton(self.boton_jugar, texto(self.idioma, "play"), (2, 2, 2)),
+            ("jugar", True): self._construir_boton(self.boton_jugar, texto(self.idioma, "play"), (90, 200, 255), hover=True),
+            ("opciones", False): self._construir_boton(self.boton_opciones, texto(self.idioma, "options"), (2, 2, 2)),
+            ("opciones", True): self._construir_boton(self.boton_opciones, texto(self.idioma, "options"), (90, 200, 255), hover=True),
+            ("salir", False): self._construir_boton(self.boton_salir, texto(self.idioma, "exit"), (2, 2, 2)),
+            ("salir", True): self._construir_boton(self.boton_salir, texto(self.idioma, "exit"), (255, 120, 150), hover=True),
+        }
+
+    def establecer_idioma(self, idioma):
+        self.idioma = idioma
+        etiquetas = {"jugar": "play", "opciones": "options", "salir": "exit"}
+        self._cache_botones = {
+            (nombre, hover): self._construir_boton(
+                getattr(self, f"boton_{nombre}"),
+                texto(self.idioma, clave),
+                (90, 200, 255) if hover else (2, 2, 2),
+                hover=hover,
+            )
+            for nombre, clave in etiquetas.items()
+            for hover in (False, True)
         }
 
     def actualizar_tamano(self, ancho, alto):
@@ -79,12 +95,12 @@ class MenuInicio:
         self._capa_vineta = self._construir_vineta()
         self._capa_panel_base = self._construir_panel_base()
         self._cache_botones = {
-            ("jugar", False): self._construir_boton(self.boton_jugar, "JUGAR", (2, 2, 2)),
-            ("jugar", True): self._construir_boton(self.boton_jugar, "JUGAR", (90, 200, 255), hover=True),
-            ("opciones", False): self._construir_boton(self.boton_opciones, "OPCIONES", (2, 2, 2)),
-            ("opciones", True): self._construir_boton(self.boton_opciones, "OPCIONES", (90, 200, 255), hover=True),
-            ("salir", False): self._construir_boton(self.boton_salir, "SALIR", (2, 2, 2)),
-            ("salir", True): self._construir_boton(self.boton_salir, "SALIR", (255, 120, 150), hover=True),
+            ("jugar", False): self._construir_boton(self.boton_jugar, texto(self.idioma, "play"), (2, 2, 2)),
+            ("jugar", True): self._construir_boton(self.boton_jugar, texto(self.idioma, "play"), (90, 200, 255), hover=True),
+            ("opciones", False): self._construir_boton(self.boton_opciones, texto(self.idioma, "options"), (2, 2, 2)),
+            ("opciones", True): self._construir_boton(self.boton_opciones, texto(self.idioma, "options"), (90, 200, 255), hover=True),
+            ("salir", False): self._construir_boton(self.boton_salir, texto(self.idioma, "exit"), (2, 2, 2)),
+            ("salir", True): self._construir_boton(self.boton_salir, texto(self.idioma, "exit"), (255, 120, 150), hover=True),
         }
 
     # ------------------------------------------------------------------

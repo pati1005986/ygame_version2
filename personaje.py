@@ -14,7 +14,7 @@ class PersonajeHumanoide:
         color: Color RGB base del personaje. Sus sombras se derivan de él.
     """
 
-    def __init__(self, x, y, color):
+    def __init__(self, x, y, color, volumen_efectos=1.0):
         # Tamaño aumentado ~25% respecto a la versión original (32x56 -> 40x70)
         self.rect = pygame.Rect(x, y, 40, 70)
         self.altura_normal = self.rect.height
@@ -62,6 +62,7 @@ class PersonajeHumanoide:
         self.particulas = []
 
         self.ultimo_paso = 0
+        self.volumen_efectos = float(volumen_efectos)
         self.sonido_salto = self._crear_sonido(620, 0.16, 0.18)
         self.sonido_paso = self._crear_sonido(125, 0.06, 0.10)
         self.sonido_aterrizaje = self._crear_sonido(95, 0.09, 0.14)
@@ -73,6 +74,7 @@ class PersonajeHumanoide:
         self.angulo_giro = 0.0
         self.velocidad_giro = 28  # grados por fotograma (~0.21s la vuelta completa a 60 FPS)
         self.sonido_doble_salto = self._crear_sonido(880, 0.14, 0.16)
+        self.ajustar_volumen_efectos(self.volumen_efectos)
 
         # Tamaño de "pixel" para el look pixel art (bloques, no formas suaves)
         self.pixel = 4
@@ -96,6 +98,19 @@ class PersonajeHumanoide:
             )
             muestras.append(muestra)
         return pygame.mixer.Sound(buffer=muestras.tobytes())
+
+    def ajustar_volumen_efectos(self, volumen):
+        """Ajusta los sonidos del personaje al nivel seleccionado en opciones."""
+        self.volumen_efectos = max(0.0, min(1.0, float(volumen)))
+        sonidos = (
+            (self.sonido_salto, 0.18),
+            (self.sonido_paso, 0.10),
+            (self.sonido_aterrizaje, 0.14),
+            (self.sonido_doble_salto, 0.16),
+        )
+        for sonido, volumen_base in sonidos:
+            if sonido is not None:
+                sonido.set_volume(self.volumen_efectos * volumen_base)
 
     # ------------------------------------------------------------------
     # Utilidades de color monocromático: todo el personaje se dibuja a

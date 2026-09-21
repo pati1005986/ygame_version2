@@ -223,7 +223,22 @@ def main():
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
     particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
 
-    jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
+    configuracion = {
+        "resoluciones": MenuOpciones.RESOLUCIONES,
+        "resolucion": 0,
+        "pantalla_completa": False,
+        "idioma": "en",
+        "volumen_musica": 0.8,
+        "volumen_efectos": 0.85,
+        "controles": {
+            "left": pygame.K_a,
+            "right": pygame.K_d,
+            "jump": pygame.K_SPACE,
+            "down": pygame.K_s,
+        },
+    }
+
+    jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
     jugador.rect.center = POS_SPAWN
 
     estado = ESTADO_MENU
@@ -234,18 +249,6 @@ def main():
     indice_imagen_game_over = 0
     menu = MenuInicio(WIDTH, HEIGHT)
     pausa = MenuPausa(WIDTH, HEIGHT)
-    configuracion = {
-        "resoluciones": MenuOpciones.RESOLUCIONES,
-        "resolucion": 0,
-    "pantalla_completa": False,
-        "idioma": "en",
-        "controles": {
-            "left": pygame.K_a,
-            "right": pygame.K_d,
-            "jump": pygame.K_SPACE,
-            "down": pygame.K_s,
-        },
-    }
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
     estado_despues_opciones = ESTADO_MENU
     jugando = True
@@ -345,6 +348,10 @@ def main():
                 if accion_opciones == "volver":
                     estado = estado_despues_opciones
                 elif accion_opciones == "aplicar":
+                    if pygame.mixer.get_init():
+                        pygame.mixer.music.set_volume(configuracion["volumen_musica"])
+                    if jugador is not None:
+                        jugador.ajustar_volumen_efectos(configuracion["volumen_efectos"])
                     ancho_nuevo, alto_nuevo = configuracion["resoluciones"][configuracion["resolucion"]]
                     modo_ventana = pygame.FULLSCREEN if configuracion["pantalla_completa"] else 0
                     screen = pygame.display.set_mode((ancho_nuevo, alto_nuevo), modo_ventana)
@@ -371,7 +378,7 @@ def main():
             elif estado == ESTADO_GAME_OVER and evento.type == pygame.KEYDOWN and evento.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
                 nivel = 0
                 plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
-                jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
+                jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
                 jugador.rect.center = POS_SPAWN
                 transicion = None
                 estado = ESTADO_JUGANDO
@@ -388,7 +395,7 @@ def main():
             ):
                 nivel = 0
                 plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
-                jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador))
+                jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
                 jugador.rect.center = POS_SPAWN
                 transicion = None
                 estado = ESTADO_JUGANDO

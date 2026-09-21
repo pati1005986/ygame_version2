@@ -16,6 +16,19 @@ class MenuOpciones:
 
     RESOLUCIONES = ((800, 600), (640, 480), (480, 360))
     CONTROLES = ("left", "right", "jump", "down")
+    DEFAULTS = {
+        "resolucion": 0,
+        "pantalla_completa": False,
+        "idioma": "en",
+        "volumen_musica": 0.8,
+        "volumen_efectos": 0.85,
+        "controles": {
+            "left": pygame.K_a,
+            "right": pygame.K_d,
+            "jump": pygame.K_SPACE,
+            "down": pygame.K_s,
+        },
+    }
 
     # Paleta tipo comic
     COLOR_FONDO = (24, 14, 46)
@@ -45,7 +58,14 @@ class MenuOpciones:
     def __init__(self, ancho, alto, configuracion):
         self.ancho = ancho
         self.alto = alto
-        self.configuracion = configuracion
+        self.configuracion = dict(configuracion)
+        for clave, valor in self.DEFAULTS.items():
+            if clave == "controles":
+                self.configuracion.setdefault("controles", valor.copy())
+                for nombre, tecla in valor.items():
+                    self.configuracion["controles"].setdefault(nombre, tecla)
+            else:
+                self.configuracion.setdefault(clave, valor)
         self.fuente_titulo = pygame.font.SysFont("comicsansms", 44, bold=True)
         self.fuente = pygame.font.SysFont("comicsansms", 22, bold=True)
         self.fuente_pequena = pygame.font.SysFont("comicsansms", 18, bold=True)
@@ -56,14 +76,17 @@ class MenuOpciones:
 
     def _crear_rectangulos(self):
         centro = self.ancho // 2
-        self.boton_resolucion = pygame.Rect(centro - 190, 130, 380, 48)
-        self.boton_idioma = pygame.Rect(centro - 190, 194, 380, 48)
-        self.boton_pantalla = pygame.Rect(centro - 190, 258, 380, 48)
+        self.boton_resolucion = pygame.Rect(centro - 190, 120, 380, 30)
+        self.boton_idioma = pygame.Rect(centro - 190, 160, 380, 30)
+        self.boton_pantalla = pygame.Rect(centro - 190, 200, 380, 30)
+        self.boton_musica = pygame.Rect(centro - 190, 240, 380, 30)
+        self.boton_efectos = pygame.Rect(centro - 190, 280, 380, 30)
+        self.boton_reset = pygame.Rect(centro - 190, 320, 380, 30)
         self.boton_volver = pygame.Rect(centro - 190, self.alto - 72, 180, 48)
         self.boton_guardar = pygame.Rect(centro + 10, self.alto - 72, 180, 48)
-        inicio_controles = 325
+        inicio_controles = 360
         self.botones_controles = {
-            nombre: pygame.Rect(centro - 190, inicio_controles + indice * 48, 380, 38)
+            nombre: pygame.Rect(centro - 190, inicio_controles + indice * 34, 380, 28)
             for indice, nombre in enumerate(self.CONTROLES)
         }
 
@@ -211,6 +234,14 @@ class MenuOpciones:
     def _nombre_tecla(self, nombre):
         return pygame.key.name(self.configuracion["controles"][nombre]).upper()
 
+    def _restaurar_por_defecto(self):
+        self.configuracion["resolucion"] = self.DEFAULTS["resolucion"]
+        self.configuracion["pantalla_completa"] = self.DEFAULTS["pantalla_completa"]
+        self.configuracion["idioma"] = self.DEFAULTS["idioma"]
+        self.configuracion["volumen_musica"] = self.DEFAULTS["volumen_musica"]
+        self.configuracion["volumen_efectos"] = self.DEFAULTS["volumen_efectos"]
+        self.configuracion["controles"] = self.DEFAULTS["controles"].copy()
+
     def dibujar(self, superficie, mouse_pos=None, dt=1 / 60):
         self._tiempo += dt
         posicion_raton = mouse_pos if mouse_pos is not None else pygame.mouse.get_pos()
@@ -271,6 +302,35 @@ class MenuOpciones:
             rect_dibujo.center,
         )
 
+        volumen_musica = int(round(self.configuracion.get("volumen_musica", 0.8) * 100))
+        hover = self.boton_musica.collidepoint(posicion_raton)
+        rect_dibujo = self._dibujar_boton_comic(superficie, self.boton_musica, "", hover)
+        self._texto_centrado(
+            superficie,
+            f"{texto(idioma, 'music')}: {volumen_musica}%",
+            self.fuente_pequena,
+            rect_dibujo.center,
+        )
+
+        volumen_efectos = int(round(self.configuracion.get("volumen_efectos", 0.85) * 100))
+        hover = self.boton_efectos.collidepoint(posicion_raton)
+        rect_dibujo = self._dibujar_boton_comic(superficie, self.boton_efectos, "", hover)
+        self._texto_centrado(
+            superficie,
+            f"{texto(idioma, 'effects')}: {volumen_efectos}%",
+            self.fuente_pequena,
+            rect_dibujo.center,
+        )
+
+        hover = self.boton_reset.collidepoint(posicion_raton)
+        rect_dibujo = self._dibujar_boton_comic(superficie, self.boton_reset, "", hover)
+        self._texto_centrado(
+            superficie,
+            texto(idioma, "reset_defaults"),
+            self.fuente_pequena,
+            rect_dibujo.center,
+        )
+
         etiquetas = {
             "left": "move_left",
             "right": "move_right",
@@ -324,6 +384,18 @@ class MenuOpciones:
             self.configuracion["idioma"] = alternar_idioma(self.configuracion["idioma"])
         elif self.boton_pantalla.collidepoint(evento.pos):
             self.configuracion["pantalla_completa"] = not self.configuracion.get("pantalla_completa", False)
+        elif self.boton_musica.collidepoint(evento.pos):
+            valores = (0.0, 0.25, 0.5, 0.75, 1.0)
+            actual = self.configuracion.get("volumen_musica", 0.8)
+            indice = valores.index(actual) if actual in valores else 3
+            self.configuracion["volumen_musica"] = valores[(indice + 1) % len(valores)]
+        elif self.boton_efectos.collidepoint(evento.pos):
+            valores = (0.0, 0.25, 0.5, 0.75, 1.0)
+            actual = self.configuracion.get("volumen_efectos", 0.85)
+            indice = valores.index(actual) if actual in valores else 3
+            self.configuracion["volumen_efectos"] = valores[(indice + 1) % len(valores)]
+        elif self.boton_reset.collidepoint(evento.pos):
+            self._restaurar_por_defecto()
         elif self.boton_volver.collidepoint(evento.pos):
             return "volver"
         elif self.boton_guardar.collidepoint(evento.pos):

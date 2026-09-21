@@ -44,3 +44,9 @@ def test_textos_de_nuevos_idiomas():
     assert texto("ru", "options") == "ОПЦИИ"
     assert texto("pt", "language") == "IDIOMA"
     assert texto("ru", "language") == "ЯЗЫК"
+
+
+def test_textos_de_opciones_nuevas():
+    assert texto("en", "music") == "MUSIC"
+    assert texto("es", "effects") == "EFECTOS"
+    assert texto("es", "reset_defaults") == "RESTAURAR PREDETERMINADO"

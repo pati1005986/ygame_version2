@@ -145,9 +145,6 @@ def aplicar_volumen_audio(configuracion, jugador=None):
 # Generación de niveles
 # --------------------------------------------------------------------------
 def generar_nivel(nivel):
-    """Genera las plataformas y los matices de color (fondo y jugador) de un
-    nivel. La disposición de las plataformas conserva la misma lógica que
-    el original; solo cambia cómo se representan visualmente."""
     """Crea un nivel y devuelve sus plataformas y colores base.
 
     Args:
@@ -158,15 +155,43 @@ def generar_nivel(nivel):
         Una tupla ``(plataformas, hue_fondo, hue_jugador)``.
     """
     plataformas = [Plataforma(50, 300, 150, 20, random.random())]
+    plataforma_guia = plataformas[0].rect
+    ultimo_x = plataforma_guia.right
 
-    cantidad_plataformas = min(6 + nivel // 2, 14)  # ahora sí escala con el nivel
+    cantidad_plataformas = min(6 + nivel // 2, 14)
     for _ in range(cantidad_plataformas):
-        x = random.randint(0, WIDTH - 100)
-        y = random.randint(100, HEIGHT - 50)
-        w = random.randint(50, 200)
+        if nivel >= 17:
+            # En los niveles altos el camino se estira al maximo y siempre
+            # avanza a la derecha; el jugador debe acertar saltos muy largos.
+            w = random.randint(50, 90)
+            distancia_x = random.randint(180, 360)
+            distancia_y = random.randint(140, 300)
+            x = ultimo_x + distancia_x
+            y = plataforma_guia.top + random.choice((-1, 1)) * distancia_y
+            y = max(70, min(HEIGHT - 50, y))
+            plataforma_guia = pygame.Rect(x, y, w, 20)
+            ultimo_x = plataforma_guia.right
+        elif 10 <= nivel <= 16 and random.random() < 0.30:
+            # El camino falso se añade sin mover la guía principal, así que
+            # la siguiente plataforma válida sigue siendo alcanzable.
+            w = random.randint(50, 110)
+            x = ultimo_x + random.randint(20, 75)
+            y = max(80, min(HEIGHT - 50, plataforma_guia.top + random.randint(-110, 110)))
+            plataformas.append(
+                Plataforma(x, y, w, 20, random.random(), random.random() < 0.28)
+            )
+            continue
+        else:
+            # La ruta principal siempre avanza a la derecha, pero la altura
+            # cambia de forma irregular para evitar una escalera predecible.
+            w = random.randint(60, 130)
+            x = ultimo_x + random.randint(15, 45)
+            y = max(80, min(HEIGHT - 50, plataforma_guia.top + random.randint(-90, 55)))
+            plataforma_guia = pygame.Rect(x, y, w, 20)
+            ultimo_x = plataforma_guia.right
+
         h = 20
-        if not (x < 200 and 250 < y < 350):  # evita tapar el punto de aparición
-            plataformas.append(Plataforma(x, y, w, h, random.random(), random.random() < 0.28))
+        plataformas.append(Plataforma(x, y, w, h, random.random(), random.random() < 0.28))
 
     hue_fondo = random.random()
     hue_jugador = random.random()
@@ -243,7 +268,7 @@ def main():
     inicio_flashback_nivel_10 = 0.0
     duracion_flashback_nivel_10 = 3.0
 
-    nivel = 0
+    nivel = 1
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
     particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
 
@@ -398,7 +423,7 @@ def main():
                 elif evento.key == configuracion["controles"]["jump"]:
                     jugador.saltar()
             elif estado == ESTADO_GAME_OVER and evento.type == pygame.KEYDOWN and evento.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
-                nivel = 0
+                nivel = 1
                 plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
                 jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
                 jugador.rect.center = POS_SPAWN
@@ -415,7 +440,7 @@ def main():
                     )
                 )
             ):
-                nivel = 0
+                nivel = 1
                 plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
                 jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
                 jugador.rect.center = POS_SPAWN
@@ -463,13 +488,12 @@ def main():
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
                 estado = ESTADO_GAME_OVER
 
-            salio_de_pantalla = (
+            salio_por_la_derecha = jugador.rect.left > WIDTH
+            salio_por_otro_borde = (
                 jugador.rect.top > HEIGHT
                 or jugador.rect.right < 0
-                or jugador.rect.left > WIDTH
-                or jugador.rect.bottom < 0
             )
-            if salio_de_pantalla:
+            if salio_por_la_derecha:
                 nivel += 1
                 if nivel == 10:
                     flashback_nivel_10_activo = True
@@ -490,6 +514,13 @@ def main():
                 )
                 jugador.vel_y = 0
                 estado = ESTADO_TRANSICION
+            elif salio_por_otro_borde:
+                inicio_game_over = pygame.time.get_ticks()
+                intensidad_shake = 9.0
+                indice_imagen_game_over = 0
+                if gifs_game_over:
+                    gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
+                estado = ESTADO_GAME_OVER
 
         elif estado == ESTADO_GAME_OVER:
             for plataforma in plataformas:

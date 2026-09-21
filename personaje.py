@@ -22,6 +22,7 @@ class PersonajeHumanoide:
         self.color = color
         self.vel_y = 0
         self.velocidad = 6
+        self.gravedad = 0.6
         self.fuerza_salto = -13
         self.en_suelo = False
         self.plataforma_actual = None  # última plataforma sobre la que aterrizó
@@ -233,7 +234,7 @@ class PersonajeHumanoide:
             self.direccion = 1 if dx > 0 else -1
             self.tiempo_animacion += self.velocidad_animacion
 
-        self.vel_y += 0.6
+        self.vel_y += self.gravedad
         dy = self.vel_y
 
         self.rect.x += dx

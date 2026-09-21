@@ -4,6 +4,14 @@ La clase pública ``TransicionCaricaturesca`` se actualiza desde el bucle del
 juego y se dibuja encima del nivel. También sintetiza y reproduce un efecto
 de "boing" de sorpresa al comenzar cada transición.
 
+**La cámara viaja con el personaje.** Los dos niveles se tratan como si
+estuvieran uno junto al otro en un mismo mundo: el nivel que se deja atrás
+se desliza hacia la izquierda mientras entra el siguiente. El personaje
+salta por la costura, sube en arco y cae sobre la primera plataforma del
+nivel nuevo con rebotes (cada rebote sacude un poco la cámara). El iris ya
+no cierra sobre el centro de la pantalla: es un foco que sigue al
+personaje, y la cara aparece justo encima, reaccionando a lo que ve.
+
 Qué hace que se vea dibujada a mano y natural (en vez de "figuras de Pygame"):
 
 * **Supersampling**: la cara se pinta al doble de resolución y se reduce con
@@ -18,8 +26,17 @@ Qué hace que se vea dibujada a mano y natural (en vez de "figuras de Pygame"):
 * **Detalles con personalidad**: los ojos siguen al jugador, las pupilas se
   encogen con el susto, el parpadeo es a destiempo y con párpado, gotas de
   sudor y un estallido irregular detrás de la cabeza.
-* **Iris de cierre** al estilo dibujos clásicos, y el jugador aterriza con
-  rebotes en vez de deslizarse.
+
+Cómo se integra en el bucle del juego (ver ``juego.py``):
+
+1. Al salir por la derecha se congela una "foto" del nivel viejo y se crea
+   el nivel nuevo. Ambos se dibujan en capas del tamaño de la pantalla.
+2. En cada fotograma: ``actualizar(jugador)`` mueve al personaje,
+   ``desplazamiento_camara()`` dice cuánto deslizar las capas (0 a ancho),
+   ``dibujar(escena)`` pinta el foco y la cara, y **después** se dibuja al
+   personaje para que quede por encima de la oscuridad.
+3. ``recoger_impactos()`` devuelve la fuerza de cada rebote para sacudir la
+   cámara.
 """
 
 import colorsys
@@ -133,14 +150,23 @@ class TransicionCaricaturesca:
     """
 
     DURACION_SALIDA = 380
-    DURACION_ENTRADA = 680
+    DURACION_ENTRADA = 900
 
     NUM_PUNTAS = 9  # puntas del estallido detrás de la cabeza
     ESCALA_CARA = 1.3  # tamaño de la cara en reposo (1.0 = 200 px de ancho)
     ESCALA_ESTALLIDO = 1.75  # radio del estallido, en radios de cabeza
     SUPERMUESTREO = 2  # 1 = sin suavizado (más rápido), 2 = recomendado
     USAR_IRIS = True  # False = cortina de color que se desvanece
-    ALFA_CORTINA = 225
+    ALFA_CORTINA = 200
+    RADIO_IRIS_MIN = 120  # radio del foco que sigue al personaje, en píxeles
+
+    # Cámara y recorrido del personaje (fracciones de la duración total).
+    CAMARA_INICIO = 0.02  # la cámara empieza a deslizarse casi de inmediato
+    CAMARA_FIN = 0.90  # y llega al nivel nuevo cuando el personaje se asienta
+    T_VUELO = 0.50  # instante en que el personaje termina el salto en arco
+    ALTURA_CAIDA = 160  # altura desde la que cae sobre la plataforma nueva
+    # (fracción de la caída en que ocurre cada contacto, intensidad de la sacudida)
+    _IMPACTOS = ((1 / 2.75, 5.0), (2 / 2.75, 3.2), (2.5 / 2.75, 2.0), (1.0, 1.2))
 
     # Empieza a decaerse a partir del nivel 10 y alcanza el máximo
     # alrededor del nivel 18. Ajusta estos valores si cambias la curva
@@ -155,14 +181,38 @@ class TransicionCaricaturesca:
         posicion_origen,
         posicion_spawn,
         nivel=0,
-        volumen_efectos=1.0,
+        volumen_efectos=0.8,
+        suelo_spawn=None,
+        ancho_pantalla=800,
     ):
+        """Prepara la transición.
+
+        Args:
+            color_origen / color_destino: colores del personaje antes y
+                después (se mezclan al cruzar de un nivel al otro).
+            posicion_origen: centro del personaje al salir del nivel viejo,
+                en coordenadas de pantalla.
+            posicion_spawn: centro del personaje en el nivel nuevo.
+            nivel: número del nivel nuevo (define cuánta tristeza muestra).
+            volumen_efectos: volumen (0 a 1) del sonido de sorpresa.
+            suelo_spawn: ``y`` de la parte alta de la plataforma donde
+                aterriza el personaje. Si se da, los rebotes ocurren sobre
+                ella; si no, el personaje termina en ``posicion_spawn``.
+            ancho_pantalla: ancho de un nivel; es lo que se desliza la cámara.
+        """
         self.color_origen = color_origen
         self.color_destino = color_destino
         self.posicion_origen = pygame.Vector2(posicion_origen)
         self.posicion_spawn = pygame.Vector2(posicion_spawn)
         self.finalizada = False
+        self.ancho_pantalla = ancho_pantalla
+        self.suelo_spawn = suelo_spawn
         self.volumen_efectos = _limitar(float(volumen_efectos))
+        self._y_suelo = self.posicion_spawn.y
+        self._impactos_vistos = 0
+        self._impactos_pendientes = []
+        self._pos_cara = None
+        self._ms_previo = 0
 
         # A medida que sube el nivel, la cara se pone más triste/decaída:
         # cejas preocupadas, mirada caída, boca hacia abajo, colores
@@ -397,32 +447,103 @@ class TransicionCaricaturesca:
             "temblor": max(0.0, 1.0 - v / 0.30),
         }
 
+    # ------------------------------------------------------------------
+    # Cámara y recorrido del personaje
+    # ------------------------------------------------------------------
+    def _progreso_camara(self, ms):
+        """Avance de la cámara (0 = nivel viejo, 1 = nivel nuevo)."""
+        t = ms / self.duracion_total
+        u = _limitar((t - self.CAMARA_INICIO) / (self.CAMARA_FIN - self.CAMARA_INICIO))
+        return u * u * u * (u * (u * 6.0 - 15.0) + 10.0)  # smootherstep
+
+    def progreso_camara(self):
+        """0 a 1: cuánto se ha desplazado ya la cámara hacia el nivel nuevo."""
+        return self._progreso_camara(pygame.time.get_ticks() - self.inicio)
+
+    def desplazamiento_camara(self, ms=None):
+        """Píxeles que se desplaza la cámara hacia la derecha (0 a ancho).
+
+        El nivel viejo se dibuja en ``x = -desplazamiento`` y el nuevo en
+        ``x = ancho - desplazamiento``.
+        """
+        if ms is None:
+            ms = pygame.time.get_ticks() - self.inicio
+        return self.ancho_pantalla * self._progreso_camara(ms)
+
+    @staticmethod
+    def _punto_bezier(p0, p1, p2, t):
+        return (
+            (1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * p1[0] + t ** 2 * p2[0],
+            (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * p1[1] + t ** 2 * p2[1],
+        )
+
+    def _posicion_mundo(self, ms):
+        """Posición del personaje en el "mundo" de dos niveles contiguos.
+
+        El nivel viejo ocupa ``x`` de 0 a ancho y el nuevo de ancho a 2*ancho.
+        Primero salta por la costura en un arco que pasa por encima de la
+        plataforma nueva y luego cae sobre ella con la gravedad y los
+        rebotes de ``_rebote_suelo``. En el mundo el personaje casi no se
+        mueve en horizontal: es la cámara la que lo lleva de un nivel a otro.
+        """
+        t = _limitar(ms / self.duracion_total)
+        x0, y0 = self.posicion_origen.x, self.posicion_origen.y
+        x1 = self.ancho_pantalla + self.posicion_spawn.x
+        y_alto = self._y_suelo - self.ALTURA_CAIDA
+        if t < self.T_VUELO:
+            s = self._suave(t / self.T_VUELO)
+            control = (x0 + 24.0, max(30.0, min(y0, y_alto) - 70.0))
+            return self._punto_bezier((x0, y0), control, (x1, y_alto), s)
+        k = self._rebote_suelo((t - self.T_VUELO) / (self.CAMARA_FIN - self.T_VUELO))
+        return (x1, y_alto + (self._y_suelo - y_alto) * k)
+
+    def _registrar_impactos(self, ms):
+        """Anota los rebotes que ya ocurrieron (para sacudir la cámara)."""
+        t = ms / self.duracion_total
+        while self._impactos_vistos < len(self._IMPACTOS):
+            fraccion, fuerza = self._IMPACTOS[self._impactos_vistos]
+            if t < self.T_VUELO + (self.CAMARA_FIN - self.T_VUELO) * fraccion:
+                break
+            self._impactos_pendientes.append(fuerza * (1.0 - self.tristeza * 0.4))
+            self._impactos_vistos += 1
+
+    def recoger_impactos(self):
+        """Devuelve (y vacía) la fuerza de los rebotes ocurridos desde la
+        última llamada. Sirve para sacudir la cámara en cada aterrizaje."""
+        pendientes, self._impactos_pendientes = self._impactos_pendientes, []
+        return pendientes
+
     def actualizar(self, jugador):
-        """Actualiza la posición y el color del jugador durante la transición.
+        """Mueve al personaje por el recorrido y le cambia el color.
+
+        La posición que se asigna a ``jugador.rect`` es la de *pantalla*
+        (mundo menos desplazamiento de la cámara), que es lo que el juego
+        usa para dibujarlo.
 
         Returns:
             ``True`` cuando la animación terminó y el juego puede volver a
             aceptar controles.
         """
         transcurrido = pygame.time.get_ticks() - self.inicio
-        if transcurrido < self.DURACION_SALIDA:
-            jugador.rect.center = self.posicion_origen
-            jugador.color = self.color_origen
-        elif transcurrido < self.duracion_total:
-            v = (transcurrido - self.DURACION_SALIDA) / self.DURACION_ENTRADA
-            # Cae desde arriba con gravedad y rebota al aterrizar.
-            caida = _limitar((v - 0.10) / 0.75)
-            y_inicio = -70.0
-            y = y_inicio + (self.posicion_spawn.y - y_inicio) * self._rebote_suelo(caida)
-            jugador.rect.center = (self.posicion_spawn.x, y)
-            jugador.color = self._mezclar_color(self.color_origen, self.color_destino, self._suave(v))
+        if self.suelo_spawn is not None:
+            # Los pies quedan sobre la plataforma (1 px de aire: la física
+            # normal del juego se encarga del contacto).
+            self._y_suelo = self.suelo_spawn - jugador.rect.height / 2 - 1
+
+        if transcurrido < self.duracion_total:
+            mundo_x, mundo_y = self._posicion_mundo(transcurrido)
+            jugador.rect.center = (mundo_x - self.desplazamiento_camara(transcurrido), mundo_y)
+            mezcla = self._suave(self._progreso_camara(transcurrido))
+            jugador.color = self._mezclar_color(self.color_origen, self.color_destino, mezcla)
+            self._registrar_impactos(transcurrido)
         else:
-            jugador.rect.center = self.posicion_spawn
+            jugador.rect.center = (self.posicion_spawn.x, self._y_suelo)
             jugador.color = self.color_destino
             jugador.vel_y = 0
+            self._registrar_impactos(self.duracion_total)
             self.finalizada = True
 
-        # La cara mira al jugador (ver ``_actualizar_mirada``).
+        # La cara mira al jugador y el foco lo sigue (ver ``dibujar``).
         self._pos_jugador = pygame.Vector2(jugador.rect.center)
         return self.finalizada
 
@@ -430,16 +551,23 @@ class TransicionCaricaturesca:
     # Dibujo general
     # ------------------------------------------------------------------
     def dibujar(self, superficie):
-        """Dibuja el iris, el estallido y la cara animada."""
-        ms = pygame.time.get_ticks() - self.inicio
-        estado = self._estado(ms)
-        centro = pygame.Vector2(superficie.get_width() / 2, superficie.get_height() / 2)
+        """Dibuja el foco que sigue al personaje, el estallido y la cara.
 
-        self._dibujar_cortina(superficie, centro, estado["iris"])
+        Debe llamarse con los dos niveles ya dibujados y **antes** de dibujar
+        al personaje, para que este quede por encima de la oscuridad.
+        """
+        ms = pygame.time.get_ticks() - self.inicio
+        dt = max(0.0, (ms - self._ms_previo) / 1000.0)
+        self._ms_previo = ms
+        estado = self._estado(ms)
+        ancho_p, alto_p = superficie.get_size()
+
+        self._dibujar_cortina(superficie, self._pos_jugador, estado["iris"])
         if estado["escala"] < 0.03:
             return
 
-        self._actualizar_mirada(centro)
+        centro = self._centro_cara(ancho_p, alto_p, dt)
+        self._actualizar_mirada(centro, dt)
         self._dibujar_estallido(superficie, centro, estado, ms)
 
         anterior = self._estado(max(0, ms - 45))
@@ -469,7 +597,30 @@ class TransicionCaricaturesca:
         )
         superficie.blit(cara, destino)
 
-    def _actualizar_mirada(self, centro):
+    @staticmethod
+    def _suavizar(actual, objetivo, dt, tau):
+        """Acerca ``actual`` a ``objetivo`` con un retardo de ~``tau`` segundos
+        (independiente de los FPS)."""
+        return actual.lerp(objetivo, 1.0 - math.exp(-dt / tau)) if dt > 0 else actual
+
+    def _centro_cara(self, ancho, alto, dt):
+        """Dónde va la cara: justo encima del personaje (o debajo si este
+        está muy arriba), dentro de la pantalla y con un poco de retardo,
+        como si lo siguiera con la mirada."""
+        p = self._pos_jugador
+        radio = _ANCHO * self.ESCALA_CARA / 2
+        distancia = radio + 80.0
+        y = p.y - distancia if p.y > alto * 0.42 else p.y + distancia
+        # El margen cuenta el sobreimpulso del "pop" (la cara llega a ~1.2x).
+        margen = radio * 1.25 + 8.0
+        objetivo = pygame.Vector2(_limitar(p.x, margen, ancho - margen), _limitar(y, margen, alto - margen))
+        if self._pos_cara is None:
+            self._pos_cara = objetivo
+        else:
+            self._pos_cara = self._suavizar(self._pos_cara, objetivo, dt, 0.08)
+        return self._pos_cara
+
+    def _actualizar_mirada(self, centro, dt):
         """La cara sigue con los ojos al jugador (con un poco de retraso)."""
         objetivo = self._pos_jugador - centro
         distancia = objetivo.length()
@@ -477,10 +628,10 @@ class TransicionCaricaturesca:
             objetivo = objetivo / distancia * min(1.0, distancia / 260.0)
         else:
             objetivo = pygame.Vector2(0, 0)
-        self._mirada = self._mirada.lerp(objetivo, 0.3)
+        self._mirada = self._suavizar(self._mirada, objetivo, dt, 0.05)
 
     def _dibujar_cortina(self, superficie, centro, iris):
-        """Iris que se cierra sobre la cara y se abre para revelar el nivel."""
+        """Foco que se cierra sobre el personaje y se abre para revelar el nivel."""
         if iris >= 0.999:
             return
         ancho, alto = superficie.get_size()
@@ -488,14 +639,16 @@ class TransicionCaricaturesca:
         if self._capa is None or self._capa.get_size() != (ancho, alto):
             self._capa = pygame.Surface((ancho, alto), pygame.SRCALPHA)
 
-        if not self.USAR_IRIS or iris <= 0.0:
-            alfa = self.ALFA_CORTINA if self.USAR_IRIS else int(self.ALFA_CORTINA * (1.0 - iris))
+        if not self.USAR_IRIS:
+            alfa = int(self.ALFA_CORTINA * (1.0 - iris))
             if alfa > 0:
                 self._capa.fill((*color, alfa))
                 superficie.blit(self._capa, (0, 0))
             return
 
-        radio = math.hypot(ancho, alto) / 2 * iris
+        # El foco nunca se cierra del todo: queda un círculo alrededor del
+        # personaje para que se vea cómo lo sigue la cámara.
+        radio = self.RADIO_IRIS_MIN + (math.hypot(ancho, alto) - self.RADIO_IRIS_MIN) * iris
         capa = self._capa
         capa.fill((*color, self.ALFA_CORTINA))
         # Borde difuminado de ~4 px: círculos concéntricos cuya opacidad

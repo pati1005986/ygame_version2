@@ -9,6 +9,7 @@ el bucle principal del juego.
 import math
 import os
 import random
+import sys
 
 import cv2
 import numpy as np
@@ -158,40 +159,47 @@ def generar_nivel(nivel):
     plataforma_guia = plataformas[0].rect
     ultimo_x = plataforma_guia.right
 
-    cantidad_plataformas = min(6 + nivel // 2, 14)
-    for _ in range(cantidad_plataformas):
-        if nivel >= 17:
-            # En los niveles altos el camino se estira al maximo y siempre
-            # avanza a la derecha; el jugador debe acertar saltos muy largos.
-            w = random.randint(50, 90)
-            distancia_x = random.randint(180, 360)
-            distancia_y = random.randint(140, 300)
-            x = ultimo_x + distancia_x
-            y = plataforma_guia.top + random.choice((-1, 1)) * distancia_y
-            y = max(70, min(HEIGHT - 50, y))
-            plataforma_guia = pygame.Rect(x, y, w, 20)
-            ultimo_x = plataforma_guia.right
-        elif 10 <= nivel <= 16 and random.random() < 0.30:
-            # El camino falso se añade sin mover la guía principal, así que
-            # la siguiente plataforma válida sigue siendo alcanzable.
-            w = random.randint(50, 110)
-            x = ultimo_x + random.randint(20, 75)
-            y = max(80, min(HEIGHT - 50, plataforma_guia.top + random.randint(-110, 110)))
-            plataformas.append(
-                Plataforma(x, y, w, 20, random.random(), random.random() < 0.28)
-            )
-            continue
-        else:
-            # La ruta principal siempre avanza a la derecha, pero la altura
-            # cambia de forma irregular para evitar una escalera predecible.
-            w = random.randint(60, 130)
-            x = ultimo_x + random.randint(15, 45)
-            y = max(80, min(HEIGHT - 50, plataforma_guia.top + random.randint(-90, 55)))
-            plataforma_guia = pygame.Rect(x, y, w, 20)
-            ultimo_x = plataforma_guia.right
+    if nivel >= 17:
+        cantidad_plataformas = random.randint(5, 7)
+        distancia_x = (95, 165)
+        desplazamiento_y = (-150, 150)
+    elif nivel >= 10:
+        cantidad_plataformas = random.randint(8, 12)
+        distancia_x = (35, 90)
+        desplazamiento_y = (-125, 110)
+    else:
+        cantidad_plataformas = random.randint(7, 10)
+        distancia_x = (25, 70)
+        desplazamiento_y = (-85, 75)
 
-        h = 20
-        plataformas.append(Plataforma(x, y, w, h, random.random(), random.random() < 0.28))
+    for indice in range(cantidad_plataformas):
+        w = random.randint(50, 115) if nivel >= 10 else random.randint(65, 135)
+        x = ultimo_x + random.randint(*distancia_x)
+        y = max(70, min(HEIGHT - 50, plataforma_guia.top + random.randint(*desplazamiento_y)))
+        es_trampa = nivel >= 10 and random.random() < 0.28
+        plataforma_nueva = Plataforma(x, y, w, 20, random.random(), es_trampa)
+        plataformas.append(plataforma_nueva)
+        plataforma_guia = plataforma_nueva.rect
+        ultimo_x = plataforma_guia.right
+
+        # Las rutas opcionales aparecen como decisiones laterales y no
+        # reemplazan la ruta principal. En niveles medios también pueden
+        # convertirse en caminos falsos.
+        if nivel >= 10 and indice % 2 == 1 and random.random() < 0.65:
+            x_opcional = x + random.randint(-35, 35)
+            y_opcional = max(70, min(HEIGHT - 50, y + random.randint(-145, 145)))
+            ancho_opcional = random.randint(45, 95)
+            falso = nivel <= 16 and random.random() < 0.30
+            plataformas.append(
+                Plataforma(
+                    x_opcional,
+                    y_opcional,
+                    ancho_opcional,
+                    20,
+                    random.random(),
+                    falso or random.random() < 0.20,
+                )
+            )
 
     hue_fondo = random.random()
     hue_jugador = random.random()
@@ -199,10 +207,31 @@ def generar_nivel(nivel):
     return plataformas, hue_fondo, hue_jugador, entidades
 
 
+def ajustar_dificultad_jugador(jugador, nivel):
+    """Aumenta el ritmo sin hacer que los primeros niveles sean bruscos."""
+    progreso = max(0, nivel - 1)
+    jugador.velocidad = min(6.0 + progreso * 0.12, 8.5)
+    jugador.gravedad = min(0.6 + progreso * 0.018, 0.9)
+
+
+def dibujar_nivel(capa, fondo, plataformas, entidades, tiempo, nivel):
+    """Pinta un nivel completo (fondo, plataformas y enemigos) en ``capa``.
+
+    Se usa durante la transición: cada nivel se dibuja en su propia capa del
+    tamaño de la pantalla y la cámara las desliza una junto a la otra.
+    El personaje no se incluye: se dibuja aparte, por encima de todo.
+    """
+    capa.blit(fondo, (0, 0))
+    for plataforma in plataformas:
+        plataforma.dibujar(capa, tiempo, nivel)
+    for entidad in entidades:
+        entidad.dibujar(capa, tiempo)
+
+
 # --------------------------------------------------------------------------
 # Juego
 # --------------------------------------------------------------------------
-def main():
+def main(nivel_inicial=1):
     """Inicializa Pygame y ejecuta el bucle de eventos, física y renderizado."""
     pygame.init()
     if not pygame.mixer.get_init():
@@ -220,6 +249,8 @@ def main():
     fuente_boton = pygame.font.SysFont(None, tamano_fuente, bold=True)
     superficie_texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
     escena = pygame.Surface((WIDTH, HEIGHT))
+    capa_nivel_anterior = pygame.Surface((WIDTH, HEIGHT))  # foto fija del nivel que se deja atrás
+    capa_nivel_nuevo = pygame.Surface((WIDTH, HEIGHT))
     fondo_cache = pygame.Surface((WIDTH, HEIGHT))
     capa_opacidad = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     panel_texto = pygame.Surface((110, 36), pygame.SRCALPHA)
@@ -268,7 +299,7 @@ def main():
     inicio_flashback_nivel_10 = 0.0
     duracion_flashback_nivel_10 = 3.0
 
-    nivel = 1
+    nivel = max(1, int(nivel_inicial))
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
     particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
 
@@ -289,6 +320,7 @@ def main():
 
     jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
     jugador.rect.center = POS_SPAWN
+    ajustar_dificultad_jugador(jugador, nivel)
     aplicar_volumen_audio(configuracion, jugador)
 
     estado = ESTADO_MENU
@@ -427,6 +459,7 @@ def main():
                 plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
                 jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
                 jugador.rect.center = POS_SPAWN
+                ajustar_dificultad_jugador(jugador, nivel)
                 transicion = None
                 estado = ESTADO_JUGANDO
             if (
@@ -444,6 +477,7 @@ def main():
                 plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
                 jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
                 jugador.rect.center = POS_SPAWN
+                ajustar_dificultad_jugador(jugador, nivel)
                 transicion = None
                 estado = ESTADO_JUGANDO
 
@@ -488,12 +522,18 @@ def main():
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
                 estado = ESTADO_GAME_OVER
 
-            salio_por_la_derecha = jugador.rect.left > WIDTH
+            # Se cambia de nivel en cuanto la mitad del cuerpo cruza el borde
+            # (antes: cuando salía por completo): así el personaje sigue a la
+            # vista y la cámara lo acompaña hacia el nivel siguiente.
+            salio_por_la_derecha = jugador.rect.centerx >= WIDTH
             salio_por_otro_borde = (
                 jugador.rect.top > HEIGHT
                 or jugador.rect.right < 0
             )
             if salio_por_la_derecha:
+                # Foto fija del nivel que se deja atrás: la cámara lo mostrará
+                # deslizándose mientras sigue al personaje hacia el siguiente.
+                dibujar_nivel(capa_nivel_anterior, fondo_cache, plataformas, entidades, tiempo, nivel)
                 nivel += 1
                 if nivel == 10:
                     flashback_nivel_10_activo = True
@@ -511,8 +551,11 @@ def main():
                     POS_SPAWN,
                     nivel=nivel,
                     volumen_efectos=configuracion["volumen_efectos"],
+                    suelo_spawn=plataformas[0].rect.top,  # los rebotes ocurren sobre la primera plataforma
+                    ancho_pantalla=WIDTH,
                 )
                 jugador.vel_y = 0
+                ajustar_dificultad_jugador(jugador, nivel)
                 estado = ESTADO_TRANSICION
             elif salio_por_otro_borde:
                 inicio_game_over = pygame.time.get_ticks()
@@ -531,7 +574,11 @@ def main():
                 jugador.rect.y += 3
 
         elif estado == ESTADO_TRANSICION:
-            if transicion.actualizar(jugador):
+            transicion_terminada = transicion.actualizar(jugador)
+            # Cada rebote del personaje al aterrizar sacude un poco la cámara.
+            for fuerza_impacto in transicion.recoger_impactos():
+                intensidad_shake = max(intensidad_shake, fuerza_impacto)
+            if transicion_terminada:
                 aplicar_volumen_audio(configuracion, jugador)
                 estado = ESTADO_JUGANDO
 
@@ -576,30 +623,46 @@ def main():
                 if contador_frames % 3 == 0 or nivel != nivel_fondo:
                     dibujar_fondo_segmentado(fondo_cache, tiempo, hue_fondo, WIDTH, HEIGHT, nivel)
                     nivel_fondo = nivel
-                if fotograma_flashback is not None:
-                    escena.blit(fotograma_flashback, (0, 0))
-                else:
-                    escena.blit(fondo_cache, (0, 0))
-
-                for particula in particulas:
-                    particula.actualizar()
-                    particula.dibujar(escena, tiempo)
-
-                for plataforma in plataformas:
-                    if estado != ESTADO_GAME_OVER:
-                        plataforma.actualizar()
-                    plataforma.dibujar(escena, tiempo, nivel)
-
-                for entidad in entidades:
-                    entidad.dibujar(escena, tiempo)
-
-                jugador.dibujar(escena)
-
                 if estado == ESTADO_TRANSICION:
-                    transicion.dibujar(escena)
+                    # Los dos niveles se dibujan uno junto al otro y la cámara
+                    # se desliza del viejo al nuevo siguiendo al personaje.
+                    camara = int(round(transicion.desplazamiento_camara()))
+                    dibujar_nivel(capa_nivel_nuevo, fondo_cache, plataformas, entidades, tiempo, nivel)
+                    escena.blit(capa_nivel_anterior, (-camara, 0))
+                    escena.blit(capa_nivel_nuevo, (WIDTH - camara, 0))
 
-                # Los colores se van perdiendo a medida que suben los niveles.
-                escena = escala_grises(escena, saturacion_nivel(nivel))
+                    for particula in particulas:
+                        particula.actualizar()
+                        particula.dibujar(escena, tiempo)
+
+                    # Foco y cara primero; el personaje va por encima para que
+                    # no lo tape la oscuridad.
+                    transicion.dibujar(escena)
+                    jugador.dibujar(escena)
+                else:
+                    if fotograma_flashback is not None:
+                        escena.blit(fotograma_flashback, (0, 0))
+                    else:
+                        escena.blit(fondo_cache, (0, 0))
+
+                    for particula in particulas:
+                        particula.actualizar()
+                        particula.dibujar(escena, tiempo)
+
+                    for plataforma in plataformas:
+                        if estado != ESTADO_GAME_OVER:
+                            plataforma.actualizar()
+                        plataforma.dibujar(escena, tiempo, nivel)
+
+                    for entidad in entidades:
+                        entidad.dibujar(escena, tiempo)
+
+                    jugador.dibujar(escena)
+
+                # Los colores se van perdiendo a medida que suben los niveles;
+                # durante la transición el cambio es gradual, al ritmo de la cámara.
+                nivel_visual = nivel - 1 + transicion.progreso_camara() if estado == ESTADO_TRANSICION else nivel
+                escena = escala_grises(escena, saturacion_nivel(nivel_visual))
                 if intensidad_shake > 0:
                     lienzo.fill((0, 0, 0))
                     offset = (
@@ -619,13 +682,14 @@ def main():
                 lienzo.blit(capa_opacidad, (0, 0))
 
             lienzo.blit(panel_texto, (6, 6))
-            if nivel != nivel_mostrado or configuracion["idioma"] != idioma_mostrado:
+            nivel_hud = nivel - 1 if estado == ESTADO_TRANSICION and transicion.progreso_camara() < 0.5 else nivel
+            if nivel_hud != nivel_mostrado or configuracion["idioma"] != idioma_mostrado:
                 texto_nivel = font.render(
-                    f"{texto(configuracion['idioma'], 'level')}: {nivel}",
+                    f"{texto(configuracion['idioma'], 'level')}: {nivel_hud}",
                     True,
                     (255, 255, 255),
                 )
-                nivel_mostrado = nivel
+                nivel_mostrado = nivel_hud
                 idioma_mostrado = configuracion["idioma"]
             lienzo.blit(texto_nivel, (14, 10))
 
@@ -704,4 +768,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    nivel_inicial = 1
+    if "--nivel" in sys.argv:
+        indice_nivel = sys.argv.index("--nivel") + 1
+        if indice_nivel < len(sys.argv):
+            try:
+                nivel_inicial = int(sys.argv[indice_nivel])
+            except ValueError:
+                pass
+    main(nivel_inicial)

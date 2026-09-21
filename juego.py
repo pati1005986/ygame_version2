@@ -35,6 +35,7 @@ PESOS_LUMINOSIDAD = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 POS_SPAWN = pygame.Vector2(120, 235)  # centro del punto de aparición del jugador
 
 ESTADO_MENU = "menu"
+ESTADO_ADVERTENCIA = "advertencia"
 ESTADO_OPCIONES = "opciones"
 ESTADO_PAUSA = "pausa"
 ESTADO_JUGANDO = "jugando"
@@ -231,18 +232,25 @@ def dibujar_nivel(capa, fondo, plataformas, entidades, tiempo, nivel):
 # --------------------------------------------------------------------------
 # Juego
 # --------------------------------------------------------------------------
-def main(nivel_inicial=1):
+def main(nivel_inicial=1, idioma_inicial="en"):
     """Inicializa Pygame y ejecuta el bucle de eventos, física y renderizado."""
+    idiomas_disponibles = {"en", "es", "pt", "ru"}
+    if idioma_inicial not in idiomas_disponibles:
+        idioma_inicial = "en"
+
     pygame.init()
     if not pygame.mixer.get_init():
         pygame.mixer.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     lienzo = pygame.Surface((WIDTH, HEIGHT))
-    pygame.display.set_caption(texto("en", "window_title"))
+    pygame.display.set_caption(texto(idioma_inicial, "window_title"))
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 36)
+    font_advertencia_titulo = pygame.font.SysFont(None, 46, bold=True)
+    font_advertencia = pygame.font.SysFont(None, 26)
+    font_advertencia_prompt = pygame.font.SysFont(None, 22)
     boton_reintentar = pygame.Rect(WIDTH // 2 - 110, HEIGHT // 2 + 45, 220, 52)
-    texto_boton = texto("en", "retry")
+    texto_boton = texto(idioma_inicial, "retry")
     tamano_fuente = 36
     while tamano_fuente > 16 and pygame.font.SysFont(None, tamano_fuente, bold=True).size(texto_boton)[0] > boton_reintentar.width - 28:
         tamano_fuente -= 1
@@ -307,7 +315,7 @@ def main(nivel_inicial=1):
         "resoluciones": MenuOpciones.RESOLUCIONES,
         "resolucion": 0,
         "pantalla_completa": False,
-        "idioma": "en",
+        "idioma": idioma_inicial,
         "volumen_musica": 0.8,
         "volumen_efectos": 0.8,
         "controles": {
@@ -323,14 +331,14 @@ def main(nivel_inicial=1):
     ajustar_dificultad_jugador(jugador, nivel)
     aplicar_volumen_audio(configuracion, jugador)
 
-    estado = ESTADO_MENU
+    estado = ESTADO_ADVERTENCIA
     transicion = None
     inicio_game_over = pygame.time.get_ticks()
     gif_game_over = []
     duracion_fotograma_gif = 0.1
     indice_imagen_game_over = 0
-    menu = MenuInicio(WIDTH, HEIGHT)
-    pausa = MenuPausa(WIDTH, HEIGHT)
+    menu = MenuInicio(WIDTH, HEIGHT, idioma=idioma_inicial)
+    pausa = MenuPausa(WIDTH, HEIGHT, idioma=idioma_inicial)
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
     estado_despues_opciones = ESTADO_MENU
     jugando = True
@@ -371,7 +379,12 @@ def main(nivel_inicial=1):
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
                 jugando = False
-            if estado == ESTADO_MENU:
+            if estado == ESTADO_ADVERTENCIA and evento.type in (
+                pygame.KEYDOWN,
+                pygame.MOUSEBUTTONDOWN,
+            ):
+                estado = ESTADO_MENU
+            elif estado == ESTADO_MENU:
                 evento_menu = evento
                 if evento.type == pygame.MOUSEBUTTONDOWN:
                     evento_menu = pygame.event.Event(
@@ -483,7 +496,9 @@ def main(nivel_inicial=1):
 
         # Durante la transición se bloquean los controles y solo se actualiza
         # la entrada visual del jugador al nuevo nivel.
-        if estado == ESTADO_MENU:
+        if estado == ESTADO_ADVERTENCIA:
+            pass
+        elif estado == ESTADO_MENU:
             menu.actualizar()
         elif estado == ESTADO_JUGANDO:
             en_aire_antes = not jugador.en_suelo
@@ -523,7 +538,6 @@ def main(nivel_inicial=1):
                 estado = ESTADO_GAME_OVER
 
             # Se cambia de nivel en cuanto la mitad del cuerpo cruza el borde
-            # (antes: cuando salía por completo): así el personaje sigue a la
             # vista y la cámara lo acompaña hacia el nivel siguiente.
             salio_por_la_derecha = jugador.rect.centerx >= WIDTH
             salio_por_otro_borde = (
@@ -586,7 +600,34 @@ def main(nivel_inicial=1):
             flashback_nivel_10_activo = False
 
         # --- Renderizado ---
-        if estado == ESTADO_MENU:
+        if estado == ESTADO_ADVERTENCIA:
+            lienzo.fill((8, 8, 12))
+            titulo_advertencia = font_advertencia_titulo.render(
+                texto(configuracion["idioma"], "epilepsy_warning_title"),
+                True,
+                (255, 210, 80),
+            )
+            linea_advertencia_1 = font_advertencia.render(
+                texto(configuracion["idioma"], "epilepsy_warning_line_1"),
+                True,
+                (245, 245, 245),
+            )
+            linea_advertencia_2 = font_advertencia.render(
+                texto(configuracion["idioma"], "epilepsy_warning_line_2"),
+                True,
+                (245, 245, 245),
+            )
+            prompt_advertencia = font_advertencia_prompt.render(
+                texto(configuracion["idioma"], "epilepsy_warning_continue"),
+                True,
+                (180, 180, 190),
+            )
+            lienzo.blit(titulo_advertencia, titulo_advertencia.get_rect(center=(WIDTH // 2, 190)))
+            lienzo.blit(linea_advertencia_1, linea_advertencia_1.get_rect(center=(WIDTH // 2, 275)))
+            lienzo.blit(linea_advertencia_2, linea_advertencia_2.get_rect(center=(WIDTH // 2, 315)))
+            lienzo.blit(prompt_advertencia, prompt_advertencia.get_rect(center=(WIDTH // 2, 430)))
+            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
+        elif estado == ESTADO_MENU:
             posicion_raton = pygame.mouse.get_pos()
             posicion_raton_logica = (
                 int(posicion_raton[0] * WIDTH / screen.get_width()),
@@ -769,6 +810,7 @@ def main(nivel_inicial=1):
 
 if __name__ == "__main__":
     nivel_inicial = 1
+    idioma_inicial = "en"
     if "--nivel" in sys.argv:
         indice_nivel = sys.argv.index("--nivel") + 1
         if indice_nivel < len(sys.argv):
@@ -776,4 +818,8 @@ if __name__ == "__main__":
                 nivel_inicial = int(sys.argv[indice_nivel])
             except ValueError:
                 pass
-    main(nivel_inicial)
+    if "--idioma" in sys.argv:
+        indice_idioma = sys.argv.index("--idioma") + 1
+        if indice_idioma < len(sys.argv):
+            idioma_inicial = sys.argv[indice_idioma].lower()
+    main(nivel_inicial, idioma_inicial)

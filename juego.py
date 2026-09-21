@@ -119,6 +119,28 @@ def cargar_gif(ruta, tamano):
     return fotogramas, 1.0 / fps
 
 
+def aplicar_volumen_audio(configuracion, jugador=None):
+    """Aplica el volumen general a todas las fuentes de audio del juego."""
+    volumen = max(
+        0.0,
+        min(
+            1.0,
+            float(
+                configuracion.get(
+                    "volumen_musica",
+                    configuracion.get("volumen_efectos", 0.8),
+                )
+            ),
+        ),
+    )
+    configuracion["volumen_musica"] = volumen
+    configuracion["volumen_efectos"] = volumen
+    if pygame.mixer.get_init():
+        pygame.mixer.music.set_volume(volumen)
+    if jugador is not None:
+        jugador.ajustar_volumen_efectos(volumen)
+
+
 # --------------------------------------------------------------------------
 # Generación de niveles
 # --------------------------------------------------------------------------
@@ -158,6 +180,8 @@ def generar_nivel(nivel):
 def main():
     """Inicializa Pygame y ejecuta el bucle de eventos, física y renderizado."""
     pygame.init()
+    if not pygame.mixer.get_init():
+        pygame.mixer.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     lienzo = pygame.Surface((WIDTH, HEIGHT))
     pygame.display.set_caption(texto("en", "window_title"))
@@ -229,7 +253,7 @@ def main():
         "pantalla_completa": False,
         "idioma": "en",
         "volumen_musica": 0.8,
-        "volumen_efectos": 0.85,
+        "volumen_efectos": 0.8,
         "controles": {
             "left": pygame.K_a,
             "right": pygame.K_d,
@@ -240,6 +264,7 @@ def main():
 
     jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
     jugador.rect.center = POS_SPAWN
+    aplicar_volumen_audio(configuracion, jugador)
 
     estado = ESTADO_MENU
     transicion = None
@@ -348,10 +373,7 @@ def main():
                 if accion_opciones == "volver":
                     estado = estado_despues_opciones
                 elif accion_opciones == "aplicar":
-                    if pygame.mixer.get_init():
-                        pygame.mixer.music.set_volume(configuracion["volumen_musica"])
-                    if jugador is not None:
-                        jugador.ajustar_volumen_efectos(configuracion["volumen_efectos"])
+                    aplicar_volumen_audio(configuracion, jugador)
                     ancho_nuevo, alto_nuevo = configuracion["resoluciones"][configuracion["resolucion"]]
                     modo_ventana = pygame.FULLSCREEN if configuracion["pantalla_completa"] else 0
                     screen = pygame.display.set_mode((ancho_nuevo, alto_nuevo), modo_ventana)
@@ -464,6 +486,7 @@ def main():
                     pos_origen,
                     POS_SPAWN,
                     nivel=nivel,
+                    volumen_efectos=configuracion["volumen_efectos"],
                 )
                 jugador.vel_y = 0
                 estado = ESTADO_TRANSICION
@@ -478,6 +501,7 @@ def main():
 
         elif estado == ESTADO_TRANSICION:
             if transicion.actualizar(jugador):
+                aplicar_volumen_audio(configuracion, jugador)
                 estado = ESTADO_JUGANDO
 
         if flashback_nivel_10_activo and tiempo - inicio_flashback_nivel_10 >= duracion_flashback_nivel_10:

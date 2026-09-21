@@ -35,7 +35,7 @@ class TransicionCaricaturesca:
     NIVEL_INICIO_TRISTEZA = 10
     NIVEL_TRISTEZA_MAXIMA = 18
 
-    def __init__(self, color_origen, color_destino, posicion_origen, posicion_spawn, nivel=0):
+    def __init__(self, color_origen, color_destino, posicion_origen, posicion_spawn, nivel=0, volumen_efectos=1.0):
         self.inicio = pygame.time.get_ticks()
         self.color_origen = color_origen
         self.color_destino = color_destino
@@ -43,6 +43,7 @@ class TransicionCaricaturesca:
         self.posicion_spawn = pygame.Vector2(posicion_spawn)
         self.finalizada = False
         self.parpadeo = 0.0
+        self.volumen_efectos = max(0.0, min(1.0, float(volumen_efectos)))
 
         # A medida que sube el nivel, la cara se pone más triste/decaída:
         # cejas preocupadas, mirada caída, boca hacia abajo, colores
@@ -65,6 +66,7 @@ class TransicionCaricaturesca:
         self.paleta = self._generar_paleta(self.tono, self.tristeza)
         self.sonido_sorpresa = self._crear_sonido_sorpresa(self.tristeza)
         if self.sonido_sorpresa:
+            self.sonido_sorpresa.set_volume(self.volumen_efectos)
             self.sonido_sorpresa.play()
 
         # Partículas del chispazo cómico: se calculan una sola vez para

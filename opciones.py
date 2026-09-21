@@ -21,7 +21,7 @@ class MenuOpciones:
         "pantalla_completa": False,
         "idioma": "en",
         "volumen_musica": 0.8,
-        "volumen_efectos": 0.85,
+        "volumen_efectos": 0.8,
         "controles": {
             "left": pygame.K_a,
             "right": pygame.K_d,
@@ -58,7 +58,7 @@ class MenuOpciones:
     def __init__(self, ancho, alto, configuracion):
         self.ancho = ancho
         self.alto = alto
-        self.configuracion = dict(configuracion)
+        self.configuracion = configuracion
         for clave, valor in self.DEFAULTS.items():
             if clave == "controles":
                 self.configuracion.setdefault("controles", valor.copy())
@@ -98,6 +98,11 @@ class MenuOpciones:
 
     def establecer_idioma(self, idioma):
         self.configuracion["idioma"] = idioma
+
+    def _establecer_volumen_general(self, volumen):
+        volumen = max(0.0, min(1.0, float(volumen)))
+        self.configuracion["volumen_musica"] = volumen
+        self.configuracion["volumen_efectos"] = volumen
 
     # ---------- arte abstracto de fondo ----------
 
@@ -239,7 +244,7 @@ class MenuOpciones:
         self.configuracion["pantalla_completa"] = self.DEFAULTS["pantalla_completa"]
         self.configuracion["idioma"] = self.DEFAULTS["idioma"]
         self.configuracion["volumen_musica"] = self.DEFAULTS["volumen_musica"]
-        self.configuracion["volumen_efectos"] = self.DEFAULTS["volumen_efectos"]
+        self._establecer_volumen_general(self.DEFAULTS["volumen_musica"])
         self.configuracion["controles"] = self.DEFAULTS["controles"].copy()
 
     def dibujar(self, superficie, mouse_pos=None, dt=1 / 60):
@@ -388,12 +393,12 @@ class MenuOpciones:
             valores = (0.0, 0.25, 0.5, 0.75, 1.0)
             actual = self.configuracion.get("volumen_musica", 0.8)
             indice = valores.index(actual) if actual in valores else 3
-            self.configuracion["volumen_musica"] = valores[(indice + 1) % len(valores)]
+            self._establecer_volumen_general(valores[(indice + 1) % len(valores)])
         elif self.boton_efectos.collidepoint(evento.pos):
             valores = (0.0, 0.25, 0.5, 0.75, 1.0)
             actual = self.configuracion.get("volumen_efectos", 0.85)
             indice = valores.index(actual) if actual in valores else 3
-            self.configuracion["volumen_efectos"] = valores[(indice + 1) % len(valores)]
+            self._establecer_volumen_general(valores[(indice + 1) % len(valores)])
         elif self.boton_reset.collidepoint(evento.pos):
             self._restaurar_por_defecto()
         elif self.boton_volver.collidepoint(evento.pos):

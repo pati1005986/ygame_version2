@@ -271,7 +271,14 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     contador_frames = 0
     intensidad_shake = 0.0  # sacudida de cámara: da sensación de impacto/velocidad
     gifs_game_over = []
-    for nombre_gif in ("image1.gif", "image2.gif", "image3.gif", "image4.gif"):
+    for nombre_gif in (
+        "image1.gif",
+        "image2.gif",
+        "image3.gif",
+        "image4.gif",
+        "image12.gif",
+        "image13.gif",
+    ):
         fotogramas, duracion = cargar_gif(
             os.path.join("assets", nombre_gif), (WIDTH, HEIGHT)
         )
@@ -342,6 +349,13 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
     estado_despues_opciones = ESTADO_MENU
     jugando = True
+
+    def aplicar_modo_pantalla():
+        nonlocal screen
+        ancho, alto = configuracion["resoluciones"][configuracion["resolucion"]]
+        modo_ventana = pygame.FULLSCREEN if configuracion["pantalla_completa"] else 0
+        screen = pygame.display.set_mode((ancho, alto), modo_ventana)
+
     while jugando:
         contador_frames += 1
         clock.tick(FPS)
@@ -379,6 +393,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
                 jugando = False
+            elif evento.type == pygame.KEYDOWN and evento.key == pygame.K_F11:
+                configuracion["pantalla_completa"] = not configuracion["pantalla_completa"]
+                aplicar_modo_pantalla()
             if estado == ESTADO_ADVERTENCIA and evento.type in (
                 pygame.KEYDOWN,
                 pygame.MOUSEBUTTONDOWN,
@@ -444,9 +461,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     estado = estado_despues_opciones
                 elif accion_opciones == "aplicar":
                     aplicar_volumen_audio(configuracion, jugador)
-                    ancho_nuevo, alto_nuevo = configuracion["resoluciones"][configuracion["resolucion"]]
-                    modo_ventana = pygame.FULLSCREEN if configuracion["pantalla_completa"] else 0
-                    screen = pygame.display.set_mode((ancho_nuevo, alto_nuevo), modo_ventana)
+                    aplicar_modo_pantalla()
                     menu.actualizar_tamano(WIDTH, HEIGHT)
                     menu.establecer_idioma(configuracion["idioma"])
                     pausa.actualizar_tamano(WIDTH, HEIGHT)

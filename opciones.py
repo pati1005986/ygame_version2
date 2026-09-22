@@ -1,3 +1,4 @@
+import colorsys
 import math
 import random
 
@@ -182,55 +183,80 @@ class MenuOpciones:
         relleno = fuente.render(contenido, True, color_relleno)
         superficie.blit(relleno, relleno.get_rect(center=centro))
 
-    def _texto_centrado(self, superficie, contenido, fuente, centro, color=(40, 20, 10)):
+    def _texto_centrado(self, superficie, contenido, fuente, centro, color=(255, 255, 255)):
+        sombra = fuente.render(contenido, True, self.COLOR_BOTON_BORDE)
+        superficie.blit(sombra, sombra.get_rect(center=(centro[0] + 1, centro[1] + 1)))
         imagen = fuente.render(contenido, True, color)
         superficie.blit(imagen, imagen.get_rect(center=centro))
 
+    def _color_arcoiris_pixel(self, x_norm, y_norm, fase):
+        """Calcula un color de arcoíris tipo 8-bit para una celda de pixel,
+        con bandas diagonales que se desplazan con el tiempo."""
+        matiz = (x_norm * 0.55 + y_norm * 0.2 + fase * 0.12) % 1.0
+        r, g, b = colorsys.hsv_to_rgb(matiz, 0.9, 1.0)
+        return (int(r * 255), int(g * 255), int(b * 255))
+
+    def _generar_textura_boton_pixelada(self, ancho, alto, fase, hover, semilla):
+        """Genera la textura arcoíris pixelada de un botón como una superficie
+        de baja resolución, lista para escalarse sin suavizado (look 8-bit)."""
+        tam_pixel = 7
+        columnas = max(4, ancho // tam_pixel)
+        filas = max(4, alto // tam_pixel)
+
+        lienzo_bajo = pygame.Surface((columnas, filas))
+        aleatorio_destellos = random.Random(semilla)
+
+        for fila in range(filas):
+            for col in range(columnas):
+                en_borde = fila in (0, 1, filas - 2, filas - 1) or col in (0, 1, columnas - 2, columnas - 1)
+                if en_borde:
+                    lienzo_bajo.set_at((col, fila), self.COLOR_BOTON_BORDE)
+                    continue
+                x_norm = col / max(1, columnas - 1)
+                y_norm = fila / max(1, filas - 1)
+                color = self._color_arcoiris_pixel(x_norm, y_norm, fase)
+                # franja de "brillo" pixelado tipo comic en la parte superior
+                if y_norm < 0.28 and (col + fila) % 3 != 0:
+                    color = tuple(min(255, c + 70) for c in color)
+                lienzo_bajo.set_at((col, fila), color)
+
+        # destellos blancos tipo "estrellita" 8-bit, más activos con el hover
+        num_destellos = 4 if hover else 2
+        if columnas >= 5 and filas >= 5:
+            for _ in range(num_destellos):
+                col = aleatorio_destellos.randint(2, columnas - 3)
+                fila = aleatorio_destellos.randint(2, filas - 3)
+                lienzo_bajo.set_at((col, fila), (255, 255, 255))
+
+        return pygame.transform.scale(lienzo_bajo, (ancho, alto))
+
     def _dibujar_boton_comic(self, superficie, rect, contenido, hover=False, activo=False, radio=14):
-        """Botón más abstracto y multicolor con capas vivas de color y formas diagonales."""
+        """Botón arcoíris pixelado y caricaturesco: relleno tipo 8-bit con
+        bandas de color que se desplazan y contorno grueso estilo comic."""
         desplazamiento_sombra = 6 if not hover else 3
         rect_sombra = rect.move(desplazamiento_sombra, desplazamiento_sombra)
-        pygame.draw.rect(superficie, self.COLOR_BOTON_SOMBRA, rect_sombra, border_radius=radio)
+        pygame.draw.rect(superficie, self.COLOR_BOTON_SOMBRA, rect_sombra)
 
         rect_dibujo = rect.move(-3 if hover else 0, -3 if hover else 0)
-        capa_boton = pygame.Surface(rect_dibujo.size, pygame.SRCALPHA)
-        paleta = [
-            (255, 109, 92),
-            (255, 200, 93),
-            (99, 224, 173),
-            (126, 148, 255),
-            (255, 118, 190),
-            (90, 220, 255),
-            (255, 235, 120),
-        ]
-        for indice, color in enumerate(paleta):
-            ancho = max(12, rect_dibujo.width // len(paleta) - 2)
-            x = 4 + indice * (ancho + 3)
-            y = 4 + (indice % 2) * 3
-            pygame.draw.rect(capa_boton, (*color, 165 + indice * 8), (x, y, ancho, rect_dibujo.height - 10), border_radius=radio)
 
-        puntos_abstractos = [
-            (0, rect_dibujo.height * 0.2),
-            (rect_dibujo.width * 0.25, 0),
-            (rect_dibujo.width * 0.72, 0),
-            (rect_dibujo.width, rect_dibujo.height * 0.36),
-            (rect_dibujo.width, rect_dibujo.height),
-            (rect_dibujo.width * 0.35, rect_dibujo.height),
-            (0, rect_dibujo.height * 0.78),
-        ]
-        pygame.draw.polygon(capa_boton, (255, 255, 255, 35), puntos_abstractos)
-        pygame.draw.polygon(capa_boton, (255, 255, 255, 70), [(0, 8), (rect_dibujo.width * 0.82, 0), (rect_dibujo.width, rect_dibujo.height * 0.32), (rect_dibujo.width * 0.56, rect_dibujo.height * 0.3)])
+        velocidad_desfile = 1.4 if hover else 0.7
+        semilla_destellos = f"boton-{rect.x}-{rect.y}-{int(self._tiempo * (10 if hover else 3))}"
+        textura = self._generar_textura_boton_pixelada(
+            rect_dibujo.width,
+            rect_dibujo.height,
+            self._tiempo * velocidad_desfile,
+            hover,
+            semilla_destellos,
+        )
+        superficie.blit(textura, rect_dibujo.topleft)
+
         if activo:
-            pygame.draw.rect(capa_boton, (90, 230, 200, 150), (6, 6, rect_dibujo.width - 12, rect_dibujo.height - 12), border_radius=radio)
-        pygame.draw.rect(capa_boton, (255, 255, 255, 48), (8, 5, rect_dibujo.width - 16, rect_dibujo.height // 3), border_radius=radio)
-        superficie.blit(capa_boton, rect_dibujo.topleft)
-
-        pygame.draw.rect(superficie, self.COLOR_BOTON_BORDE, rect_dibujo, width=3, border_radius=radio)
-
-        brillo = pygame.Rect(rect_dibujo.x + 8, rect_dibujo.y + 4, max(rect_dibujo.width - 16, 0), rect_dibujo.height // 3)
-        superficie_brillo = pygame.Surface(brillo.size, pygame.SRCALPHA)
-        superficie_brillo.fill((255, 255, 255, 60))
-        superficie.blit(superficie_brillo, brillo.topleft)
+            # pulso cian tipo comic para indicar "esperando tecla"
+            pulso = 0.5 + 0.5 * math.sin(self._tiempo * 8.0)
+            grosor_pulso = 3 + int(pulso * 3)
+            pygame.draw.rect(superficie, (90, 230, 200), rect_dibujo, width=grosor_pulso)
+        else:
+            pygame.draw.rect(superficie, self.COLOR_BOTON_BORDE, rect_dibujo, width=3)
 
         return rect_dibujo
 

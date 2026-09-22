@@ -25,19 +25,77 @@ class Plataforma:
     El diseño busca una estética pictórica: capas de color superpuestas,
     pinceladas sueltas y pequeños acentos que dan la sensación de una pieza
     pintada a mano en lugar de un bloque geométrico plano.
+
+    Además de las plataformas trampa, algunas plataformas normales cobran
+    vida por su cuenta:
+
+    - **Movimiento**: una fracción de las plataformas normales se desliza
+      lentamente en horizontal o en vertical (ver ``patron_movimiento``),
+      con una guía punteada sutil que insinúa su recorrido. El movimiento
+      actualiza ``self.rect`` de verdad, así que la colisión existente en
+      el resto del juego lo sigue automáticamente sin cambios. Cada
+      fotograma queda disponible en ``desplazamiento_reciente`` (un
+      ``pygame.Vector2``) por si el código del jugador quiere "montarlo"
+      sumando ese valor a su posición mientras está de pie encima.
+    - **Reacción al aterrizaje**: llamando a ``notificar_aterrizaje()``
+      desde el código de colisiones del jugador (cuando aterriza desde
+      arriba sobre esta plataforma) se dispara un remezón elástico tipo
+      "squash & stretch" y una pequeña salpicadura de partículas de
+      pintura. Es puramente visual: no toca ``self.rect``, así que no
+      afecta la física.
     """
 
     COLOR_PELIGRO = (235, 60, 55)
     COLOR_HUECO = (22, 13, 35)
     COLOR_HUECO_PROFUNDO = (6, 4, 10)
 
-    def __init__(self, x, y, w, h, hue, es_trampa=False):
+    # Probabilidad de que una plataforma normal (no trampa) se vuelva móvil
+    # por su cuenta, para que un nivel no se sienta hecho de bloques muertos.
+    PROBABILIDAD_MOVIMIENTO = 0.35
+    GRAVEDAD_PARTICULAS = 260.0
+
+    def __init__(
+        self,
+        x,
+        y,
+        w,
+        h,
+        hue,
+        es_trampa=False,
+        patron_movimiento=None,
+        amplitud_movimiento=None,
+        velocidad_movimiento=None,
+    ):
         self.rect = pygame.Rect(x, y, w, h)
         self.hue = hue
         self.es_trampa = es_trampa
         self.fase = random.uniform(0, math.tau)
         self.trampa_activada = False
         self.progreso_trampa = 0.0
+
+        # ---------------- movimiento ----------------
+        # Si no se especifica un patrón, una fracción de las plataformas
+        # normales se vuelve móvil por su cuenta (las trampas nunca se
+        # mueven solas, para no complicar su lectura visual).
+        if patron_movimiento is None and not es_trampa:
+            if random.random() < self.PROBABILIDAD_MOVIMIENTO:
+                patron_movimiento = random.choice(("horizontal", "vertical"))
+        self.patron_movimiento = patron_movimiento
+        self.amplitud_movimiento = (
+            amplitud_movimiento if amplitud_movimiento is not None else random.uniform(35, 70)
+        )
+        self.velocidad_movimiento = (
+            velocidad_movimiento if velocidad_movimiento is not None else random.uniform(0.5, 0.9)
+        )
+        self._origen = pygame.Vector2(self.rect.x, self.rect.y)
+        self._fase_movimiento = random.uniform(0, math.tau)
+        self._reloj_movimiento = 0.0
+        self.desplazamiento_reciente = pygame.Vector2(0, 0)
+
+        # ---------------- squash/wobble de aterrizaje ----------------
+        self._squash = 0.0
+        self._squash_velocidad = 0.0
+        self._particulas = []
 
         # Detalles generados una sola vez para que la textura sea estable
         # cuadro a cuadro (en vez de parpadear con valores aleatorios nuevos
@@ -134,10 +192,92 @@ class Plataforma:
         if self.es_trampa:
             self.trampa_activada = True
 
+    def notificar_aterrizaje(self, intensidad=1.0):
+        """Debe llamarse desde el código de colisiones del jugador cuando
+        aterriza sobre esta plataforma desde arriba (por ejemplo, al
+        detectar contacto con velocidad vertical positiva). Dispara un
+        remezón elástico tipo "squash & stretch" y una salpicadura de
+        partículas de pintura a modo de impacto.
+
+        ``intensidad`` puede usarse para que caídas más fuertes generen
+        un remezón más grande (por ejemplo, pasando la velocidad de caída
+        normalizada). Esto es puramente cosmético: no modifica
+        ``self.rect``, así que no afecta la física del juego.
+        """
+        intensidad = max(0.2, min(2.2, intensidad))
+        self._squash_velocidad -= 16.0 * intensidad
+        self._generar_particulas_impacto(intensidad)
+
+    def _generar_particulas_impacto(self, intensidad):
+        color_a = color_desde_hue((self.hue + 0.18) % 1.0, 0.75, 0.95)
+        color_b = color_desde_hue(self.hue, 0.6, 1.0)
+        cantidad = int(5 + 4 * intensidad)
+        for _ in range(cantidad):
+            angulo = random.uniform(math.pi * 0.15, math.pi * 0.85)
+            velocidad = random.uniform(40, 110) * intensidad
+            vida = random.uniform(0.35, 0.7)
+            self._particulas.append(
+                {
+                    "x": self.rect.centerx + random.uniform(-self.rect.width * 0.3, self.rect.width * 0.3),
+                    "y": self.rect.top,
+                    "vx": math.cos(angulo) * velocidad * random.choice((-1, 1)),
+                    "vy": -math.sin(angulo) * velocidad,
+                    "vida": vida,
+                    "vida_total": vida,
+                    "color": random.choice((color_a, color_b)),
+                    "radio": random.uniform(1.5, 3.5),
+                }
+            )
+
+    def _actualizar_particulas(self, dt):
+        if not self._particulas:
+            return
+        vivas = []
+        for p in self._particulas:
+            p["vida"] -= dt
+            if p["vida"] <= 0:
+                continue
+            p["vx"] *= 0.98
+            p["vy"] += self.GRAVEDAD_PARTICULAS * dt
+            p["x"] += p["vx"] * dt
+            p["y"] += p["vy"] * dt
+            vivas.append(p)
+        self._particulas = vivas
+
     def actualizar(self):
-        """Avanza la animación de la plataforma cuando ya se activó."""
+        """Avanza, cuadro a cuadro, todas las animaciones de la plataforma:
+        el progreso de la trampa, el deslizamiento de las plataformas
+        móviles, el resorte de aterrizaje (squash/wobble) y las partículas
+        de impacto."""
+        dt = 1 / 60
+
         if self.trampa_activada:
             self.progreso_trampa = min(1.0, self.progreso_trampa + 0.045)
+
+        if self.patron_movimiento:
+            self._reloj_movimiento += dt
+            angulo = self._reloj_movimiento * self.velocidad_movimiento + self._fase_movimiento
+            offset = math.sin(angulo) * self.amplitud_movimiento
+            anterior = pygame.Vector2(self.rect.x, self.rect.y)
+            if self.patron_movimiento == "horizontal":
+                self.rect.x = round(self._origen.x + offset)
+            else:
+                self.rect.y = round(self._origen.y + offset)
+            self.desplazamiento_reciente = pygame.Vector2(self.rect.x, self.rect.y) - anterior
+        else:
+            self.desplazamiento_reciente = pygame.Vector2(0, 0)
+
+        # Resorte crítico-amortiguado simple: hace que el squash vuelva a
+        # cero con un ligero rebote elástico, como pintura fresca.
+        rigidez, amortiguacion = 120.0, 12.0
+        aceleracion = -rigidez * self._squash - amortiguacion * self._squash_velocidad
+        self._squash_velocidad += aceleracion * dt
+        self._squash += self._squash_velocidad * dt
+        if abs(self._squash) < 0.002 and abs(self._squash_velocidad) < 0.01:
+            self._squash = 0.0
+            self._squash_velocidad = 0.0
+
+        self._actualizar_particulas(dt)
 
     # ------------------------------------------------------------------
     # Dibujado
@@ -156,7 +296,12 @@ class Plataforma:
         vibracion = 0
         if self.es_trampa and not self.trampa_activada:
             vibracion = int(math.sin(tiempo * 26 + self.fase) * 3)
-        rect = self.rect.move(vibracion, 0)
+
+        rect_base = self.rect.move(vibracion, 0)
+        rect = self._rect_con_squash(rect_base)
+
+        if self.patron_movimiento:
+            self._dibujar_rastro_movimiento(superficie, rect)
 
         color_halo = self.COLOR_PELIGRO if (self.es_trampa and self.trampa_activada) else color_base
         self._dibujar_halo(superficie, rect, color_halo, tiempo)
@@ -187,6 +332,58 @@ class Plataforma:
         if self.es_trampa:
             self._dibujar_trampa(superficie, rect, tiempo, color_base)
 
+        # Partículas de impacto por encima de todo, en coordenadas de mundo.
+        self._dibujar_particulas(superficie)
+
+    def _rect_con_squash(self, rect):
+        """Aplica el resorte de aterrizaje (squash/wobble) como una
+        transformación puramente visual: comprime/estira el rectángulo de
+        dibujo anclado a su base, con un leve bamboleo lateral. No toca
+        ``self.rect``, así que la física de colisión no se ve afectada."""
+        if self._squash == 0.0 and self._squash_velocidad == 0.0:
+            return rect
+        escala_y = max(0.55, 1.0 + self._squash)
+        escala_x = max(0.75, 1.0 - self._squash * 0.55)
+        ancho = max(4, int(rect.width * escala_x))
+        alto = max(4, int(rect.height * escala_y))
+        rect_visual = pygame.Rect(0, 0, ancho, alto)
+        rect_visual.midbottom = rect.midbottom
+        rect_visual.x += int(self._squash_velocidad * 0.12)
+        return rect_visual
+
+    def _dibujar_rastro_movimiento(self, superficie, rect):
+        """Guía punteada sutil detrás de una plataforma móvil, para que el
+        jugador pueda anticipar su recorrido en vez de sorprenderse."""
+        color = color_desde_hue(self.hue, 0.35, 0.95)
+        amplitud = max(4, int(self.amplitud_movimiento))
+        paso = 9
+        if self.patron_movimiento == "horizontal":
+            ancho, alto = amplitud * 2 + 10, 8
+            capa = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+            y = alto // 2
+            for x in range(4, ancho - 4, paso):
+                pygame.draw.circle(capa, (*color, 85), (x, y), 2)
+            superficie.blit(capa, (rect.centerx - ancho // 2, rect.centery - alto // 2))
+        else:
+            ancho, alto = 8, amplitud * 2 + 10
+            capa = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+            x = ancho // 2
+            for y in range(4, alto - 4, paso):
+                pygame.draw.circle(capa, (*color, 85), (x, y), 2)
+            superficie.blit(capa, (rect.centerx - ancho // 2, rect.centery - alto // 2))
+
+    def _dibujar_particulas(self, superficie):
+        for p in self._particulas:
+            proporcion = max(0.0, p["vida"] / p["vida_total"])
+            alpha = int(255 * proporcion)
+            if alpha <= 0:
+                continue
+            radio = max(1.0, p["radio"] * proporcion)
+            tam = int(radio * 2 + 2)
+            capa = pygame.Surface((tam, tam), pygame.SRCALPHA)
+            pygame.draw.circle(capa, (*p["color"], alpha), (tam / 2, tam / 2), radio)
+            superficie.blit(capa, (p["x"] - tam / 2, p["y"] - tam / 2))
+
     def _puntos_plataforma(self, rect):
         """Genera un perfil irregular que parece una pieza orgánica, casi
         escultórica, en lugar de un bloque rígido."""
@@ -204,11 +401,18 @@ class Plataforma:
     def _dibujar_textura_pictorica(self, superficie, rect):
         """Pinta la textura pictórica precalculada (ver ``_construir_capa_textura``).
 
-        Solo hace un blit: nada de esto se reconstruye por fotograma.
+        Normalmente solo hace un blit barato (nada se reconstruye por
+        fotograma). Si el rectángulo de dibujo cambió de tamaño por el
+        squash de aterrizaje, la textura se reescala sobre la marcha
+        (solo ocurre durante el breve remezón, no en reposo).
         """
         if self._capa_textura is None:
             self._construir_capa_textura()
-        superficie.blit(self._capa_textura, rect.topleft)
+        if rect.size == self._capa_textura.get_size():
+            superficie.blit(self._capa_textura, rect.topleft)
+        else:
+            textura = pygame.transform.smoothscale(self._capa_textura, rect.size)
+            superficie.blit(textura, rect.topleft)
 
     def _dibujar_acento_abstracto(self, superficie, rect, color_acento, color_sombra, color_luz):
         """Añade manchas y líneas abstractas que simulan pintura gestual sobre

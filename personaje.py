@@ -72,6 +72,11 @@ class PersonajeHumanoide:
         self.escala_y_objetivo = 1.0
         self.aterrizaje_ts = None
 
+        # --- Expresión paranoica (activada desde fuera a partir de cierto
+        # nivel, ver actualizar_nivel) ---
+        self.paranoico = False
+        self.desesperado = False
+
         # --- Expresividad: parpadeo con temporización aleatoria ---
         self.parpadeando = False
         self.proximo_parpadeo = pygame.time.get_ticks() + random.randint(1200, 3000)
@@ -130,6 +135,20 @@ class PersonajeHumanoide:
         for sonido, volumen_base in sonidos:
             if sonido is not None:
                 sonido.set_volume(self.volumen_efectos * volumen_base)
+
+    def actualizar_nivel(self, nivel):
+        """Informa al personaje en qué nivel del juego está.
+
+        A partir del nivel 10 (exclusive) el personaje adopta una
+        expresión paranoica: ojos muy abiertos con la mirada moviéndose
+        nerviosamente y boca tensa, en vez de la sonrisa habitual.
+        A partir del nivel 21 pasa a un estado desesperado (agotado, al
+        límite), que tiene prioridad visual sobre la expresión paranoica.
+        Llamar a este método cada vez que cambie el nivel actual
+        (por ejemplo al cargar/transicionar de nivel).
+        """
+        self.paranoico = nivel > 10
+        self.desesperado = nivel >= 21
 
     # ------------------------------------------------------------------
     # Utilidades de color monocromático: todo el personaje se dibuja a
@@ -607,6 +626,14 @@ class PersonajeHumanoide:
             lienzo = pygame.transform.rotate(lienzo, angulo)
 
         ancla_mundo = (centro_x_mundo, pie_y_mundo - (150 - ALTO_LIENZO // 2))
+        if self.desesperado:
+            # Temblor leve: al límite de sus fuerzas, no logra mantenerse
+            # del todo firme. Un jitter aleatorio y sutil por fotograma.
+            amplitud_temblor = self.pixel * 0.5
+            ancla_mundo = (
+                ancla_mundo[0] + random.uniform(-amplitud_temblor, amplitud_temblor),
+                ancla_mundo[1] + random.uniform(-amplitud_temblor, amplitud_temblor),
+            )
         superficie.blit(lienzo, lienzo.get_rect(center=ancla_mundo))
 
     def _dibujar_pelo(self, superficie, centro_x, cabeza_y, color):
@@ -633,7 +660,23 @@ class PersonajeHumanoide:
         tam_ojo = p * 3 if en_aire else p * 2
         desplazamiento_mirada = (p // 2) * self.direccion
 
-        if self.parpadeando and not en_aire:
+        if self.desesperado:
+            # Agotado, al límite: ojos entornados (más pequeños de lo
+            # normal) y con ojeras marcadas debajo; ya no hay ánimo para
+            # la mirada nerviosa de la paranoia ni para parpadear.
+            tam_ojo = p
+            desplazamiento_mirada = (p // 2) * self.direccion
+        elif self.paranoico:
+            # Ojos desorbitados (bien abiertos siempre) con la mirada
+            # "temblando" de un lado a otro con rapidez, como si vigilara
+            # constantemente los alrededores.
+            tam_ojo = p * 3
+            fase = pygame.time.get_ticks() // 90
+            ciclo = fase % 4  # 0,1,2,3 -> barrido izquierda/centro/derecha/centro
+            offsets_nerviosos = (-1, 0, 1, 0)
+            desplazamiento_mirada = offsets_nerviosos[ciclo] * p
+
+        if self.parpadeando and not en_aire and not self.paranoico and not self.desesperado:
             for lado in (-1, 1):
                 x = centro_x + lado * separacion_ojo
                 self._bloque(superficie, x - p, ojo_y + p, p * 2, p, color_trazo)
@@ -649,13 +692,41 @@ class PersonajeHumanoide:
                     p,
                     color_trazo,
                 )
+                if self.desesperado:
+                    # Ojera: una sombra marcada justo debajo del ojo.
+                    self._bloque(superficie, x - tam_ojo, ojo_y + tam_ojo + p, tam_ojo * 2, p, color_trazo)
+
+        if self.desesperado:
+            # Gota de sudor cayendo por la sien: un ciclo que se repite
+            # cada ~0.9s, cae por el lado de la cabeza y se encoge un
+            # poco al final antes de reiniciar.
+            lado_sien = 1 if self.direccion >= 0 else -1
+            ciclo_sudor = pygame.time.get_ticks() % 900
+            if ciclo_sudor < 600:
+                progreso = ciclo_sudor / 600
+                gota_x = centro_x + lado_cabeza * 0.58 * lado_sien
+                gota_y = cabeza_y + lado_cabeza * (0.08 + 0.7 * progreso)
+                tam_gota = p if progreso < 0.85 else max(1, p - 1)
+                self._bloque_contorneado(
+                    superficie, gota_x - tam_gota // 2, gota_y, tam_gota, tam_gota, color_ojo, color_trazo
+                )
 
         # Boca: "O" de sorpresa en el aire, sonrisa amplia en el suelo.
         # Todos los bloques miden un múltiplo entero de "pixel": una boca
         # con bloques más finos que eso se redondea igualmente al tamaño
         # mínimo del bloque y pierde la forma de sonrisa.
         boca_y = cabeza_y + lado_cabeza * 0.81
-        if en_aire:
+        if self.desesperado:
+            # Boca muy abierta, como jadeando: un hueco oscuro grande
+            # en vez de línea o sonrisa.
+            ancho_boca = p * 4
+            alto_boca = p * 2
+            self._bloque(superficie, centro_x - ancho_boca // 2, boca_y - p, ancho_boca, alto_boca, color_trazo)
+        elif self.paranoico:
+            # Boca apretada en línea recta: gesto de tensión/desconfianza.
+            ancho_boca = p * 3
+            self._bloque(superficie, centro_x - ancho_boca // 2, boca_y, ancho_boca, p, color_trazo)
+        elif en_aire:
             self._bloque(superficie, centro_x - p // 2, boca_y, p, p, color_trazo)
         else:
             ancho_boca = p * 3

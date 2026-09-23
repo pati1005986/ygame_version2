@@ -1,3 +1,4 @@
+
 """Punto de entrada del juego de plataformas procedural.
 
 El módulo coordina la ventana de Pygame, la generación de niveles, el
@@ -229,6 +230,7 @@ def ajustar_dificultad_jugador(jugador, nivel):
     parametros = parametros_dificultad(nivel)
     jugador.velocidad = parametros["velocidad_jugador"]
     jugador.gravedad = parametros["gravedad_jugador"]
+    jugador.actualizar_nivel(nivel)
 
 
 def dibujar_nivel(capa, fondo, plataformas, entidades, tiempo, nivel):
@@ -391,7 +393,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         if 1 <= nivel <= 5:
             fotogramas_disponibles = fotogramas_flashback_inicial
             duracion_disponible = duracion_flashback_inicial
-        elif nivel >= 15:
+        elif nivel >= 10:
             fotogramas_disponibles = fotogramas_flashback_avanzado
             duracion_disponible = duracion_flashback_avanzado
         else:
@@ -559,9 +561,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 inicio_game_over = pygame.time.get_ticks()
                 intensidad_shake = 9.0
                 indice_imagen_game_over = 0
-                if nivel >= 30 and gif_game_over_nivel_alto:
+                if nivel >= 20 and gif_game_over_nivel_alto:
                     gif_game_over, duracion_fotograma_gif = gif_game_over_nivel_alto[0]
-                elif nivel >= 15 and secuencia_game_over:
+                elif nivel >= 10 and secuencia_game_over:
                     gif_game_over, duracion_fotograma_gif = secuencia_game_over[0]
                 elif gifs_game_over:
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
@@ -573,9 +575,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 inicio_game_over = pygame.time.get_ticks()
                 intensidad_shake = 9.0
                 indice_imagen_game_over = 0
-                if nivel >= 30 and gif_game_over_nivel_alto:
+                if nivel >= 20 and gif_game_over_nivel_alto:
                     gif_game_over, duracion_fotograma_gif = gif_game_over_nivel_alto[0]
-                elif nivel >= 15 and secuencia_game_over:
+                elif nivel >= 10 and secuencia_game_over:
                     gif_game_over, duracion_fotograma_gif = secuencia_game_over[0]
                 elif gifs_game_over:
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
@@ -784,10 +786,10 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             lienzo.blit(texto_nivel, (14, 10))
 
             if estado == ESTADO_GAME_OVER:
-                if nivel >= 30 and gif_game_over_nivel_alto:
+                if nivel >= 20 and gif_game_over_nivel_alto:
                     gif_game_over, duracion_fotograma_gif = gif_game_over_nivel_alto[0]
 
-                elif nivel >= 15 and secuencia_game_over:
+                elif nivel >= 10 and secuencia_game_over:
                     indice_imagen_game_over = min(
                         int((pygame.time.get_ticks() - inicio_game_over) / 1000 / duracion_imagen_game_over),
                         len(secuencia_game_over) - 1,

@@ -1,0 +1,4 @@
+#archivos temporales, locales de configuración del juego
+configuracion_guardada.json
+#este no por el hecho de que es un archivo de configuración, sino porque es un archivo temporal que se genera al ejecutar el juego
+#temp_config.json

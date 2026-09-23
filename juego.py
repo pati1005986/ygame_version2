@@ -20,7 +20,7 @@ from fondo import ParticulaAbstracta, dibujar_fondo_segmentado
 from enemigo import generar_entidades
 from idioma import texto
 from menu import MenuInicio
-from opciones import MenuOpciones
+from opciones import MenuOpciones, cargar_configuracion, guardar_configuracion, normalizar_configuracion
 from pausa import MenuPausa
 from personaje import PersonajeHumanoide
 from plataformas import Plataforma, color_desde_hue
@@ -334,20 +334,18 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
     particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
 
-    configuracion = {
-        "resoluciones": MenuOpciones.RESOLUCIONES,
-        "resolucion": 0,
-        "pantalla_completa": False,
-        "idioma": idioma_inicial,
-        "volumen_musica": 0.8,
-        "volumen_efectos": 0.8,
-        "controles": {
-            "left": pygame.K_a,
-            "right": pygame.K_d,
-            "jump": pygame.K_SPACE,
-            "down": pygame.K_s,
-        },
-    }
+    configuracion_guardada = cargar_configuracion()
+    configuracion = normalizar_configuracion(configuracion_guardada)
+    configuracion["resoluciones"] = MenuOpciones.RESOLUCIONES
+    configuracion["idioma"] = configuracion.get("idioma", idioma_inicial)
+    if configuracion["idioma"] not in {"en", "es", "pt", "ru"}:
+        configuracion["idioma"] = idioma_inicial
+    configuracion["resolucion"] = max(0, min(configuracion.get("resolucion", 0), len(MenuOpciones.RESOLUCIONES) - 1))
+    configuracion["pantalla_completa"] = bool(configuracion.get("pantalla_completa", False))
+    configuracion["volumen_musica"] = max(0.0, min(1.0, float(configuracion.get("volumen_musica", 0.8))))
+    configuracion["volumen_efectos"] = max(0.0, min(1.0, float(configuracion.get("volumen_efectos", 0.8))))
+    configuracion["controles"] = MenuOpciones.DEFAULTS["controles"].copy()
+    configuracion["controles"].update(configuracion_guardada.get("controles", {}))
 
     jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
     jugador.rect.center = POS_SPAWN
@@ -360,8 +358,8 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     gif_game_over = []
     duracion_fotograma_gif = 0.1
     indice_imagen_game_over = 0
-    menu = MenuInicio(WIDTH, HEIGHT, idioma=idioma_inicial)
-    pausa = MenuPausa(WIDTH, HEIGHT, idioma=idioma_inicial)
+    menu = MenuInicio(WIDTH, HEIGHT, idioma=configuracion["idioma"])
+    pausa = MenuPausa(WIDTH, HEIGHT, idioma=configuracion["idioma"])
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
     estado_despues_opciones = ESTADO_MENU
     jugando = True
@@ -476,6 +474,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 if accion_opciones == "volver":
                     estado = estado_despues_opciones
                 elif accion_opciones == "aplicar":
+                    guardar_configuracion(configuracion)
                     aplicar_volumen_audio(configuracion, jugador)
                     aplicar_modo_pantalla()
                     menu.actualizar_tamano(WIDTH, HEIGHT)

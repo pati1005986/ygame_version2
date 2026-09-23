@@ -1,5 +1,7 @@
 import colorsys
+import json
 import math
+import os
 import random
 
 import pygame
@@ -524,3 +526,70 @@ class MenuOpciones:
                     self.tecla_esperada = nombre
                     break
         return None
+
+
+def normalizar_configuracion(configuracion):
+    """Combina los valores guardados con los valores por defecto del juego."""
+    base = {
+        "resoluciones": MenuOpciones.RESOLUCIONES,
+        "resolucion": 0,
+        "pantalla_completa": False,
+        "idioma": "en",
+        "volumen_musica": 0.8,
+        "volumen_efectos": 0.8,
+        "controles": MenuOpciones.DEFAULTS["controles"].copy(),
+    }
+    if not isinstance(configuracion, dict):
+        return base
+
+    for clave, valor in base.items():
+        if clave == "controles":
+            if isinstance(configuracion.get("controles"), dict):
+                base["controles"] = MenuOpciones.DEFAULTS["controles"].copy()
+                base["controles"].update(configuracion["controles"])
+            continue
+        if clave in configuracion:
+            base[clave] = configuracion[clave]
+
+    if "resoluciones" in configuracion and isinstance(configuracion["resoluciones"], (list, tuple)):
+        base["resoluciones"] = tuple(configuracion["resoluciones"])
+
+    return base
+
+
+def _ruta_configuracion(ruta=None):
+    if ruta is not None:
+        return ruta
+    return os.path.join(os.path.dirname(__file__), "configuracion_guardada.json")
+
+
+def cargar_configuracion(ruta=None):
+    """Lee la configuración persistida del juego y devuelve una copia normalizada."""
+    ruta_final = _ruta_configuracion(ruta)
+    if not os.path.exists(ruta_final):
+        return normalizar_configuracion({})
+
+    try:
+        with open(ruta_final, "r", encoding="utf-8") as archivo:
+            datos = json.load(archivo)
+    except (OSError, ValueError, TypeError):
+        return normalizar_configuracion({})
+
+    return normalizar_configuracion(datos)
+
+
+def guardar_configuracion(configuracion, ruta=None):
+    """Guarda la configuración actual del juego para reutilizarla la próxima sesión."""
+    ruta_final = _ruta_configuracion(ruta)
+    directorio = os.path.dirname(ruta_final)
+    if directorio:
+        os.makedirs(directorio, exist_ok=True)
+
+    datos = normalizar_configuracion(configuracion)
+    datos["resoluciones"] = list(datos["resoluciones"])
+    datos["controles"] = {nombre: int(tecla) for nombre, tecla in datos["controles"].items()}
+
+    with open(ruta_final, "w", encoding="utf-8") as archivo:
+        json.dump(datos, archivo, ensure_ascii=False, indent=2)
+
+    return ruta_final

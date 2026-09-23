@@ -16,6 +16,11 @@ except ImportError:  # pragma: no cover - opcional para la intro
 class MenuInicio:
     """Pantalla de inicio con fondo animado y overlay con diseño cuidado."""
 
+    ANCHO_REFERENCIA = 800
+    ALTO_REFERENCIA = 600
+    ESCALA_MIN = 0.55
+    ESCALA_MAX = 1.6
+
     COLOR_BOTON = (255, 138, 61)
     COLOR_BOTON_HOVER = (255, 179, 71)
     COLOR_BOTON_SOMBRA = (120, 40, 10)
@@ -33,78 +38,73 @@ class MenuInicio:
         self.frame_actual = None
         self.ultimo_frame = 0
 
-        self.font_titulo = pygame.font.SysFont("arialblack,arial", 54, bold=True)
-        self.font_subtitulo = pygame.font.SysFont("arial", 20)
-        self.font_prompt = pygame.font.SysFont("comicsansms", 22, bold=True)
-
         self.tiempo_inicio = pygame.time.get_ticks()
         self.reloj_pulso = 0.0
 
-        boton_ancho = 150
-        boton_alto = 54
-        espacio_entre_botones = 16
-        x_izq = (self.ancho - (boton_ancho * 3 + espacio_entre_botones * 2)) // 2
-        y_boton = self.alto - 120
-
-        self.boton_jugar = pygame.Rect(x_izq, y_boton, boton_ancho, boton_alto)
-        self.boton_opciones = pygame.Rect(x_izq + boton_ancho + espacio_entre_botones, y_boton, boton_ancho, boton_alto)
-        self.boton_salir = pygame.Rect(x_izq + (boton_ancho + espacio_entre_botones) * 2, y_boton, boton_ancho, boton_alto)
+        self._crear_fuentes()
+        self._crear_rectangulos()
 
         self._cargar_video()
 
         # --- Cachés de renderizado ---
-        # La viñeta, el degradado del panel y cada botón (normal/hover) son
-        # idénticos en cada fotograma; antes se reconstruían por completo
-        # 60 veces por segundo (líneas del degradado, polígonos del botón,
-        # incluso el texto con font.render). Se calculan una sola vez aquí
-        # y en dibujar() solo se hace un blit barato, dejando el
-        # presupuesto de CPU para el pulso animado de abajo.
+        # La viñeta y el degradado del panel son idénticos en cada
+        # fotograma; antes se reconstruían por completo 60 veces por
+        # segundo. Se calculan una sola vez aquí y en dibujar() solo se
+        # hace un blit barato. Los botones se dibujan con la textura
+        # arcoíris pixelada (_dibujar_boton_comic), que sí necesita
+        # recalcularse cada fotograma porque se anima.
         self._capa_vineta = self._construir_vineta()
         self._capa_panel_base = self._construir_panel_base()
-        self._cache_botones = {
-            ("jugar", False): self._construir_boton(self.boton_jugar, texto(self.idioma, "play"), (2, 2, 2)),
-            ("jugar", True): self._construir_boton(self.boton_jugar, texto(self.idioma, "play"), (90, 200, 255), hover=True),
-            ("opciones", False): self._construir_boton(self.boton_opciones, texto(self.idioma, "options"), (2, 2, 2)),
-            ("opciones", True): self._construir_boton(self.boton_opciones, texto(self.idioma, "options"), (90, 200, 255), hover=True),
-            ("salir", False): self._construir_boton(self.boton_salir, texto(self.idioma, "exit"), (2, 2, 2)),
-            ("salir", True): self._construir_boton(self.boton_salir, texto(self.idioma, "exit"), (255, 120, 150), hover=True),
-        }
+
+    def _escala(self):
+        """Factor de escala relativo a la resolucion de referencia, con
+        limites para que el texto nunca sea ilegible ni gigante."""
+        return max(
+            self.ESCALA_MIN,
+            min(
+                self.ancho / self.ANCHO_REFERENCIA,
+                self.alto / self.ALTO_REFERENCIA,
+                self.ESCALA_MAX,
+            ),
+        )
+
+    def _crear_fuentes(self):
+        escala = self._escala()
+        self.font_titulo = pygame.font.SysFont(
+            "arialblack,arial", max(26, int(54 * escala)), bold=True
+        )
+        self.font_subtitulo = pygame.font.SysFont("arial", max(13, int(20 * escala)))
+        self.font_prompt = pygame.font.SysFont(
+            "comicsansms", max(14, int(22 * escala)), bold=True
+        )
+
+    def _crear_rectangulos(self):
+        boton_ancho = int(max(110, min(170, self.ancho * 0.19)))
+        boton_alto = int(max(36, min(58, self.alto * 0.1)))
+        espacio_entre_botones = max(8, int(boton_ancho * 0.1))
+        x_izq = (self.ancho - (boton_ancho * 3 + espacio_entre_botones * 2)) // 2
+        alto_panel = max(120, min(170, int(self.alto * 0.3)))
+        y_boton = self.alto - int(alto_panel * 0.55)
+
+        self.boton_jugar = pygame.Rect(x_izq, y_boton, boton_ancho, boton_alto)
+        self.boton_opciones = pygame.Rect(
+            x_izq + boton_ancho + espacio_entre_botones, y_boton, boton_ancho, boton_alto
+        )
+        self.boton_salir = pygame.Rect(
+            x_izq + (boton_ancho + espacio_entre_botones) * 2, y_boton, boton_ancho, boton_alto
+        )
+        self._alto_panel = alto_panel
 
     def establecer_idioma(self, idioma):
         self.idioma = idioma
-        etiquetas = {"jugar": "play", "opciones": "options", "salir": "exit"}
-        self._cache_botones = {
-            (nombre, hover): self._construir_boton(
-                getattr(self, f"boton_{nombre}"),
-                texto(self.idioma, clave),
-                (90, 200, 255) if hover else (2, 2, 2),
-                hover=hover,
-            )
-            for nombre, clave in etiquetas.items()
-            for hover in (False, True)
-        }
 
     def actualizar_tamano(self, ancho, alto):
         self.ancho = ancho
         self.alto = alto
-        boton_ancho = 150
-        boton_alto = 54
-        espacio_entre_botones = 16
-        x_izq = (self.ancho - (boton_ancho * 3 + espacio_entre_botones * 2)) // 2
-        y_boton = self.alto - 120
-        self.boton_jugar = pygame.Rect(x_izq, y_boton, boton_ancho, boton_alto)
-        self.boton_opciones = pygame.Rect(x_izq + boton_ancho + espacio_entre_botones, y_boton, boton_ancho, boton_alto)
-        self.boton_salir = pygame.Rect(x_izq + (boton_ancho + espacio_entre_botones) * 2, y_boton, boton_ancho, boton_alto)
+        self._crear_fuentes()
+        self._crear_rectangulos()
         self._capa_vineta = self._construir_vineta()
         self._capa_panel_base = self._construir_panel_base()
-        self._cache_botones = {
-            ("jugar", False): self._construir_boton(self.boton_jugar, texto(self.idioma, "play"), (2, 2, 2)),
-            ("jugar", True): self._construir_boton(self.boton_jugar, texto(self.idioma, "play"), (90, 200, 255), hover=True),
-            ("opciones", False): self._construir_boton(self.boton_opciones, texto(self.idioma, "options"), (2, 2, 2)),
-            ("opciones", True): self._construir_boton(self.boton_opciones, texto(self.idioma, "options"), (90, 200, 255), hover=True),
-            ("salir", False): self._construir_boton(self.boton_salir, texto(self.idioma, "exit"), (2, 2, 2)),
-            ("salir", True): self._construir_boton(self.boton_salir, texto(self.idioma, "exit"), (255, 120, 150), hover=True),
-        }
 
     # ------------------------------------------------------------------
     # Carga y reproducción de video
@@ -173,9 +173,10 @@ class MenuInicio:
         """Degradado que oscurece el borde superior para que el texto sea
         legible sobre cualquier fotograma del video. No depende de nada que
         cambie fotograma a fotograma, así que se calcula una sola vez."""
-        capa = pygame.Surface((self.ancho, 140), pygame.SRCALPHA)
-        for y in range(140):
-            alpha = int(150 * (1 - y / 140))
+        alto_vineta = max(60, min(140, int(self.alto * 0.24)))
+        capa = pygame.Surface((self.ancho, alto_vineta), pygame.SRCALPHA)
+        for y in range(alto_vineta):
+            alpha = int(150 * (1 - y / alto_vineta))
             pygame.draw.line(capa, (0, 0, 0, alpha), (0, y), (self.ancho, y))
         return capa
 
@@ -183,74 +184,12 @@ class MenuInicio:
         """Degradado del panel inferior, sin la línea de acento (esa se
         redibuja aparte cada fotograma para poder darle un pulso de brillo
         sin tener que reconstruir todo el panel)."""
-        alto_panel = 170
+        alto_panel = getattr(self, "_alto_panel", 170)
         capa = pygame.Surface((self.ancho, alto_panel), pygame.SRCALPHA)
         for y in range(alto_panel):
             alpha = int(190 * (y / alto_panel))
             pygame.draw.line(capa, (0, 0, 0, alpha), (0, y), (self.ancho, y))
         return capa
-
-    def _construir_boton(self, rect, texto, color, hover=False):
-        """Precalcula la forma del botón con capas abstractas y colores vivos."""
-        escala = 1.12 if hover else 1.0
-        forma = pygame.Surface((int(rect.width * escala), int(rect.height * escala)), pygame.SRCALPHA)
-        cx = forma.get_width() // 2
-        cy = forma.get_height() // 2
-
-        puntos = [
-            (cx - 70, 8),
-            (cx + 60, 0),
-            (cx + 78, cy - 10),
-            (cx + 70, cy + 24),
-            (cx + 82, cy + 32),
-            (cx + 52, forma.get_height() - 8),
-            (cx - 58, forma.get_height() - 2),
-            (cx - 75, cy + 20),
-            (cx - 84, cy - 6),
-        ]
-
-        paleta = [
-            (255, 108, 92),
-            (255, 201, 90),
-            (98, 224, 168),
-            (128, 145, 255),
-            (255, 117, 190),
-        ]
-        for indice, tono in enumerate(paleta):
-            capa = pygame.Surface((forma.get_width(), forma.get_height()), pygame.SRCALPHA)
-            rect_parche = pygame.Rect(8 + indice * 10, 4 + indice * 2, forma.get_width() - 14 - indice * 18, forma.get_height() - 10)
-            pygame.draw.rect(capa, (*tono, 150 + indice * 18), rect_parche, border_radius=18)
-            pygame.draw.ellipse(capa, (*tono, 120), (0, 0, forma.get_width(), forma.get_height() * 0.6))
-            forma.blit(capa, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
-
-        pygame.draw.polygon(forma, (*color, 200), puntos)
-        pygame.draw.polygon(forma, (255, 255, 255, 60), [(cx - 60, 14), (cx + 58, 10), (cx + 40, cy - 4), (cx - 48, cy + 6)], 0)
-        pygame.draw.polygon(forma, (255, 255, 255, 70), [(cx - 52, cy), (cx + 68, cy - 10), (cx + 52, forma.get_height() - 10), (cx - 44, forma.get_height() - 8)], 0)
-
-        barras = pygame.Surface((forma.get_width(), forma.get_height()), pygame.SRCALPHA)
-        for i in range(6):
-            x = 20 + i * 12
-            ancho = 12 + i * 3
-            alto = forma.get_height() * (0.24 + i * 0.07)
-            y = forma.get_height() - alto - 6
-            pygame.draw.ellipse(barras, (*self._hue_to_rgb(0.15 + i * 0.12, 0.8, 0.7), 110), (x, y, ancho, alto))
-        forma.blit(barras, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
-
-        sombra = pygame.Surface((forma.get_width(), forma.get_height()), pygame.SRCALPHA)
-        pygame.draw.polygon(sombra, (0, 0, 0, 90), puntos)
-
-        label = self.font_prompt.render(texto, True, (255, 255, 255))
-
-        return {
-            "forma": forma,
-            "sombra": sombra,
-            "label": label,
-            "offset_forma": (
-                -int((escala - 1) * rect.width / 2),
-                -int((escala - 1) * rect.height / 2),
-            ),
-            "offset_sombra": (8, 10),
-        }
 
     def _dibujar_panel_inferior(self, superficie, mouse_pos=None):
         superficie.blit(self._capa_panel_base, (0, self.alto - self._capa_panel_base.get_height()))
@@ -291,7 +230,7 @@ class MenuInicio:
     def _generar_textura_boton_pixelada(self, ancho, alto, fase, hover, semilla):
         """Genera la textura arcoíris pixelada de un botón como una superficie
         de baja resolución, lista para escalarse sin suavizado (look 8-bit)."""
-        tam_pixel = 7
+        tam_pixel = max(3, alto // 8)
         columnas = max(4, ancho // tam_pixel)
         filas = max(4, alto // tam_pixel)
 
@@ -324,7 +263,7 @@ class MenuInicio:
     def _dibujar_boton_comic(self, superficie, rect, hover=False, radio=14):
         """Botón arcoíris pixelado y caricaturesco: relleno tipo 8-bit con
         bandas de color que se desplazan y contorno grueso estilo comic."""
-        desplazamiento_sombra = 6 if not hover else 3
+        desplazamiento_sombra = max(2, int(rect.height * 0.14)) if not hover else max(1, int(rect.height * 0.07))
         rect_sombra = rect.move(desplazamiento_sombra, desplazamiento_sombra)
         pygame.draw.rect(superficie, self.COLOR_BOTON_SOMBRA, rect_sombra)
 
@@ -341,7 +280,7 @@ class MenuInicio:
         )
         superficie.blit(textura, rect_dibujo.topleft)
 
-        pygame.draw.rect(superficie, self.COLOR_BOTON_BORDE, rect_dibujo, width=3)
+        pygame.draw.rect(superficie, self.COLOR_BOTON_BORDE, rect_dibujo, width=max(2, int(rect_dibujo.height * 0.06)))
         return rect_dibujo
 
     def _hue_to_rgb(self, hue, saturation, lightness):
@@ -364,16 +303,6 @@ class MenuInicio:
             r, g, b = c, 0, x
 
         return (int(round((r + m) * 255)), int(round((g + m) * 255)), int(round((b + m) * 255)))
-
-    def _texto_con_sombra(self, superficie, texto, font, color, centro, offset_sombra=(2, 2)):
-        sombra = font.render(texto, True, (0, 0, 0))
-        sombra.set_alpha(160)
-        superficie.blit(
-            sombra,
-            sombra.get_rect(center=(centro[0] + offset_sombra[0], centro[1] + offset_sombra[1])),
-        )
-        principal = font.render(texto, True, color)
-        superficie.blit(principal, principal.get_rect(center=centro))
 
     def _texto_centrado(self, superficie, contenido, fuente, centro, color):
         sombra = fuente.render(contenido, True, self.COLOR_BOTON_BORDE)

@@ -65,6 +65,7 @@ class Plataforma:
         patron_movimiento=None,
         amplitud_movimiento=None,
         velocidad_movimiento=None,
+        probabilidad_movimiento=None,
     ):
         self.rect = pygame.Rect(x, y, w, h)
         self.hue = hue
@@ -76,9 +77,18 @@ class Plataforma:
         # ---------------- movimiento ----------------
         # Si no se especifica un patrón, una fracción de las plataformas
         # normales se vuelve móvil por su cuenta (las trampas nunca se
-        # mueven solas, para no complicar su lectura visual).
+        # mueven solas, para no complicar su lectura visual). Esa fracción
+        # puede venir de fuera -ver ``parametros_dificultad`` en
+        # ``dificultad.py``- para que crezca con el nivel; si no se indica
+        # nada (por ejemplo, al crear una plataforma suelta fuera del
+        # generador de niveles), se usa el valor fijo de la clase.
         if patron_movimiento is None and not es_trampa:
-            if random.random() < self.PROBABILIDAD_MOVIMIENTO:
+            probabilidad = (
+                probabilidad_movimiento
+                if probabilidad_movimiento is not None
+                else self.PROBABILIDAD_MOVIMIENTO
+            )
+            if random.random() < probabilidad:
                 patron_movimiento = random.choice(("horizontal", "vertical"))
         self.patron_movimiento = patron_movimiento
         self.amplitud_movimiento = (

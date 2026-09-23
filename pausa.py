@@ -11,6 +11,13 @@ class MenuPausa:
     """Menu de pausa con estilo caricaturesco y fondo de arte abstracto,
     dibujado sobre el lienzo logico del juego."""
 
+    # Resolucion de referencia sobre la que se disenaron los tamanos
+    # originales; el factor de escala se calcula relativo a esto.
+    ANCHO_REFERENCIA = 800
+    ALTO_REFERENCIA = 600
+    ESCALA_MIN = 0.55
+    ESCALA_MAX = 1.6
+
     # Paleta tipo comic: colores planos y muy saturados
     COLOR_FONDO_OVERLAY = (20, 10, 40, 170)
     COLOR_TITULO = (255, 221, 87)
@@ -36,21 +43,58 @@ class MenuPausa:
         self.ancho = ancho
         self.alto = alto
         self.idioma = idioma
-        self.fuente_titulo = pygame.font.SysFont("comicsansms", 56, bold=True)
-        self.fuente_boton = pygame.font.SysFont("comicsansms", 24, bold=True)
         self._tiempo = 0.0
+        self._crear_fuentes()
         self._crear_rectangulos()
         self._formas_abstractas = self._generar_formas_abstractas()
 
+    def _escala(self):
+        """Factor de escala relativo a la resolucion de referencia, con
+        limites para que el texto nunca sea ilegible ni gigante."""
+        return max(
+            self.ESCALA_MIN,
+            min(
+                self.ancho / self.ANCHO_REFERENCIA,
+                self.alto / self.ALTO_REFERENCIA,
+                self.ESCALA_MAX,
+            ),
+        )
+
+    def _crear_fuentes(self):
+        escala = self._escala()
+        self.fuente_titulo = pygame.font.SysFont(
+            "comicsansms", max(26, int(56 * escala)), bold=True
+        )
+        self.fuente_boton = pygame.font.SysFont(
+            "comicsansms", max(14, int(24 * escala)), bold=True
+        )
+
     def _crear_rectangulos(self):
         centro = self.ancho // 2
-        self.boton_continuar = pygame.Rect(centro - 150, 245, 300, 54)
-        self.boton_opciones = pygame.Rect(centro - 150, 315, 300, 54)
-        self.boton_salir = pygame.Rect(centro - 150, 385, 300, 54)
+
+        ancho_boton = int(max(190, min(340, self.ancho * 0.4)))
+        alto_boton = int(max(38, min(64, self.alto * 0.1)))
+        espacio = max(8, int(alto_boton * 0.28))
+        bloque_alto = alto_boton * 3 + espacio * 2
+
+        titulo_y = max(55, int(self.alto * 0.2))
+        margen_bajo_titulo = titulo_y + int(alto_boton * 0.85)
+        y_maximo = self.alto - bloque_alto - int(self.alto * 0.04)
+        y_inicio = min(max(margen_bajo_titulo, int(self.alto * 0.4)), max(margen_bajo_titulo, y_maximo))
+
+        self.titulo_y = titulo_y
+        self.boton_continuar = pygame.Rect(centro - ancho_boton // 2, y_inicio, ancho_boton, alto_boton)
+        self.boton_opciones = pygame.Rect(
+            centro - ancho_boton // 2, y_inicio + alto_boton + espacio, ancho_boton, alto_boton
+        )
+        self.boton_salir = pygame.Rect(
+            centro - ancho_boton // 2, y_inicio + (alto_boton + espacio) * 2, ancho_boton, alto_boton
+        )
 
     def actualizar_tamano(self, ancho, alto):
         self.ancho = ancho
         self.alto = alto
+        self._crear_fuentes()
         self._crear_rectangulos()
         self._formas_abstractas = self._generar_formas_abstractas()
 
@@ -150,7 +194,7 @@ class MenuPausa:
     def _generar_textura_boton_pixelada(self, ancho, alto, fase, hover, semilla):
         """Genera la textura arcoíris pixelada de un botón como una superficie
         de baja resolución, lista para escalarse sin suavizado (look 8-bit)."""
-        tam_pixel = 7
+        tam_pixel = max(3, alto // 8)
         columnas = max(4, ancho // tam_pixel)
         filas = max(4, alto // tam_pixel)
 
@@ -190,7 +234,7 @@ class MenuPausa:
         rect_animado = pygame.Rect(0, 0, ancho_b, alto_b)
         rect_animado.center = rect.center
 
-        desplazamiento_sombra = 8 if not hover else 4
+        desplazamiento_sombra = max(3, int(rect.height * 0.15)) if not hover else max(2, int(rect.height * 0.08))
         rect_sombra = rect_animado.move(desplazamiento_sombra, desplazamiento_sombra)
         pygame.draw.rect(superficie, self.COLOR_BOTON_SOMBRA, rect_sombra)
 
@@ -205,7 +249,7 @@ class MenuPausa:
         )
         superficie.blit(textura, rect_animado.topleft)
 
-        pygame.draw.rect(superficie, self.COLOR_BOTON_BORDE, rect_animado, width=4)
+        pygame.draw.rect(superficie, self.COLOR_BOTON_BORDE, rect_animado, width=max(2, int(rect_animado.height * 0.075)))
 
         self._texto_contorno(
             superficie,
@@ -233,7 +277,7 @@ class MenuPausa:
             superficie,
             texto(self.idioma, "pause"),
             self.fuente_titulo,
-            (self.ancho // 2, 145 + bamboleo),
+            (self.ancho // 2, self.titulo_y + bamboleo),
             self.COLOR_TITULO,
             self.COLOR_TITULO_CONTORNO,
             grosor=4,

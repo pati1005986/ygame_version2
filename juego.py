@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 import pygame
 
+from dificultad import parametros_dificultad
 from fondo import ParticulaAbstracta, dibujar_fondo_segmentado
 from enemigo import generar_entidades
 from idioma import texto
@@ -154,9 +155,14 @@ def generar_nivel(nivel):
             plataformas.
 
     Returns:
-        Una tupla ``(plataformas, hue_fondo, hue_jugador)``.
+        Una tupla ``(plataformas, hue_fondo, hue_jugador, entidades)``.
     """
-    plataformas = [Plataforma(50, 300, 150, 20, random.random())]
+    parametros = parametros_dificultad(nivel)
+    prob_movil = parametros["probabilidad_plataforma_movil"]
+
+    plataformas = [
+        Plataforma(50, 300, 150, 20, random.random(), probabilidad_movimiento=prob_movil)
+    ]
     plataforma_guia = plataformas[0].rect
     ultimo_x = plataforma_guia.right
 
@@ -178,7 +184,9 @@ def generar_nivel(nivel):
         x = ultimo_x + random.randint(*distancia_x)
         y = max(70, min(HEIGHT - 50, plataforma_guia.top + random.randint(*desplazamiento_y)))
         es_trampa = nivel >= 10 and random.random() < 0.28
-        plataforma_nueva = Plataforma(x, y, w, 20, random.random(), es_trampa)
+        plataforma_nueva = Plataforma(
+            x, y, w, 20, random.random(), es_trampa, probabilidad_movimiento=prob_movil
+        )
         plataformas.append(plataforma_nueva)
         plataforma_guia = plataforma_nueva.rect
         ultimo_x = plataforma_guia.right
@@ -199,20 +207,28 @@ def generar_nivel(nivel):
                     20,
                     random.random(),
                     falso or random.random() < 0.20,
+                    probabilidad_movimiento=prob_movil,
                 )
             )
 
     hue_fondo = random.random()
     hue_jugador = random.random()
-    entidades = generar_entidades(nivel, plataformas, POS_SPAWN)
+    entidades = generar_entidades(
+        nivel,
+        plataformas,
+        POS_SPAWN,
+        velocidad_patrulla=parametros["velocidad_enemigo_patrulla"],
+        velocidad_persecucion=parametros["velocidad_enemigo_persecucion"],
+        rango_deteccion=parametros["rango_deteccion_enemigo"],
+    )
     return plataformas, hue_fondo, hue_jugador, entidades
 
 
 def ajustar_dificultad_jugador(jugador, nivel):
     """Aumenta el ritmo sin hacer que los primeros niveles sean bruscos."""
-    progreso = max(0, nivel - 1)
-    jugador.velocidad = min(6.0 + progreso * 0.12, 8.5)
-    jugador.gravedad = min(0.6 + progreso * 0.018, 0.9)
+    parametros = parametros_dificultad(nivel)
+    jugador.velocidad = parametros["velocidad_jugador"]
+    jugador.gravedad = parametros["gravedad_jugador"]
 
 
 def dibujar_nivel(capa, fondo, plataformas, entidades, tiempo, nivel):
@@ -481,7 +497,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     pausa.establecer_idioma(configuracion["idioma"])
                     estado = ESTADO_PAUSA
                 elif evento.key == configuracion["controles"]["jump"]:
-                    jugador.saltar()
+                    jugador.solicitar_salto()
             elif estado == ESTADO_GAME_OVER and evento.type == pygame.KEYDOWN and evento.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
                 nivel = 1
                 plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)

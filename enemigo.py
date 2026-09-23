@@ -35,12 +35,19 @@ class EntidadGris:
 
     COLOR_BASE = (132, 132, 132)
 
-    def __init__(self, x, y):
+    def __init__(
+        self,
+        x,
+        y,
+        velocidad_patrulla=1.8,
+        velocidad_persecucion=3.0,
+        rango_deteccion=220,
+    ):
         self.rect = pygame.Rect(x, y, 32, 58)
         self.vel_y = 0
-        self.velocidad_patrulla = 1.8
-        self.velocidad_persecucion = 3.0
-        self.rango_deteccion = 220
+        self.velocidad_patrulla = velocidad_patrulla
+        self.velocidad_persecucion = velocidad_persecucion
+        self.rango_deteccion = rango_deteccion
         self.en_suelo = False
         self.plataforma_actual = None
         self.direccion = random.choice((-1, 1))
@@ -399,7 +406,15 @@ class EntidadGris:
 # --------------------------------------------------------------------------
 # Generación por nivel
 # --------------------------------------------------------------------------
-def generar_entidades(nivel, plataformas, punto_a_evitar, radio_evitar=90):
+def generar_entidades(
+    nivel,
+    plataformas,
+    punto_a_evitar,
+    radio_evitar=90,
+    velocidad_patrulla=1.8,
+    velocidad_persecucion=3.0,
+    rango_deteccion=220,
+):
     """Crea las entidades grises para un nivel dado.
 
     No aparecen antes del nivel 3 (para que el jugador se familiarice
@@ -413,6 +428,11 @@ def generar_entidades(nivel, plataformas, punto_a_evitar, radio_evitar=90):
             aparecer entidades, para no recibir al jugador con un enemigo
             encima nada más empezar.
         radio_evitar: Distancia mínima a ``punto_a_evitar``.
+        velocidad_patrulla, velocidad_persecucion, rango_deteccion: se
+            pasan a cada ``EntidadGris`` creada. Pensados para venir de
+            ``parametros_dificultad`` (ver ``dificultad.py``) y así crecer
+            con el nivel en vez de quedarse fijos para siempre; si no se
+            indican, se usan los valores originales.
 
     Returns:
         Una lista de ``EntidadGris``, vacía si el nivel es demasiado bajo.
@@ -435,5 +455,13 @@ def generar_entidades(nivel, plataformas, punto_a_evitar, radio_evitar=90):
     for plataforma in candidatas[:cantidad]:
         x = plataforma.rect.centerx - 16
         y = plataforma.rect.top - 58
-        entidades.append(EntidadGris(x, y))
+        entidades.append(
+            EntidadGris(
+                x,
+                y,
+                velocidad_patrulla=velocidad_patrulla,
+                velocidad_persecucion=velocidad_persecucion,
+                rango_deteccion=rango_deteccion,
+            )
+        )
     return entidades

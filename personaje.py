@@ -14,6 +14,18 @@ class PersonajeHumanoide:
         color: Color RGB base del personaje. Sus sombras se derivan de él.
     """
 
+    # Márgenes de "salto justo" (en cuadros, asumiendo 60 FPS):
+    # - Coyote time: permite saltar hasta un ratito después de haber
+    #   dejado una plataforma por el borde (como si el suelo "siguiera
+    #   ahí" un instante más).
+    # - Buffer de salto: si se pulsa la tecla un poco antes de aterrizar,
+    #   la intención se guarda y el salto se ejecuta apenas se puede en
+    #   vez de perderse.
+    # Ninguno de los dos cambia la dificultad real: solo evitan que el
+    # control se sienta "mezquino" por timing de un par de cuadros.
+    COYOTE_FRAMES = 6        # ~0.1 s
+    BUFFER_SALTO_FRAMES = 8  # ~0.13 s
+
     def __init__(self, x, y, color, volumen_efectos=1.0):
         # Tamaño aumentado ~25% respecto a la versión original (32x56 -> 40x70)
         self.rect = pygame.Rect(x, y, 40, 70)
@@ -26,6 +38,12 @@ class PersonajeHumanoide:
         self.fuerza_salto = -13
         self.en_suelo = False
         self.plataforma_actual = None  # última plataforma sobre la que aterrizó
+
+        # --- Coyote time y buffer de salto (ver constantes de clase) ---
+        self.coyote_restante = 0
+        self.buffer_salto_restante = 0
+        self._salto_ejecutado_este_frame = False
+
         self.direccion = 1
         self.agachado = False
         self.agachado_animacion = 0.0
@@ -206,6 +224,18 @@ class PersonajeHumanoide:
         los pasos se actualizan aquí para que sigan el movimiento real
         del personaje.
         """
+        # Estado de coyote time / buffer de salto para este cuadro: se
+        # cuentan hacia atrás sin importar nada más (ver saltar() y
+        # solicitar_salto()). ``estaba_en_suelo_frame_anterior`` se toma
+        # ANTES de mover nada, para saber si el suelo se pierde este
+        # mismo cuadro por caminar fuera del borde.
+        estaba_en_suelo_frame_anterior = self.en_suelo
+        self._salto_ejecutado_este_frame = False
+        if self.coyote_restante > 0:
+            self.coyote_restante -= 1
+        if self.buffer_salto_restante > 0:
+            self.buffer_salto_restante -= 1
+
         teclas = pygame.key.get_pressed()
         controles = controles or {
             "left": pygame.K_a,
@@ -233,6 +263,17 @@ class PersonajeHumanoide:
         if caminando_input:
             self.direccion = 1 if dx > 0 else -1
             self.tiempo_animacion += self.velocidad_animacion
+
+        # Si hay un salto "guardado" (se pulsó la tecla hace poco) y ya
+        # hay alguna forma válida de saltar -de suelo, por coyote time, o
+        # el doble salto en el aire-, se ejecuta ahora en vez de perderse
+        # por haber llegado un instante demasiado pronto. Si todavía no
+        # hay ningún salto disponible, sigue esperando: se reintenta cada
+        # cuadro hasta que el buffer expira.
+        if self.buffer_salto_restante > 0 and not self.agachado:
+            if self.en_suelo or self.coyote_restante > 0 or self.saltos_restantes > 0:
+                self.saltar()
+                self.buffer_salto_restante = 0
 
         self.vel_y += self.gravedad
         dy = self.vel_y
@@ -266,6 +307,17 @@ class PersonajeHumanoide:
 
         aterrizando_ahora = self.en_suelo and estaba_en_aire
         ahora = pygame.time.get_ticks()
+
+        # Se perdió el suelo caminando hacia un borde (no saltando): se
+        # concede el margen de coyote time. Si el suelo se perdió porque
+        # justo se ejecutó un salto este mismo cuadro, no aplica (ya se
+        # está saltando de verdad, no hace falta ningún margen extra).
+        if (
+            estaba_en_suelo_frame_anterior
+            and not self.en_suelo
+            and not self._salto_ejecutado_este_frame
+        ):
+            self.coyote_restante = self.COYOTE_FRAMES
 
         if aterrizando_ahora:
             # Al tocar suelo se recarga el doble salto y, si venía girando,
@@ -357,16 +409,24 @@ class PersonajeHumanoide:
         return not any(rect_de_pie.colliderect(plataforma.rect) for plataforma in plataformas)
 
     def saltar(self):
-        """Inicia un salto si el personaje está apoyado en una plataforma,
-        o un doble salto con giro si ya está en el aire y aún le queda uno
-        disponible (se recarga al volver a tocar el suelo)."""
+        """Inicia un salto si el personaje está apoyado en una plataforma
+        (o todavía dentro del margen de coyote time tras dejarla), o un
+        doble salto con giro si ya está en el aire y aún le queda uno
+        disponible (se recarga al volver a tocar el suelo).
+
+        Puede llamarse directamente para un salto inmediato, o a través
+        de ``solicitar_salto()`` si se quiere aprovechar el buffer de
+        salto (ver docstring de esa función).
+        """
         if self.agachado:
             return
 
-        if self.en_suelo:
+        if self.en_suelo or self.coyote_restante > 0:
             self.escala_y = 0.82  # ligera compresión instantánea al despegar
             self.vel_y = self.fuerza_salto
             self.saltos_restantes = self.saltos_maximos - 1
+            self.coyote_restante = 0
+            self._salto_ejecutado_este_frame = True
             if self.sonido_salto:
                 self.sonido_salto.play()
         elif self.saltos_restantes > 0:
@@ -375,11 +435,24 @@ class PersonajeHumanoide:
             self.escala_y = 1.15  # estiramiento (ya está en el aire, no hay compresión de despegue)
             self.girando = True
             self.angulo_giro = 0.0
+            self._salto_ejecutado_este_frame = True
             self._emitir_particulas(
                 10, self.rect.centerx, self.rect.bottom, dispersion=self.rect.width * 0.6
             )
             if self.sonido_doble_salto:
                 self.sonido_doble_salto.play()
+
+    def solicitar_salto(self):
+        """Se llama desde el manejo de eventos al pulsar la tecla de salto
+        (en vez de llamar a ``saltar()`` directamente).
+
+        No salta necesariamente al instante: guarda la intención durante
+        ``BUFFER_SALTO_FRAMES`` cuadros. Si en ese margen ``mover()``
+        detecta suelo, coyote time, o un doble salto disponible, ejecuta
+        el salto por su cuenta - así una pulsación "un pelín adelantada"
+        justo antes de aterrizar no se pierde.
+        """
+        self.buffer_salto_restante = self.BUFFER_SALTO_FRAMES
 
     def iniciar_engullido(self, plataforma):
         """Activa la animación de muerte por trampa, como si la plataforma se

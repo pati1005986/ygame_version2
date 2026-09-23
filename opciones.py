@@ -17,6 +17,12 @@ class MenuOpciones:
 
     RESOLUCIONES = ((800, 600), (640, 480), (480, 360))
     CONTROLES = ("left", "right", "jump", "down")
+
+    ANCHO_REFERENCIA = 800
+    ALTO_REFERENCIA = 600
+    ESCALA_MIN = 0.5
+    ESCALA_MAX = 1.6
+
     DEFAULTS = {
         "resolucion": 0,
         "pantalla_completa": False,
@@ -67,33 +73,103 @@ class MenuOpciones:
                     self.configuracion["controles"].setdefault(nombre, tecla)
             else:
                 self.configuracion.setdefault(clave, valor)
-        self.fuente_titulo = pygame.font.SysFont("comicsansms", 44, bold=True)
-        self.fuente = pygame.font.SysFont("comicsansms", 22, bold=True)
-        self.fuente_pequena = pygame.font.SysFont("comicsansms", 18, bold=True)
         self.tecla_esperada = None
         self._tiempo = 0.0
+        self._crear_fuentes()
         self._crear_rectangulos()
         self._formas_abstractas = self._generar_formas_abstractas()
 
+    def _escala(self):
+        """Factor de escala relativo a la resolucion de referencia, con
+        limites para que el texto nunca sea ilegible ni gigante."""
+        return max(
+            self.ESCALA_MIN,
+            min(
+                self.ancho / self.ANCHO_REFERENCIA,
+                self.alto / self.ALTO_REFERENCIA,
+                self.ESCALA_MAX,
+            ),
+        )
+
+    def _crear_fuentes(self):
+        escala = self._escala()
+        self.fuente_titulo = pygame.font.SysFont(
+            "comicsansms", max(22, int(44 * escala)), bold=True
+        )
+        self.fuente = pygame.font.SysFont("comicsansms", max(12, int(22 * escala)), bold=True)
+        self.fuente_pequena = pygame.font.SysFont(
+            "comicsansms", max(10, int(18 * escala)), bold=True
+        )
+
     def _crear_rectangulos(self):
+        """Calcula todas las filas de opciones como fracción del alto
+        disponible, en vez de coordenadas fijas en píxeles, para que la
+        pantalla siga siendo usable incluso en la resolución más chica
+        (480x360) sin que las filas se salgan de la ventana."""
         centro = self.ancho // 2
-        self.boton_resolucion = pygame.Rect(centro - 190, 120, 380, 30)
-        self.boton_idioma = pygame.Rect(centro - 190, 160, 380, 30)
-        self.boton_pantalla = pygame.Rect(centro - 190, 200, 380, 30)
-        self.boton_musica = pygame.Rect(centro - 190, 240, 380, 30)
-        self.boton_efectos = pygame.Rect(centro - 190, 280, 380, 30)
-        self.boton_reset = pygame.Rect(centro - 190, 320, 380, 30)
-        self.boton_volver = pygame.Rect(centro - 190, self.alto - 72, 180, 48)
-        self.boton_guardar = pygame.Rect(centro + 10, self.alto - 72, 180, 48)
-        inicio_controles = 360
-        self.botones_controles = {
-            nombre: pygame.Rect(centro - 190, inicio_controles + indice * 34, 380, 28)
-            for indice, nombre in enumerate(self.CONTROLES)
-        }
+        n_generales = 7  # resolucion, idioma, pantalla, dificultad, musica, efectos, reset
+        n_controles = len(self.CONTROLES)
+
+        self.titulo_y = max(30, int(self.alto * 0.09))
+
+        ancho_boton_inferior = int(max(130, min(190, self.ancho * 0.22)))
+        alto_boton_inferior = int(max(32, min(50, self.alto * 0.1)))
+        margen_inferior = max(8, int(self.alto * 0.03))
+        y_botones_inferiores = self.alto - alto_boton_inferior - margen_inferior
+
+        y_inicio_filas = self.titulo_y + int(self.fuente_titulo.get_height() * 0.9)
+        y_fin_filas = y_botones_inferiores - margen_inferior
+        alto_disponible = max(1, y_fin_filas - y_inicio_filas)
+
+        # +1.4 "unidades" de holgura: separación entre el bloque general y
+        # el de controles, más espacio para el texto "press_key".
+        unidades = n_generales + n_controles + 1.4
+        alto_fila = max(20, min(38, alto_disponible / unidades))
+
+        ancho_fila = int(max(240, min(460, self.ancho * 0.62)))
+        alto_caja = max(16, int(alto_fila * 0.8))
+
+        y = y_inicio_filas
+        nombres_generales = (
+            "boton_resolucion",
+            "boton_idioma",
+            "boton_pantalla",
+            "boton_dificultad",
+            "boton_musica",
+            "boton_efectos",
+            "boton_reset",
+        )
+        for nombre in nombres_generales:
+            setattr(self, nombre, pygame.Rect(centro - ancho_fila // 2, int(y), ancho_fila, alto_caja))
+            y += alto_fila
+
+        self.press_key_y = int(y + alto_fila * 0.15)
+        y += alto_fila * 1.4
+
+        self.botones_controles = {}
+        for nombre in self.CONTROLES:
+            self.botones_controles[nombre] = pygame.Rect(
+                centro - ancho_fila // 2, int(y), ancho_fila, max(14, int(alto_caja * 0.9))
+            )
+            y += alto_fila
+
+        self.boton_volver = pygame.Rect(
+            centro - ancho_boton_inferior - margen_inferior // 2,
+            y_botones_inferiores,
+            ancho_boton_inferior,
+            alto_boton_inferior,
+        )
+        self.boton_guardar = pygame.Rect(
+            centro + margen_inferior // 2,
+            y_botones_inferiores,
+            ancho_boton_inferior,
+            alto_boton_inferior,
+        )
 
     def actualizar_tamano(self, ancho, alto):
         self.ancho = ancho
         self.alto = alto
+        self._crear_fuentes()
         self._crear_rectangulos()
         self._formas_abstractas = self._generar_formas_abstractas()
 
@@ -199,7 +275,7 @@ class MenuOpciones:
     def _generar_textura_boton_pixelada(self, ancho, alto, fase, hover, semilla):
         """Genera la textura arcoíris pixelada de un botón como una superficie
         de baja resolución, lista para escalarse sin suavizado (look 8-bit)."""
-        tam_pixel = 7
+        tam_pixel = max(3, alto // 8)
         columnas = max(4, ancho // tam_pixel)
         filas = max(4, alto // tam_pixel)
 
@@ -233,7 +309,7 @@ class MenuOpciones:
     def _dibujar_boton_comic(self, superficie, rect, contenido, hover=False, activo=False, radio=14):
         """Botón arcoíris pixelado y caricaturesco: relleno tipo 8-bit con
         bandas de color que se desplazan y contorno grueso estilo comic."""
-        desplazamiento_sombra = 6 if not hover else 3
+        desplazamiento_sombra = max(2, int(rect.height * 0.2)) if not hover else max(1, int(rect.height * 0.1))
         rect_sombra = rect.move(desplazamiento_sombra, desplazamiento_sombra)
         pygame.draw.rect(superficie, self.COLOR_BOTON_SOMBRA, rect_sombra)
 
@@ -253,10 +329,12 @@ class MenuOpciones:
         if activo:
             # pulso cian tipo comic para indicar "esperando tecla"
             pulso = 0.5 + 0.5 * math.sin(self._tiempo * 8.0)
-            grosor_pulso = 3 + int(pulso * 3)
+            grosor_pulso = max(2, int(rect_dibujo.height * 0.12)) + int(pulso * 3)
             pygame.draw.rect(superficie, (90, 230, 200), rect_dibujo, width=grosor_pulso)
         else:
-            pygame.draw.rect(superficie, self.COLOR_BOTON_BORDE, rect_dibujo, width=3)
+            pygame.draw.rect(
+                superficie, self.COLOR_BOTON_BORDE, rect_dibujo, width=max(2, int(rect_dibujo.height * 0.12))
+            )
 
         return rect_dibujo
 
@@ -291,7 +369,7 @@ class MenuOpciones:
             superficie,
             texto(idioma, "options"),
             self.fuente_titulo,
-            (self.ancho // 2, 55 + bamboleo),
+            (self.ancho // 2, self.titulo_y + bamboleo),
             self.COLOR_TITULO,
             self.COLOR_TITULO_CONTORNO,
             grosor=3,
@@ -330,6 +408,15 @@ class MenuOpciones:
             superficie,
             f"{texto(idioma, 'display_mode')}: {texto(idioma, modo)}",
             self.fuente,
+            rect_dibujo.center,
+        )
+
+        hover = self.boton_dificultad.collidepoint(posicion_raton)
+        rect_dibujo = self._dibujar_boton_comic(superficie, self.boton_dificultad, "", hover)
+        self._texto_centrado(
+            superficie,
+            f"{texto(idioma, 'difficulty')}: {texto(idioma, 'progressive_by_level')}",
+            self.fuente_pequena,
             rect_dibujo.center,
         )
 
@@ -381,7 +468,7 @@ class MenuOpciones:
                 superficie,
                 texto(idioma, "press_key"),
                 self.fuente_pequena,
-                (self.ancho // 2, 305),
+                (self.ancho // 2, self.press_key_y),
                 (255, 221, 87),
                 (90, 40, 10),
                 grosor=2,

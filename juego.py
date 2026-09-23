@@ -1,4 +1,3 @@
-
 """Punto de entrada del juego de plataformas procedural.
 
 El módulo coordina la ventana de Pygame, la generación de niveles, el
@@ -362,6 +361,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     configuracion["pantalla_completa"] = bool(configuracion.get("pantalla_completa", False))
     configuracion["volumen_musica"] = max(0.0, min(1.0, float(configuracion.get("volumen_musica", 0.8))))
     configuracion["volumen_efectos"] = max(0.0, min(1.0, float(configuracion.get("volumen_efectos", 0.8))))
+    configuracion["escala_ui"] = float(configuracion.get("escala_ui", 1.0))
+    if configuracion["escala_ui"] not in MenuOpciones.ESCALAS_UI:
+        configuracion["escala_ui"] = 1.0
     configuracion["controles"] = MenuOpciones.DEFAULTS["controles"].copy()
     configuracion["controles"].update(configuracion_guardada.get("controles", {}))
 
@@ -376,8 +378,8 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     gif_game_over = []
     duracion_fotograma_gif = 0.1
     indice_imagen_game_over = 0
-    menu = MenuInicio(WIDTH, HEIGHT, idioma=configuracion["idioma"])
-    pausa = MenuPausa(WIDTH, HEIGHT, idioma=configuracion["idioma"])
+    menu = MenuInicio(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
+    pausa = MenuPausa(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
     estado_despues_opciones = ESTADO_MENU
     jugando = True
@@ -503,8 +505,10 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     aplicar_modo_pantalla()
                     menu.actualizar_tamano(WIDTH, HEIGHT)
                     menu.establecer_idioma(configuracion["idioma"])
+                    menu.establecer_escala_ui(configuracion["escala_ui"])
                     pausa.actualizar_tamano(WIDTH, HEIGHT)
                     pausa.establecer_idioma(configuracion["idioma"])
+                    pausa.establecer_escala_ui(configuracion["escala_ui"])
                     opciones.actualizar_tamano(WIDTH, HEIGHT)
                     pygame.display.set_caption(texto(configuracion["idioma"], "window_title"))
                     texto_boton = texto(configuracion["idioma"], "retry")

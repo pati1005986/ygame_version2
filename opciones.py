@@ -19,6 +19,10 @@ class MenuOpciones:
 
     RESOLUCIONES = ((800, 600), (640, 480), (480, 360))
     CONTROLES = ("left", "right", "jump", "down")
+    # Valores cicleables del slider de escala de UI: independiente de la
+    # resolucion de ventana, multiplica el tamano de fuentes y botones de
+    # los tres menus (inicio, pausa, opciones).
+    ESCALAS_UI = (0.75, 0.85, 1.0, 1.15, 1.3, 1.5)
 
     ANCHO_REFERENCIA = 800
     ALTO_REFERENCIA = 600
@@ -31,6 +35,7 @@ class MenuOpciones:
         "idioma": "en",
         "volumen_musica": 0.8,
         "volumen_efectos": 0.8,
+        "escala_ui": 1.0,
         "controles": {
             "left": pygame.K_a,
             "right": pygame.K_d,
@@ -83,8 +88,10 @@ class MenuOpciones:
 
     def _escala(self):
         """Factor de escala relativo a la resolucion de referencia, con
-        limites para que el texto nunca sea ilegible ni gigante."""
-        return max(
+        limites para que el texto nunca sea ilegible ni gigante, multiplicado
+        por la preferencia de escala de UI del jugador (independiente de la
+        resolucion de ventana elegida)."""
+        base = max(
             self.ESCALA_MIN,
             min(
                 self.ancho / self.ANCHO_REFERENCIA,
@@ -92,6 +99,8 @@ class MenuOpciones:
                 self.ESCALA_MAX,
             ),
         )
+        escala_ui = self.configuracion.get("escala_ui", 1.0)
+        return base * escala_ui
 
     def _crear_fuentes(self):
         escala = self._escala()
@@ -109,7 +118,7 @@ class MenuOpciones:
         pantalla siga siendo usable incluso en la resolución más chica
         (480x360) sin que las filas se salgan de la ventana."""
         centro = self.ancho // 2
-        n_generales = 7  # resolucion, idioma, pantalla, dificultad, musica, efectos, reset
+        n_generales = 8  # resolucion, idioma, pantalla, dificultad, musica, efectos, escala_ui, reset
         n_controles = len(self.CONTROLES)
 
         self.titulo_y = max(30, int(self.alto * 0.09))
@@ -139,6 +148,7 @@ class MenuOpciones:
             "boton_dificultad",
             "boton_musica",
             "boton_efectos",
+            "boton_escala_ui",
             "boton_reset",
         )
         for nombre in nombres_generales:
@@ -351,7 +361,10 @@ class MenuOpciones:
         self.configuracion["idioma"] = self.DEFAULTS["idioma"]
         self.configuracion["volumen_musica"] = self.DEFAULTS["volumen_musica"]
         self._establecer_volumen_general(self.DEFAULTS["volumen_musica"])
+        self.configuracion["escala_ui"] = self.DEFAULTS["escala_ui"]
         self.configuracion["controles"] = self.DEFAULTS["controles"].copy()
+        self._crear_fuentes()
+        self._crear_rectangulos()
 
     def dibujar(self, superficie, mouse_pos=None, dt=1 / 60):
         self._tiempo += dt
@@ -442,6 +455,16 @@ class MenuOpciones:
             rect_dibujo.center,
         )
 
+        escala_ui_actual = int(round(self.configuracion.get("escala_ui", 1.0) * 100))
+        hover = self.boton_escala_ui.collidepoint(posicion_raton)
+        rect_dibujo = self._dibujar_boton_comic(superficie, self.boton_escala_ui, "", hover)
+        self._texto_centrado(
+            superficie,
+            f"{texto(idioma, 'ui_scale')}: {escala_ui_actual}%",
+            self.fuente_pequena,
+            rect_dibujo.center,
+        )
+
         hover = self.boton_reset.collidepoint(posicion_raton)
         rect_dibujo = self._dibujar_boton_comic(superficie, self.boton_reset, "", hover)
         self._texto_centrado(
@@ -514,6 +537,17 @@ class MenuOpciones:
             actual = self.configuracion.get("volumen_efectos", 0.85)
             indice = valores.index(actual) if actual in valores else 3
             self._establecer_volumen_general(valores[(indice + 1) % len(valores)])
+        elif self.boton_escala_ui.collidepoint(evento.pos):
+            actual = self.configuracion.get("escala_ui", 1.0)
+            if actual in self.ESCALAS_UI:
+                indice = self.ESCALAS_UI.index(actual)
+            else:
+                # valor guardado no coincide exactamente (p. ej. config vieja):
+                # se ubica en el escalón cicleable mas cercano.
+                indice = min(range(len(self.ESCALAS_UI)), key=lambda i: abs(self.ESCALAS_UI[i] - actual)) - 1
+            self.configuracion["escala_ui"] = self.ESCALAS_UI[(indice + 1) % len(self.ESCALAS_UI)]
+            self._crear_fuentes()
+            self._crear_rectangulos()
         elif self.boton_reset.collidepoint(evento.pos):
             self._restaurar_por_defecto()
         elif self.boton_volver.collidepoint(evento.pos):
@@ -537,6 +571,7 @@ def normalizar_configuracion(configuracion):
         "idioma": "en",
         "volumen_musica": 0.8,
         "volumen_efectos": 0.8,
+        "escala_ui": 1.0,
         "controles": MenuOpciones.DEFAULTS["controles"].copy(),
     }
     if not isinstance(configuracion, dict):

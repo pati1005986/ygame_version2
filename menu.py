@@ -29,10 +29,11 @@ class MenuInicio:
     COLOR_ACENTO = (255, 221, 87)
     COLOR_FONDO = (10, 12, 18)
 
-    def __init__(self, ancho, alto, nombre_video="image.gif", idioma="en"):
+    def __init__(self, ancho, alto, nombre_video="image.gif", idioma="en", escala_ui=1.0):
         self.ancho = ancho
         self.alto = alto
         self.idioma = idioma
+        self.escala_ui = escala_ui
         self.ruta_video = os.path.join("assets", nombre_video)
         self.cap = None
         self.frame_actual = None
@@ -58,8 +59,9 @@ class MenuInicio:
 
     def _escala(self):
         """Factor de escala relativo a la resolucion de referencia, con
-        limites para que el texto nunca sea ilegible ni gigante."""
-        return max(
+        limites para que el texto nunca sea ilegible ni gigante, multiplicado
+        por la preferencia de escala de UI del jugador."""
+        base = max(
             self.ESCALA_MIN,
             min(
                 self.ancho / self.ANCHO_REFERENCIA,
@@ -67,6 +69,7 @@ class MenuInicio:
                 self.ESCALA_MAX,
             ),
         )
+        return base * self.escala_ui
 
     def _crear_fuentes(self):
         escala = self._escala()
@@ -97,6 +100,11 @@ class MenuInicio:
 
     def establecer_idioma(self, idioma):
         self.idioma = idioma
+
+    def establecer_escala_ui(self, escala_ui):
+        self.escala_ui = escala_ui
+        self._crear_fuentes()
+        self._crear_rectangulos()
 
     def actualizar_tamano(self, ancho, alto):
         self.ancho = ancho

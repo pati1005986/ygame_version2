@@ -147,7 +147,7 @@ class PersonajeHumanoide:
         Llamar a este método cada vez que cambie el nivel actual
         (por ejemplo al cargar/transicionar de nivel).
         """
-        self.paranoico = nivel > 10
+        self.paranoico = nivel > 9
         self.desesperado = nivel >= 21
 
     # ------------------------------------------------------------------
@@ -293,6 +293,12 @@ class PersonajeHumanoide:
             if self.en_suelo or self.coyote_restante > 0 or self.saltos_restantes > 0:
                 self.saltar()
                 self.buffer_salto_restante = 0
+
+        if self.en_suelo and self.plataforma_actual is not None:
+            desplazamiento = getattr(self.plataforma_actual, "desplazamiento_reciente", pygame.Vector2(0, 0))
+            if desplazamiento.length_squared() > 0:
+                self.rect.x += desplazamiento.x
+                self.rect.y += desplazamiento.y
 
         self.vel_y += self.gravedad
         dy = self.vel_y

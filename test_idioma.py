@@ -1,5 +1,7 @@
 import pygame
 
+from plataformas import Plataforma
+from personaje import PersonajeHumanoide
 from transicion import TransicionCaricaturesca
 from idioma import alternar_idioma, texto
 from opciones import MenuOpciones, cargar_configuracion, guardar_configuracion
@@ -81,3 +83,32 @@ def test_guardar_y_cargar_configuracion_persistente(tmp_path):
     assert cargada["controles"]["jump"] == pygame.K_w
     assert cargada["resolucion"] == 1
     assert cargada["pantalla_completa"] is True
+
+
+def test_jugador_se_mueve_con_plataforma_vertical():
+    plataforma = Plataforma(
+        30,
+        250,
+        140,
+        18,
+        0.2,
+        patron_movimiento="vertical",
+        amplitud_movimiento=12,
+        velocidad_movimiento=0.0,
+    )
+    plataforma.rect.y = 250
+    plataforma.desplazamiento_reciente = pygame.Vector2(0, 12)
+
+    jugador = PersonajeHumanoide(60, 160, (255, 255, 255))
+    jugador.rect.bottom = plataforma.rect.top
+    jugador.en_suelo = True
+    jugador.plataforma_actual = plataforma
+    y_antes = jugador.rect.y
+
+    jugador.mover(
+        [plataforma],
+        {"left": pygame.K_a, "right": pygame.K_d, "down": pygame.K_s},
+    )
+
+    assert jugador.rect.y > y_antes
+    assert jugador.rect.bottom >= plataforma.rect.top - 1

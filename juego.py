@@ -323,10 +323,16 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     # ni la interfaz. image6 se reserva para los niveles iniciales y image5
     # para los niveles avanzados.
     fotogramas_flashback_inicial, duracion_flashback_inicial = cargar_gif(
+        os.path.join("assets", "image15.gif"), (WIDTH, HEIGHT)
+    )
+    fotogramas_flashback_medioinicial, duracion_flashback_medioinicial = cargar_gif(
         os.path.join("assets", "image6.gif"), (WIDTH, HEIGHT)
     )
     fotogramas_flashback_avanzado, duracion_flashback_avanzado = cargar_gif(
         os.path.join("assets", "image5.gif"), (WIDTH, HEIGHT)
+    )
+    fotogramas_flashback_final, duracion_flashback_final = cargar_gif(
+        os.path.join("assets", "image16.gif"), (WIDTH, HEIGHT)
     )
     flashback_activo = False
     flashback_inicio = 0.0
@@ -393,9 +399,15 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         if 1 <= nivel <= 5:
             fotogramas_disponibles = fotogramas_flashback_inicial
             duracion_disponible = duracion_flashback_inicial
+        elif nivel >= 22:
+            fotogramas_disponibles = fotogramas_flashback_final
+            duracion_disponible = duracion_flashback_final
         elif nivel >= 10:
             fotogramas_disponibles = fotogramas_flashback_avanzado
             duracion_disponible = duracion_flashback_avanzado
+        elif nivel >= 6:
+            fotogramas_disponibles = fotogramas_flashback_medioinicial
+            duracion_disponible = duracion_flashback_medioinicial
         else:
             fotogramas_disponibles = []
             duracion_disponible = 0.1
@@ -815,37 +827,27 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     int(posicion_raton[1] * HEIGHT / screen.get_height()),
                 )
                 hover_boton = boton_reintentar.collidepoint(posicion_raton_logica)
-                pulso_boton = (math.sin(ahora_boton * 4.0) + 1.0) * 0.5
-                escala_boton = 1.04 + pulso_boton * 0.025 if hover_boton else 1.0
-                centro_boton = pygame.Vector2(boton_reintentar.center)
-                ancho_boton = boton_reintentar.width * escala_boton
-                alto_boton = boton_reintentar.height * escala_boton
-                puntos_boton = [
-                    (centro_boton.x - ancho_boton / 2 + 12, centro_boton.y - alto_boton / 2),
-                    (centro_boton.x + ancho_boton / 2 - 8, centro_boton.y - alto_boton / 2),
-                    (centro_boton.x + ancho_boton / 2, centro_boton.y - alto_boton / 2 + 12),
-                    (centro_boton.x + ancho_boton / 2 - 10, centro_boton.y + alto_boton / 2),
-                    (centro_boton.x - ancho_boton / 2 + 8, centro_boton.y + alto_boton / 2),
-                    (centro_boton.x - ancho_boton / 2, centro_boton.y + alto_boton / 2 - 12),
-                ]
-                color_boton = (55, 30, 75) if hover_boton else (30, 22, 48)
-                color_borde = (255, 170, 220) if hover_boton else (215, 125, 190)
-                pygame.draw.polygon(lienzo, (8, 5, 18), [(x + 5, y + 7) for x, y in puntos_boton])
-                pygame.draw.polygon(lienzo, color_boton, puntos_boton)
-                pygame.draw.polygon(lienzo, color_borde, puntos_boton, 2)
+
+                rect_boton = menu._dibujar_boton_comic(lienzo, boton_reintentar, hover_boton)
+                texto_retry = texto(configuracion["idioma"], "retry")
+                menu._texto_centrado(
+                    lienzo,
+                    texto_retry,
+                    menu.font_prompt,
+                    rect_boton.center,
+                    (255, 255, 255),
+                )
+
                 if hover_boton:
+                    pulso_boton = (math.sin(ahora_boton * 4.0) + 1.0) * 0.5
+                    brillo = int(180 + pulso_boton * 75)
                     pygame.draw.line(
                         lienzo,
-                        (255, int(150 + pulso_boton * 80), 235),
-                        puntos_boton[0],
-                        puntos_boton[1],
-                        3,
+                        (255, brillo, 255),
+                        rect_boton.topleft,
+                        (rect_boton.right, rect_boton.top),
+                        2,
                     )
-
-                lienzo.blit(
-                    superficie_texto_boton,
-                    superficie_texto_boton.get_rect(center=boton_reintentar.center),
-                )
 
             if flashback_nivel_10_activo:
                 lienzo.fill((0, 0, 0))

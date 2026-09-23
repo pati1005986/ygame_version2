@@ -301,6 +301,13 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         if fotogramas:
             gifs_game_over.append((fotogramas, duracion))
 
+    gif_game_over_nivel_alto = []
+    fotogramas_game_over_alto, duracion_game_over_alto = cargar_gif(
+        os.path.join("assets", "image14.gif"), (WIDTH, HEIGHT)
+    )
+    if fotogramas_game_over_alto:
+        gif_game_over_nivel_alto = [(fotogramas_game_over_alto, duracion_game_over_alto)]
+
     secuencia_game_over = []
     for nombre_gif in ("image7.gif", "image8.gif", "image9.gif"):
         fotogramas, duracion = cargar_gif(
@@ -329,6 +336,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     flashback_nivel_10_activo = False
     inicio_flashback_nivel_10 = 0.0
     duracion_flashback_nivel_10 = 3.0
+    flashback_nivel_22_activo = False
+    inicio_flashback_nivel_22 = 0.0
+    duracion_flashback_nivel_22 = 2.5
 
     nivel = max(1, int(nivel_inicial))
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
@@ -549,7 +559,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 inicio_game_over = pygame.time.get_ticks()
                 intensidad_shake = 9.0
                 indice_imagen_game_over = 0
-                if nivel >= 15 and secuencia_game_over:
+                if nivel >= 30 and gif_game_over_nivel_alto:
+                    gif_game_over, duracion_fotograma_gif = gif_game_over_nivel_alto[0]
+                elif nivel >= 15 and secuencia_game_over:
                     gif_game_over, duracion_fotograma_gif = secuencia_game_over[0]
                 elif gifs_game_over:
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
@@ -561,7 +573,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 inicio_game_over = pygame.time.get_ticks()
                 intensidad_shake = 9.0
                 indice_imagen_game_over = 0
-                if nivel >= 15 and secuencia_game_over:
+                if nivel >= 30 and gif_game_over_nivel_alto:
+                    gif_game_over, duracion_fotograma_gif = gif_game_over_nivel_alto[0]
+                elif nivel >= 15 and secuencia_game_over:
                     gif_game_over, duracion_fotograma_gif = secuencia_game_over[0]
                 elif gifs_game_over:
                     gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
@@ -582,6 +596,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 if nivel == 10:
                     flashback_nivel_10_activo = True
                     inicio_flashback_nivel_10 = tiempo
+                elif nivel == 22:
+                    flashback_nivel_22_activo = True
+                    inicio_flashback_nivel_22 = tiempo
                 color_origen = jugador.color
                 pos_origen = pygame.Vector2(jugador.rect.center)
 
@@ -628,6 +645,8 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
         if flashback_nivel_10_activo and tiempo - inicio_flashback_nivel_10 >= duracion_flashback_nivel_10:
             flashback_nivel_10_activo = False
+        if flashback_nivel_22_activo and tiempo - inicio_flashback_nivel_22 >= duracion_flashback_nivel_22:
+            flashback_nivel_22_activo = False
 
         # --- Renderizado ---
         if estado == ESTADO_ADVERTENCIA:
@@ -765,7 +784,10 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             lienzo.blit(texto_nivel, (14, 10))
 
             if estado == ESTADO_GAME_OVER:
-                if nivel >= 15 and secuencia_game_over:
+                if nivel >= 30 and gif_game_over_nivel_alto:
+                    gif_game_over, duracion_fotograma_gif = gif_game_over_nivel_alto[0]
+
+                elif nivel >= 15 and secuencia_game_over:
                     indice_imagen_game_over = min(
                         int((pygame.time.get_ticks() - inicio_game_over) / 1000 / duracion_imagen_game_over),
                         len(secuencia_game_over) - 1,
@@ -830,6 +852,37 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     texto_flashback,
                     texto_flashback.get_rect(center=(WIDTH // 2, HEIGHT // 2)),
                 )
+            elif flashback_nivel_22_activo:
+                lienzo.fill((0, 0, 0))
+                veladura = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+                veladura.fill((0, 0, 0, 185))
+                lienzo.blit(veladura, (0, 0))
+
+                edad = max(0.0, tiempo - inicio_flashback_nivel_22)
+                intensidad_flash = max(0.0, 1.0 - edad / duracion_flashback_nivel_22)
+                flash_alpha = int(210 * intensidad_flash * (0.5 + 0.5 * math.sin(tiempo * 34.0)))
+                if flash_alpha > 0:
+                    flash = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+                    flash.fill((255, 255, 255, flash_alpha))
+                    lienzo.blit(flash, (0, 0))
+
+                for _ in range(22):
+                    x = random.randint(0, WIDTH - 1)
+                    y = random.randint(0, HEIGHT - 1)
+                    w = random.randint(2, 7)
+                    h = random.randint(2, 7)
+                    pygame.draw.rect(lienzo, (245, 245, 245, 80), pygame.Rect(x, y, w, h))
+
+                frase = texto(configuracion["idioma"], "level_22_flashback").upper()
+                texto_flashback = font_advertencia_titulo.render(frase, True, (255, 245, 245))
+                sombra_flashback = font_advertencia_titulo.render(frase, True, (18, 18, 18))
+                rect_flashback = texto_flashback.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+                desplazamiento_x = int(12 * math.sin(tiempo * 45.0))
+                desplazamiento_y = int(9 * math.cos(tiempo * 38.0))
+                sombra_rect = rect_flashback.copy().move(6 + desplazamiento_x, 7 + desplazamiento_y)
+                rect_temblor = rect_flashback.move(desplazamiento_x, desplazamiento_y)
+                lienzo.blit(sombra_flashback, sombra_rect)
+                lienzo.blit(texto_flashback, rect_temblor)
 
             screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
 

@@ -800,7 +800,11 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                         / (duracion_fotograma_gif * 1000)
                     ) % len(gif_game_over)
                     fotograma_gif = gif_game_over[indice_gif]
-                    lienzo.blit(fotograma_gif, (0, 0))
+                    offset_game_over = (
+                        int(2 * math.sin(tiempo * 28.0)),
+                        int(2 * math.cos(tiempo * 31.0)),
+                    )
+                    lienzo.blit(fotograma_gif, offset_game_over)
 
                 ahora_boton = pygame.time.get_ticks() / 1000.0
                 posicion_raton = pygame.mouse.get_pos()
@@ -848,9 +852,12 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     True,
                     (255, 255, 255),
                 )
+                desplazamiento_flash = int(3 * math.sin(tiempo * 40.0))
+                rect_flashback = texto_flashback.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+                rect_flashback.x += desplazamiento_flash
                 lienzo.blit(
                     texto_flashback,
-                    texto_flashback.get_rect(center=(WIDTH // 2, HEIGHT // 2)),
+                    rect_flashback,
                 )
             elif flashback_nivel_22_activo:
                 lienzo.fill((0, 0, 0))

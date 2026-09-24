@@ -414,6 +414,8 @@ def generar_entidades(
     velocidad_patrulla=1.8,
     velocidad_persecucion=3.0,
     rango_deteccion=220,
+    ancho_pantalla=800,
+    alto_pantalla=600,
 ):
     """Crea las entidades grises para un nivel dado.
 
@@ -433,6 +435,8 @@ def generar_entidades(
             ``parametros_dificultad`` (ver ``dificultad.py``) y así crecer
             con el nivel en vez de quedarse fijos para siempre; si no se
             indican, se usan los valores originales.
+        ancho_pantalla, alto_pantalla: límites visibles usados para no crear
+            entidades fuera de la pantalla.
 
     Returns:
         Una lista de ``EntidadGris``, vacía si el nivel es demasiado bajo.
@@ -442,19 +446,26 @@ def generar_entidades(
 
     cantidad = min(1 + (nivel - 3) // 3, 4)
 
+    ancho_entidad = 32
+    alto_entidad = 58
     candidatas = [
         plataforma
         for plataforma in plataformas
         if not plataforma.es_trampa
         and plataforma.rect.width >= 40
         and pygame.Vector2(plataforma.rect.center).distance_to(punto_a_evitar) > radio_evitar
+        and plataforma.rect.right >= ancho_entidad
+        and plataforma.rect.left <= ancho_pantalla - ancho_entidad
+        and plataforma.rect.top >= alto_entidad
     ]
     random.shuffle(candidatas)
 
     entidades = []
     for plataforma in candidatas[:cantidad]:
-        x = plataforma.rect.centerx - 16
-        y = plataforma.rect.top - 58
+        x_min = max(0, plataforma.rect.left)
+        x_max = min(ancho_pantalla - ancho_entidad, plataforma.rect.right - ancho_entidad)
+        x = max(x_min, min(plataforma.rect.centerx - ancho_entidad // 2, x_max))
+        y = plataforma.rect.top - alto_entidad
         entidades.append(
             EntidadGris(
                 x,

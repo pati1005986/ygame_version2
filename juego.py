@@ -220,6 +220,8 @@ def generar_nivel(nivel):
         velocidad_patrulla=parametros["velocidad_enemigo_patrulla"],
         velocidad_persecucion=parametros["velocidad_enemigo_persecucion"],
         rango_deteccion=parametros["rango_deteccion_enemigo"],
+        ancho_pantalla=WIDTH,
+        alto_pantalla=HEIGHT,
     )
     return plataformas, hue_fondo, hue_jugador, entidades
 
@@ -343,9 +345,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     flashback_nivel_10_activo = False
     inicio_flashback_nivel_10 = 0.0
     duracion_flashback_nivel_10 = 3.0
-    flashback_nivel_22_activo = False
-    inicio_flashback_nivel_22 = 0.0
-    duracion_flashback_nivel_22 = 2.5
+    flashback_nivel_20_activo = False
+    inicio_flashback_nivel_20 = 0.0
+    duracion_flashback_nivel_20 = 2.5
 
     nivel = max(1, int(nivel_inicial))
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
@@ -401,7 +403,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         if 1 <= nivel <= 5:
             fotogramas_disponibles = fotogramas_flashback_inicial
             duracion_disponible = duracion_flashback_inicial
-        elif nivel >= 22:
+        elif nivel >= 20:
             fotogramas_disponibles = fotogramas_flashback_final
             duracion_disponible = duracion_flashback_final
         elif nivel >= 10:
@@ -561,8 +563,12 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         elif estado == ESTADO_JUGANDO:
             en_aire_antes = not jugador.en_suelo
             jugador.mover(plataformas, configuracion["controles"])
-            for entidad in entidades:
-                entidad.mover(plataformas, jugador.rect)
+            evento_flashback_activo = (
+                flashback_nivel_10_activo or flashback_nivel_20_activo
+            )
+            if not evento_flashback_activo:
+                for entidad in entidades:
+                    entidad.mover(plataformas, jugador.rect)
 
             # Pequeña sacudida de cámara al aterrizar: es barato (solo un
             # offset al hacer blit) y ayuda mucho a que los saltos se
@@ -614,9 +620,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 if nivel == 10:
                     flashback_nivel_10_activo = True
                     inicio_flashback_nivel_10 = tiempo
-                elif nivel == 22:
-                    flashback_nivel_22_activo = True
-                    inicio_flashback_nivel_22 = tiempo
+                elif nivel == 20:
+                    flashback_nivel_20_activo = True
+                    inicio_flashback_nivel_20 = tiempo
                 color_origen = jugador.color
                 pos_origen = pygame.Vector2(jugador.rect.center)
 
@@ -663,8 +669,8 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
         if flashback_nivel_10_activo and tiempo - inicio_flashback_nivel_10 >= duracion_flashback_nivel_10:
             flashback_nivel_10_activo = False
-        if flashback_nivel_22_activo and tiempo - inicio_flashback_nivel_22 >= duracion_flashback_nivel_22:
-            flashback_nivel_22_activo = False
+        if flashback_nivel_20_activo and tiempo - inicio_flashback_nivel_20 >= duracion_flashback_nivel_20:
+            flashback_nivel_20_activo = False
 
         # --- Renderizado ---
         if estado == ESTADO_ADVERTENCIA:
@@ -867,14 +873,14 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     texto_flashback,
                     rect_flashback,
                 )
-            elif flashback_nivel_22_activo:
+            elif flashback_nivel_20_activo:
                 lienzo.fill((0, 0, 0))
                 veladura = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
                 veladura.fill((0, 0, 0, 185))
                 lienzo.blit(veladura, (0, 0))
 
-                edad = max(0.0, tiempo - inicio_flashback_nivel_22)
-                intensidad_flash = max(0.0, 1.0 - edad / duracion_flashback_nivel_22)
+                edad = max(0.0, tiempo - inicio_flashback_nivel_20)
+                intensidad_flash = max(0.0, 1.0 - edad / duracion_flashback_nivel_20)
                 flash_alpha = int(210 * intensidad_flash * (0.5 + 0.5 * math.sin(tiempo * 34.0)))
                 if flash_alpha > 0:
                     flash = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -888,7 +894,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     h = random.randint(2, 7)
                     pygame.draw.rect(lienzo, (245, 245, 245, 80), pygame.Rect(x, y, w, h))
 
-                frase = texto(configuracion["idioma"], "level_22_flashback").upper()
+                frase = texto(configuracion["idioma"], "level_20_flashback").upper()
                 texto_flashback = font_advertencia_titulo.render(frase, True, (255, 245, 245))
                 sombra_flashback = font_advertencia_titulo.render(frase, True, (18, 18, 18))
                 rect_flashback = texto_flashback.get_rect(center=(WIDTH // 2, HEIGHT // 2))

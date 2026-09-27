@@ -102,6 +102,30 @@ def escala_grises(superficie, factor):
     return pygame.transform.scale(resultado_chico, (ancho, alto))
 
 
+def crear_vineta_peligro(ancho, alto):
+    """Prepara UNA VEZ (no en cada fotograma) una superficie con una viñeta
+    roja radial: transparente en el centro, más opaca hacia los bordes.
+
+    Se usa como aviso de que un enemigo está muy cerca: cada fotograma solo
+    hace falta ajustar su transparencia global (``set_alpha``) según
+    ``alerta_enemigos`` y pegarla (un solo ``blit``), así que es barata de
+    mantener en el bucle principal aunque el cálculo con numpy que arma el
+    degradado -relativamente caro- se hace solo aquí, al iniciar el juego.
+    """
+    y, x = np.mgrid[0:alto, 0:ancho]
+    centro_x, centro_y = ancho / 2, alto / 2
+    distancia = np.sqrt(((x - centro_x) / centro_x) ** 2 + ((y - centro_y) / centro_y) ** 2)
+    alpha = np.clip((distancia - 0.55) / (1.3 - 0.55), 0.0, 1.0) ** 1.6
+
+    rgba = np.zeros((alto, ancho, 4), dtype=np.uint8)
+    rgba[:, :, 0] = 175  # tinte rojo de advertencia
+    rgba[:, :, 1] = 15
+    rgba[:, :, 2] = 15
+    rgba[:, :, 3] = (alpha * 235).astype(np.uint8)
+    superficie = pygame.image.frombuffer(rgba.tobytes(), (ancho, alto), "RGBA")
+    return superficie.convert_alpha()
+
+
 def cargar_gif(ruta, tamano):
     """Carga los fotogramas de un GIF para animarlo en Pygame."""
     captura = cv2.VideoCapture(ruta)
@@ -280,6 +304,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     capa_nivel_nuevo = pygame.Surface((WIDTH, HEIGHT))
     fondo_cache = pygame.Surface((WIDTH, HEIGHT))
     capa_opacidad = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    vineta_peligro = crear_vineta_peligro(WIDTH, HEIGHT)
     panel_texto = pygame.Surface((110, 36), pygame.SRCALPHA)
     panel_texto.fill((0, 0, 0, 90))
     nivel_mostrado = None
@@ -289,6 +314,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     nivel_fondo = None
     contador_frames = 0
     intensidad_shake = 0.0  # sacudida de cámara: da sensación de impacto/velocidad
+    alerta_enemigos = 0.0  # 0-1: qué tan cerca está el enemigo más próximo
     gifs_game_over = []
     for nombre_gif in (
         "image1.gif",
@@ -399,6 +425,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         intensidad_shake *= 0.82
         if intensidad_shake < 0.05:
             intensidad_shake = 0.0
+        alerta_enemigos *= 0.9  # decae más despacio: la tensión no debe
+        if alerta_enemigos < 0.02:  # cortarse en seco al alejarse un poco
+            alerta_enemigos = 0.0
 
         if 1 <= nivel <= 5:
             fotogramas_disponibles = fotogramas_flashback_inicial
@@ -569,6 +598,21 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             if not evento_flashback_activo:
                 for entidad in entidades:
                     entidad.mover(plataformas, jugador.rect)
+                # El aviso de "enemigo muy cerca" usa el más peligroso de
+                # todos (no un promedio): si uno solo está encima del
+                # jugador, eso es lo que importa, aunque los demás estén
+                # lejos. Se toma el máximo contra el valor ya decaído de
+                # este fotograma para que la subida sea inmediata y solo
+                # la bajada sea gradual (ver el *0.9 de arriba).
+                alerta_enemigos = max(
+                    alerta_enemigos,
+                    max((entidad.nivel_alerta() for entidad in entidades), default=0.0),
+                )
+                if alerta_enemigos > 0:
+                    # Un temblor sutil acompaña a la viñeta: crece con la
+                    # cercanía, pero se queda muy por debajo del golpe de
+                    # 9.0 del game over para no confundirse con un choque.
+                    intensidad_shake = max(intensidad_shake, alerta_enemigos * 2.2)
 
             # Pequeña sacudida de cámara al aterrizar: es barato (solo un
             # offset al hacer blit) y ayuda mucho a que los saltos se
@@ -786,6 +830,16 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     lienzo.blit(escena, offset)
                 else:
                     lienzo.blit(escena, (0, 0))
+
+                if alerta_enemigos > 0.02:
+                    # Pulso suave para que la viñeta "respire" en vez de
+                    # quedarse fija, como un latido que se acelera con el
+                    # peligro (el propio halo del enemigo, en enemigo.py,
+                    # ya pulsa más rápido cerca; esto lo refuerza en toda
+                    # la pantalla).
+                    pulso = 0.85 + 0.15 * math.sin(tiempo * (4.0 + 4.0 * alerta_enemigos))
+                    vineta_peligro.set_alpha(int(255 * min(1.0, alerta_enemigos) * pulso))
+                    lienzo.blit(vineta_peligro, (0, 0))
 
             # La escena se vuelve progresivamente más opaca al avanzar.
             alpha_opacidad = opacidad_nivel(nivel)

@@ -55,6 +55,28 @@ class EntidadGris:
         self.fase = random.uniform(0, math.tau)
         self.activa = True  # permite congelarla desde fuera si hace falta
 
+        # --- percepción del jugador ---
+        # En vez de saber siempre dónde está el jugador con precisión
+        # perfecta, la entidad solo "ve" hacia el lado al que ya mira (o
+        # muy cerca, a cualquier lado), tarda un instante en reaccionar
+        # cuando lo detecta, y si lo pierde de vista sigue un rato hacia
+        # su última posición conocida antes de rendirse y volver a
+        # patrullar. Así la persecución deja de sentirse omnisciente.
+        self.alerta = False  # está persiguiendo (por vista o por memoria)
+        self.detectando_ahora = False  # lo está viendo en este instante
+        self.cuadros_reaccion = 0
+        self.tiempo_reaccion = 10  # cuadros antes de empezar a perseguir
+        self.memoria_x = None
+        self.memoria_y = None
+        self.cuadros_memoria = 0
+        self.tiempo_memoria = 100  # cuadros que sigue buscando sin verlo
+        self.tolerancia_cono = 26  # margen para notar algo justo al lado
+
+        # --- alerta de cercanía (para efectos externos, p. ej. viñeta o
+        # temblor de cámara en juego.py cuando el enemigo está encima) ---
+        self.intensidad_alerta = 0.0
+        self.distancia_alerta_maxima = 45  # a esta distancia, alerta = 1.0
+
         # --- salto ---
         self.fuerza_salto = -11.5
         self.temporizador_salto = 0  # cuadros restantes de enfriamiento
@@ -184,12 +206,56 @@ class EntidadGris:
 
         persiguiendo = False
         dx = dy = 0
+        self.detectando_ahora = False
         if objetivo_rect is not None:
-            dx = objetivo_rect.centerx - self.rect.centerx
-            dy = objetivo_rect.centery - self.rect.centery
-            if abs(dx) < self.rango_deteccion and abs(dy) < 80:
+            dx_real = objetivo_rect.centerx - self.rect.centerx
+            dy_real = objetivo_rect.centery - self.rect.centery
+            distancia = math.hypot(dx_real, dy_real)
+
+            # Solo "ve" al jugador si está dentro del rango Y, o bien ya
+            # mira hacia ese lado (dx_real a favor de self.direccion), o
+            # bien el jugador está prácticamente encima (tolerancia_cono),
+            # que cuenta como percibirlo aunque venga por detrás.
+            en_rango = abs(dx_real) < self.rango_deteccion and abs(dy_real) < 80
+            de_frente = dx_real * self.direccion >= -self.tolerancia_cono
+            self.detectando_ahora = en_rango and de_frente
+
+            if self.detectando_ahora:
+                self.memoria_x = objetivo_rect.centerx
+                self.memoria_y = objetivo_rect.centery
+                self.cuadros_memoria = self.tiempo_memoria
+                if self.alerta:
+                    self.cuadros_reaccion = self.tiempo_reaccion
+                else:
+                    self.cuadros_reaccion += 1
+                    if self.cuadros_reaccion >= self.tiempo_reaccion:
+                        self.alerta = True
+            else:
+                self.cuadros_reaccion = 0
+                if self.alerta and self.cuadros_memoria > 0:
+                    self.cuadros_memoria -= 1
+                    if self.cuadros_memoria <= 0:
+                        self.alerta = False  # perdió el rastro: se rinde
+
+            if self.alerta:
                 persiguiendo = True
+                # Persigue lo que ve ahora mismo, o si no, su última
+                # posición conocida (memoria), como si "recordara" hacia
+                # dónde iba el jugador en vez de seguirlo con rayos X.
+                destino_x = objetivo_rect.centerx if self.detectando_ahora else self.memoria_x
+                destino_y = objetivo_rect.centery if self.detectando_ahora else self.memoria_y
+                dx = destino_x - self.rect.centerx
+                dy = destino_y - self.rect.centery
                 self.direccion = 1 if dx > 0 else -1
+
+            # Nivel de alerta por cercanía real (0 a 1): independiente de
+            # si lo está persiguiendo o no, para que el juego pueda avisar
+            # al jugador ("se nota" el peligro) antes del choque.
+            rango_aviso = max(self.rango_deteccion, self.distancia_alerta_maxima + 1)
+            crudo = (rango_aviso - distancia) / (rango_aviso - self.distancia_alerta_maxima)
+            self.intensidad_alerta = max(0.0, min(1.0, crudo))
+        else:
+            self.intensidad_alerta = 0.0
 
         if self.cuadros_anticipacion > 0:
             # Tomando impulso: se detiene un instante en vez de saltar de
@@ -383,13 +449,39 @@ class EntidadGris:
     def _dibujar_halo(self, superficie, tiempo):
         """Aura gris muy tenue, pulsando despacio: sugiere que algo a su
         alrededor pierde color, sin llegar a afectar realmente los píxeles
-        de la escena (más barato de calcular y suficiente para el efecto)."""
-        radio = self.rect.height * 0.85
-        pulso = 0.5 + 0.5 * math.sin(tiempo * 1.4 + self.fase)
+        de la escena (más barato de calcular y suficiente para el efecto).
+
+        El pulso se acelera y se hace más intenso cuanto más cerca está el
+        jugador (``intensidad_alerta``), como primer aviso silencioso del
+        peligro antes de que el juego principal dispare nada más notorio
+        (viñeta, temblor de cámara, sonido)."""
+        radio = self.rect.height * (0.85 + 0.25 * self.intensidad_alerta)
+        velocidad_pulso = 1.4 + 3.2 * self.intensidad_alerta
+        pulso = 0.5 + 0.5 * math.sin(tiempo * velocidad_pulso + self.fase)
         capa = pygame.Surface((radio * 2, radio * 2), pygame.SRCALPHA)
-        alpha = int(26 + 14 * pulso)
-        pygame.draw.circle(capa, (150, 150, 150, alpha), (radio, radio), radio)
+        alpha = int(26 + 14 * pulso + 110 * self.intensidad_alerta * pulso)
+        pygame.draw.circle(capa, (150, 150, 150, min(255, alpha)), (radio, radio), radio)
         superficie.blit(capa, (self.rect.centerx - radio, self.rect.centery - radio))
+
+    # ------------------------------------------------------------------
+    # Estado hacia el exterior (para que juego.py reaccione)
+    # ------------------------------------------------------------------
+    def nivel_alerta(self):
+        """Devuelve 0.0-1.0 según qué tan cerca está esta entidad del
+        jugador (0 = fuera de rango, 1 = prácticamente encima).
+
+        Pensado para que el bucle principal lo use ANTES del choque real:
+        por ejemplo, tomar el máximo de ``nivel_alerta()`` entre todas las
+        entidades activas y usarlo para intensificar una viñeta roja en
+        los bordes de la pantalla, sacudir la cámara, o subir el volumen
+        de un sonido de tensión. Así el peligro "se nota" creciendo en vez
+        de saltar directo a la pantalla de game over.
+        """
+        return self.intensidad_alerta
+
+    def esta_persiguiendo(self):
+        """True si está en modo persecución (viéndolo o por memoria)."""
+        return self.alerta
 
     def _dibujar_particulas(self, superficie):
         """Nube de polvo discreta al aterrizar; se disuelve sola en unos

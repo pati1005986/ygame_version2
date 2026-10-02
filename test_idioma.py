@@ -114,6 +114,16 @@ def test_jugador_se_mueve_con_plataforma_vertical():
     assert jugador.rect.bottom >= plataforma.rect.top - 1
 
 
+def test_plataforma_trampa_tiene_hitbox_reducida():
+    plataforma = Plataforma(20, 200, 160, 25, 0.2, es_trampa=True)
+
+    hitbox = plataforma.rect_colision()
+
+    assert hitbox.width < plataforma.rect.width
+    assert hitbox.height < plataforma.rect.height
+    assert hitbox.bottom <= plataforma.rect.bottom
+
+
 def test_jugador_puede_saltar_agachado(monkeypatch):
     class TeclasFalsas:
         def __getitem__(self, tecla):

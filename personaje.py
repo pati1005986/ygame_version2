@@ -305,20 +305,26 @@ class PersonajeHumanoide:
 
         self.rect.x += dx
         for plataforma in plataformas:
-            if self.rect.colliderect(plataforma.rect):
+            hitbox = plataforma.rect_colision() if hasattr(plataforma, "rect_colision") else plataforma.rect
+            if self.rect.colliderect(hitbox):
+                if self.en_suelo and self.plataforma_actual is plataforma:
+                    continue
                 if dx > 0:
-                    self.rect.right = plataforma.rect.left
+                    self.rect.right = hitbox.left
                 elif dx < 0:
-                    self.rect.left = plataforma.rect.right
+                    self.rect.left = hitbox.right
 
         self.rect.y += dy
         estaba_en_aire = not self.en_suelo
         self.en_suelo = False
         self.plataforma_actual = None
         for plataforma in plataformas:
-            if self.rect.colliderect(plataforma.rect):
+            hitbox = plataforma.rect_colision() if hasattr(plataforma, "rect_colision") else plataforma.rect
+            if self.rect.colliderect(hitbox):
                 if dy > 0:
-                    self.rect.bottom = plataforma.rect.top
+                    if self.en_suelo and self.plataforma_actual is plataforma:
+                        continue
+                    self.rect.bottom = hitbox.top
                     self.vel_y = 0
                     self.en_suelo = True
                     # Guardamos la plataforma pisada: una vez resuelta la
@@ -327,7 +333,7 @@ class PersonajeHumanoide:
                     # así que el estado "trampa pisada" se debe leer de aquí.
                     self.plataforma_actual = plataforma
                 elif dy < 0:
-                    self.rect.top = plataforma.rect.bottom
+                    self.rect.top = hitbox.bottom
                     self.vel_y = 0
 
         aterrizando_ahora = self.en_suelo and estaba_en_aire
@@ -431,7 +437,10 @@ class PersonajeHumanoide:
         rect_de_pie = self.rect.copy()
         rect_de_pie.height = self.altura_normal
         rect_de_pie.bottom = self.rect.bottom
-        return not any(rect_de_pie.colliderect(plataforma.rect) for plataforma in plataformas)
+        return not any(
+            rect_de_pie.colliderect(plataforma.rect_colision() if hasattr(plataforma, "rect_colision") else plataforma.rect)
+            for plataforma in plataformas
+        )
 
     def saltar(self):
         """Inicia un salto si el personaje está apoyado en una plataforma

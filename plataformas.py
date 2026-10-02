@@ -106,6 +106,7 @@ class Plataforma:
         self._squash = 0.0
         self._squash_velocidad = 0.0
         self._particulas = []
+        self.hitbox = self.rect.copy()
 
         # Detalles generados una sola vez para que la textura sea estable
         # cuadro a cuadro (en vez de parpadear con valores aleatorios nuevos
@@ -254,6 +255,26 @@ class Plataforma:
             vivas.append(p)
         self._particulas = vivas
 
+    def rect_colision(self):
+        """Devuelve la caja de colisión usada por física.
+
+        Las plataformas trampa usan un soporte más estrecho y alto en la
+        parte superior para que el jugador/enemigo pueda aterrizar desde
+        las esquinas sin quedar empujado por la zona lateral del rect
+        visible. Las plataformas normales conservan su rect original.
+        """
+        rect = self.rect.copy()
+        if not self.es_trampa:
+            return rect
+
+        margen_x = max(6, int(rect.width * 0.12))
+        altura_soporte = max(8, int(rect.height * 0.7))
+        rect.x += margen_x
+        rect.width = max(8, rect.width - (margen_x * 2))
+        rect.height = altura_soporte
+        rect.y = self.rect.bottom - rect.height
+        return rect
+
     def actualizar(self):
         """Avanza, cuadro a cuadro, todas las animaciones de la plataforma:
         el progreso de la trampa, el deslizamiento de las plataformas
@@ -276,6 +297,8 @@ class Plataforma:
             self.desplazamiento_reciente = pygame.Vector2(self.rect.x, self.rect.y) - anterior
         else:
             self.desplazamiento_reciente = pygame.Vector2(0, 0)
+
+        self.hitbox = self.rect_colision()
 
         # Resorte crítico-amortiguado simple: hace que el squash vuelva a
         # cero con un ligero rebote elástico, como pintura fresca.

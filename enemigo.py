@@ -289,11 +289,14 @@ class EntidadGris:
 
         self.rect.x += dx_mov
         for plataforma in plataformas:
-            if self.rect.colliderect(plataforma.rect):
+            hitbox = plataforma.rect_colision() if hasattr(plataforma, "rect_colision") else plataforma.rect
+            if self.rect.colliderect(hitbox):
+                if self.en_suelo and self.plataforma_actual is plataforma:
+                    continue
                 if dx_mov > 0:
-                    self.rect.right = plataforma.rect.left
+                    self.rect.right = hitbox.left
                 elif dx_mov < 0:
-                    self.rect.left = plataforma.rect.right
+                    self.rect.left = hitbox.right
                 self.direccion *= -1
 
         estaba_en_suelo = self.en_suelo
@@ -301,14 +304,15 @@ class EntidadGris:
         self.en_suelo = False
         self.plataforma_actual = None
         for plataforma in plataformas:
-            if self.rect.colliderect(plataforma.rect):
+            hitbox = plataforma.rect_colision() if hasattr(plataforma, "rect_colision") else plataforma.rect
+            if self.rect.colliderect(hitbox):
                 if dy_mov > 0:
-                    self.rect.bottom = plataforma.rect.top
+                    self.rect.bottom = hitbox.top
                     self.vel_y = 0
                     self.en_suelo = True
                     self.plataforma_actual = plataforma
                 elif dy_mov < 0:
-                    self.rect.top = plataforma.rect.bottom
+                    self.rect.top = hitbox.bottom
                     self.vel_y = 0
 
         if self.en_suelo and not estaba_en_suelo:

@@ -161,10 +161,10 @@ class TransicionCaricaturesca:
     RADIO_IRIS_MIN = 120  # radio del foco que sigue al personaje, en píxeles
 
     # Cámara y recorrido del personaje (fracciones de la duración total).
-    CAMARA_INICIO = 0.02  # la cámara empieza a deslizarse casi de inmediato
-    CAMARA_FIN = 0.90  # y llega al nivel nuevo cuando el personaje se asienta
-    T_VUELO = 0.50  # instante en que el personaje termina el salto en arco
-    ALTURA_CAIDA = 160  # altura desde la que cae sobre la plataforma nueva
+    CAMARA_INICIO = 0.00
+    CAMARA_FIN = 0.94
+    T_VUELO = 0.55  # instante en que el personaje termina el salto en arco
+    ALTURA_CAIDA = 170  # altura desde la que cae sobre la plataforma nueva
     # (fracción de la caída en que ocurre cada contacto, intensidad de la sacudida)
     _IMPACTOS = ((1 / 2.75, 5.0), (2 / 2.75, 3.2), (2.5 / 2.75, 2.0), (1.0, 1.2))
 
@@ -451,10 +451,17 @@ class TransicionCaricaturesca:
     # Cámara y recorrido del personaje
     # ------------------------------------------------------------------
     def _progreso_camara(self, ms):
-        """Avance de la cámara (0 = nivel viejo, 1 = nivel nuevo)."""
+
         t = ms / self.duracion_total
-        u = _limitar((t - self.CAMARA_INICIO) / (self.CAMARA_FIN - self.CAMARA_INICIO))
-        return u * u * u * (u * (u * 6.0 - 15.0) + 10.0)  # smootherstep
+        inicio = self.CAMARA_INICIO
+        fin = self.CAMARA_FIN
+        if fin <= inicio:
+            return 0.0
+        u = _limitar((t - inicio) / (fin - inicio))
+        # Smootherstep + un pequeño "antenado" para que el inicio no vaya
+        # a 0 de golpe y el final no se frene bruscamente.
+        base = u * u * u * (u * (u * 6.0 - 15.0) + 10.0)
+        return base * 0.92 + u * 0.08
 
     def progreso_camara(self):
         """0 a 1: cuánto se ha desplazado ya la cámara hacia el nivel nuevo."""
@@ -480,21 +487,22 @@ class TransicionCaricaturesca:
     def _posicion_mundo(self, ms):
         """Posición del personaje en el "mundo" de dos niveles contiguos.
 
-        El nivel viejo ocupa ``x`` de 0 a ancho y el nuevo de ancho a 2*ancho.
-        Primero salta por la costura en un arco que pasa por encima de la
-        plataforma nueva y luego cae sobre ella con la gravedad y los
-        rebotes de ``_rebote_suelo``. En el mundo el personaje casi no se
-        mueve en horizontal: es la cámara la que lo lleva de un nivel a otro.
+        Se mantiene el mismo recorrido original, pero se reduce la fricción
+        visual del salto y del aterrizaje para que el cambio de nivel se sienta
+        más pesado y continuo, sin interrupciones ni "atajos" desagradables.
         """
         t = _limitar(ms / self.duracion_total)
         x0, y0 = self.posicion_origen.x, self.posicion_origen.y
         x1 = self.ancho_pantalla + self.posicion_spawn.x
         y_alto = self._y_suelo - self.ALTURA_CAIDA
         if t < self.T_VUELO:
+            # Curva ligeramente más prolongada para que el salto se sienta más
+            # natural y el personaje no se "teletransporte" de un lado a otro.
             s = self._suave(t / self.T_VUELO)
-            control = (x0 + 24.0, max(30.0, min(y0, y_alto) - 70.0))
+            control = (x0 + 36.0, max(30.0, min(y0, y_alto) - 82.0))
             return self._punto_bezier((x0, y0), control, (x1, y_alto), s)
-        k = self._rebote_suelo((t - self.T_VUELO) / (self.CAMARA_FIN - self.T_VUELO))
+        ventana = max(0.08, self.CAMARA_FIN - self.T_VUELO)
+        k = self._rebote_suelo((t - self.T_VUELO) / ventana)
         return (x1, y_alto + (self._y_suelo - y_alto) * k)
 
     def _registrar_impactos(self, ms):
@@ -631,7 +639,12 @@ class TransicionCaricaturesca:
         self._mirada = self._suavizar(self._mirada, objetivo, dt, 0.05)
 
     def _dibujar_cortina(self, superficie, centro, iris):
-        """Foco que se cierra sobre el personaje y se abre para revelar el nivel."""
+        """Foco que se cierra sobre el personaje y se abre para revelar el nivel.
+
+        La cortina se ajusta con una curva más suave para que no parezca un
+        corte seco: el brillo del iris se consume poco a poco, evitando el
+        efecto de "parpadeo" que hacía la transición menos natural.
+        """
         if iris >= 0.999:
             return
         ancho, alto = superficie.get_size()
@@ -646,14 +659,12 @@ class TransicionCaricaturesca:
                 superficie.blit(self._capa, (0, 0))
             return
 
-        # El foco nunca se cierra del todo: queda un círculo alrededor del
-        # personaje para que se vea cómo lo sigue la cámara.
-        radio = self.RADIO_IRIS_MIN + (math.hypot(ancho, alto) - self.RADIO_IRIS_MIN) * iris
+        # Se mantiene el efecto de seguimiento al personaje, pero la expansión
+        # del foco es más gradual para suavizar la transición entre niveles.
+        radio = self.RADIO_IRIS_MIN + (math.hypot(ancho, alto) - self.RADIO_IRIS_MIN) * (iris ** 0.85)
         capa = self._capa
         capa.fill((*color, self.ALFA_CORTINA))
-        # Borde difuminado de ~4 px: círculos concéntricos cuya opacidad
-        # baja hacia el centro (``draw`` no suaviza, esto lo disimula).
-        for desfase, fraccion in ((3, 0.85), (2, 0.65), (1, 0.45), (0, 0.22), (-1, 0.0)):
+        for desfase, fraccion in ((4, 0.95), (3, 0.72), (2, 0.52), (1, 0.30), (0, 0.18), (-1, 0.0)):
             if radio + desfase >= 1.0:
                 pygame.draw.circle(
                     capa, (*color, int(self.ALFA_CORTINA * fraccion)), (centro.x, centro.y), radio + desfase

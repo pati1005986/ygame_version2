@@ -289,7 +289,7 @@ class PersonajeHumanoide:
         # por haber llegado un instante demasiado pronto. Si todavía no
         # hay ningún salto disponible, sigue esperando: se reintenta cada
         # cuadro hasta que el buffer expira.
-        if self.buffer_salto_restante > 0 and not self.agachado:
+        if self.buffer_salto_restante > 0:
             if self.en_suelo or self.coyote_restante > 0 or self.saltos_restantes > 0:
                 self.saltar()
                 self.buffer_salto_restante = 0
@@ -437,15 +437,14 @@ class PersonajeHumanoide:
         """Inicia un salto si el personaje está apoyado en una plataforma
         (o todavía dentro del margen de coyote time tras dejarla), o un
         doble salto con giro si ya está en el aire y aún le queda uno
-        disponible (se recarga al volver a tocar el suelo).
+        disponible (se recarga al volver a tocar el suelo). También se
+        puede saltar mientras está agachado; conserva la hitbox baja hasta
+        que se suelte la tecla de agacharse y haya espacio para levantarse.
 
         Puede llamarse directamente para un salto inmediato, o a través
         de ``solicitar_salto()`` si se quiere aprovechar el buffer de
         salto (ver docstring de esa función).
         """
-        if self.agachado:
-            return
-
         if self.en_suelo or self.coyote_restante > 0:
             self.escala_y = 0.82  # ligera compresión instantánea al despegar
             self.vel_y = self.fuerza_salto

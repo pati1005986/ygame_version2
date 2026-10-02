@@ -112,3 +112,23 @@ def test_jugador_se_mueve_con_plataforma_vertical():
 
     assert jugador.rect.y > y_antes
     assert jugador.rect.bottom >= plataforma.rect.top - 1
+
+
+def test_jugador_puede_saltar_agachado(monkeypatch):
+    class TeclasFalsas:
+        def __getitem__(self, tecla):
+            return tecla == pygame.K_s
+
+    monkeypatch.setattr(pygame.key, "get_pressed", lambda: TeclasFalsas())
+    jugador = PersonajeHumanoide(60, 160, (255, 255, 255))
+    jugador.en_suelo = True
+    jugador.solicitar_salto()
+
+    jugador.mover(
+        [],
+        {"left": pygame.K_a, "right": pygame.K_d, "down": pygame.K_s},
+    )
+
+    assert jugador.agachado
+    assert jugador.rect.height == jugador.altura_agachado
+    assert jugador.vel_y < 0

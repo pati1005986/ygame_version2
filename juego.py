@@ -2,20 +2,34 @@
 
 El módulo coordina la ventana de Pygame, la generación de niveles, el
 personaje y la transición visual. La lógica especializada vive en
-``personaje.py`` y ``transicion.py`` para mantener este archivo centrado en
-el bucle principal del juego.
+``eventos.py``, ``personaje.py`` y ``transicion.py`` para mantener este
+archivo centrado en el bucle principal.
 """
 
 import math
-import os
 import random
 import sys
 
-import cv2
 import numpy as np
 import pygame
 
 from dificultad import parametros_dificultad
+from eventos import (
+    ESTADO_ADVERTENCIA,
+    ESTADO_GAME_OVER,
+    ESTADO_JUGANDO,
+    ESTADO_MENU,
+    ESTADO_OPCIONES,
+    ESTADO_PAUSA,
+    ESTADO_TRANSICION,
+    DependenciasEventos,
+    EventosVisuales,
+    EstadoEventos,
+    escala_grises,
+    opacidad_nivel,
+    procesar_eventos,
+    saturacion_nivel,
+)
 from fondo import ParticulaAbstracta, dibujar_fondo_segmentado
 from enemigo import generar_entidades
 from idioma import texto
@@ -31,75 +45,8 @@ from transicion import TransicionCaricaturesca
 # --------------------------------------------------------------------------
 WIDTH, HEIGHT = 800, 600
 FPS = 60
-PESOS_LUMINOSIDAD = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 
 POS_SPAWN = pygame.Vector2(120, 235)  # centro del punto de aparición del jugador
-
-ESTADO_MENU = "menu"
-ESTADO_ADVERTENCIA = "advertencia"
-ESTADO_OPCIONES = "opciones"
-ESTADO_PAUSA = "pausa"
-ESTADO_JUGANDO = "jugando"
-ESTADO_TRANSICION = "transicion"
-ESTADO_GAME_OVER = "game_over"
-
-
-def opacidad_nivel(nivel):
-    """Devuelve la intensidad de oscurecimiento acumulada por nivel.
-
-    Se mantiene deliberadamente sutil: el efecto principal de progresión
-    ahora lo lleva la pérdida de color (``saturacion_nivel``), no un velo
-    negro sobre la pantalla.
-    """
-    return min(40, nivel * 3)
-
-
-def saturacion_nivel(nivel):
-    """Devuelve cuánto color se ha perdido acumuladamente por nivel.
-
-    0.0 significa colores originales; 1.0 significa escala de grises total
-    y homogénea. Se alcanza el gris completo hacia el nivel 12.
-    """
-    return min(1.0, nivel / 12)
-
-
-def escala_grises(superficie, factor):
-    """Mezcla ``superficie`` con su versión en escala de grises.
-
-    Args:
-        superficie: Superficie de Pygame a procesar.
-        factor: 0.0 conserva los colores originales, 1.0 devuelve la
-            superficie completamente desaturada; valores intermedios
-            producen una mezcla proporcional.
-
-    Returns:
-        Una nueva superficie (o la misma, si ``factor`` es 0) con la
-        desaturación aplicada.
-
-    Rendimiento: esto se ejecuta en TODA la pantalla, en TODOS los
-    fotogramas a partir de nivel 1 (``pygame.surfarray.array3d`` +
-    operación numpy + ``make_surface`` sobre 800x600). Es de las
-    operaciones más caras del bucle principal. Se reduce el coste
-    procesando una copia más pequeña (1/3 de tamaño) y reescalando el
-    resultado de vuelta: el numpy trabaja sobre ~9 veces menos píxeles,
-    y como esto es una mezcla de color suave (no detalle fino), la
-    pérdida de nitidez es imperceptible en movimiento.
-    """
-    if factor <= 0:
-        return superficie
-    factor = min(1.0, factor)
-
-    ancho, alto = superficie.get_size()
-    reduccion = 3
-    tam_chico = (max(1, ancho // reduccion), max(1, alto // reduccion))
-    chica = pygame.transform.scale(superficie, tam_chico)
-
-    colores = pygame.surfarray.array3d(chica).astype(np.float32)
-    gris = (colores @ PESOS_LUMINOSIDAD)[:, :, None]
-
-    mezcla = colores * (1 - factor) + gris * factor
-    resultado_chico = pygame.surfarray.make_surface(mezcla.astype(np.uint8))
-    return pygame.transform.scale(resultado_chico, (ancho, alto))
 
 
 def crear_vineta_peligro(ancho, alto):
@@ -124,26 +71,6 @@ def crear_vineta_peligro(ancho, alto):
     rgba[:, :, 3] = (alpha * 235).astype(np.uint8)
     superficie = pygame.image.frombuffer(rgba.tobytes(), (ancho, alto), "RGBA")
     return superficie.convert_alpha()
-
-
-def cargar_gif(ruta, tamano):
-    """Carga los fotogramas de un GIF para animarlo en Pygame."""
-    captura = cv2.VideoCapture(ruta)
-    if not captura.isOpened():
-        return [], 0.1
-
-    fps = captura.get(cv2.CAP_PROP_FPS) or 10.0
-    fotogramas = []
-    while True:
-        ok, fotograma = captura.read()
-        if not ok:
-            break
-        fotograma = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
-        fotograma = cv2.resize(fotograma, tamano, interpolation=cv2.INTER_NEAREST)
-        superficie = pygame.image.frombuffer(fotograma.tobytes(), tamano, "RGB")
-        fotogramas.append(superficie.convert() if pygame.display.get_surface() else superficie.copy())
-    captura.release()
-    return fotogramas, 1.0 / fps
 
 
 def aplicar_volumen_audio(configuracion, jugador=None):
@@ -315,65 +242,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     contador_frames = 0
     intensidad_shake = 0.0  # sacudida de cámara: da sensación de impacto/velocidad
     alerta_enemigos = 0.0  # 0-1: qué tan cerca está el enemigo más próximo
-    gifs_game_over = []
-    for nombre_gif in (
-        "image1.gif",
-        "image2.gif",
-        "image3.gif",
-        "image4.gif",
-        "image12.gif",
-        "image13.gif",
-    ):
-        fotogramas, duracion = cargar_gif(
-            os.path.join("assets", nombre_gif), (WIDTH, HEIGHT)
-        )
-        if fotogramas:
-            gifs_game_over.append((fotogramas, duracion))
-
-    gif_game_over_nivel_alto = []
-    fotogramas_game_over_alto, duracion_game_over_alto = cargar_gif(
-        os.path.join("assets", "image14.gif"), (WIDTH, HEIGHT)
-    )
-    if fotogramas_game_over_alto:
-        gif_game_over_nivel_alto = [(fotogramas_game_over_alto, duracion_game_over_alto)]
-
-    secuencia_game_over = []
-    for nombre_gif in ("image7.gif", "image8.gif", "image9.gif"):
-        fotogramas, duracion = cargar_gif(
-            os.path.join("assets", nombre_gif), (WIDTH, HEIGHT)
-        )
-        if fotogramas:
-            secuencia_game_over.append((fotogramas, duracion))
-    duracion_imagen_game_over = 3.0
-
-    # Flashbacks: aparecen unos segundos como fondo y nunca cubren al jugador
-    # ni la interfaz. image6 se reserva para los niveles iniciales y image5
-    # para los niveles avanzados.
-    fotogramas_flashback_inicial, duracion_flashback_inicial = cargar_gif(
-        os.path.join("assets", "image15.gif"), (WIDTH, HEIGHT)
-    )
-    fotogramas_flashback_medioinicial, duracion_flashback_medioinicial = cargar_gif(
-        os.path.join("assets", "image6.gif"), (WIDTH, HEIGHT)
-    )
-    fotogramas_flashback_avanzado, duracion_flashback_avanzado = cargar_gif(
-        os.path.join("assets", "image5.gif"), (WIDTH, HEIGHT)
-    )
-    fotogramas_flashback_final, duracion_flashback_final = cargar_gif(
-        os.path.join("assets", "image16.gif"), (WIDTH, HEIGHT)
-    )
-    flashback_activo = False
-    flashback_inicio = 0.0
-    flashback_duracion_total = 0.0
-    fotogramas_flashback = []
-    duracion_flashback = 0.1
-    proximo_flashback = 0.0
-    flashbacks_habilitados = False
-    flashback_nivel_10_activo = False
-    inicio_flashback_nivel_10 = 0.0
-    duracion_flashback_nivel_10 = 3.0
-    flashback_nivel_20_activo = False
-    inicio_flashback_nivel_20 = 0.0
-    duracion_flashback_nivel_20 = 2.5
+    eventos_visuales = EventosVisuales(WIDTH, HEIGHT)
 
     nivel = max(1, int(nivel_inicial))
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
@@ -402,21 +271,28 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
     estado = ESTADO_ADVERTENCIA
     transicion = None
-    inicio_game_over = pygame.time.get_ticks()
-    gif_game_over = []
-    duracion_fotograma_gif = 0.1
-    indice_imagen_game_over = 0
     menu = MenuInicio(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
     pausa = MenuPausa(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
     estado_despues_opciones = ESTADO_MENU
     jugando = True
 
-    def aplicar_modo_pantalla():
-        nonlocal screen
-        ancho, alto = configuracion["resoluciones"][configuracion["resolucion"]]
-        modo_ventana = pygame.FULLSCREEN if configuracion["pantalla_completa"] else 0
-        screen = pygame.display.set_mode((ancho, alto), modo_ventana)
+    dependencias_eventos = DependenciasEventos(
+        width=WIDTH,
+        height=HEIGHT,
+        pos_spawn=POS_SPAWN,
+        menu=menu,
+        pausa=pausa,
+        opciones=opciones,
+        configuracion=configuracion,
+        generar_nivel=generar_nivel,
+        color_desde_hue=color_desde_hue,
+        crear_jugador=PersonajeHumanoide,
+        ajustar_dificultad_jugador=ajustar_dificultad_jugador,
+        aplicar_volumen_audio=aplicar_volumen_audio,
+        guardar_configuracion=guardar_configuracion,
+        texto=texto,
+    )
 
     while jugando:
         contador_frames += 1
@@ -429,159 +305,48 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         if alerta_enemigos < 0.02:  # cortarse en seco al alejarse un poco
             alerta_enemigos = 0.0
 
-        if 1 <= nivel <= 5:
-            fotogramas_disponibles = fotogramas_flashback_inicial
-            duracion_disponible = duracion_flashback_inicial
-        elif nivel >= 20:
-            fotogramas_disponibles = fotogramas_flashback_final
-            duracion_disponible = duracion_flashback_final
-        elif nivel >= 10:
-            fotogramas_disponibles = fotogramas_flashback_avanzado
-            duracion_disponible = duracion_flashback_avanzado
-        elif nivel >= 6:
-            fotogramas_disponibles = fotogramas_flashback_medioinicial
-            duracion_disponible = duracion_flashback_medioinicial
-        else:
-            fotogramas_disponibles = []
-            duracion_disponible = 0.1
+        eventos_visuales.actualizar_flashback(
+            nivel, estado, tiempo, ESTADO_JUGANDO
+        )
 
-        if estado != ESTADO_JUGANDO or not fotogramas_disponibles:
-            flashback_activo = False
-            flashbacks_habilitados = False
-        elif not flashbacks_habilitados:
-            flashbacks_habilitados = True
-            fotogramas_flashback = fotogramas_disponibles
-            duracion_flashback = duracion_disponible
-            proximo_flashback = tiempo + random.uniform(3.0, 8.0)
-        elif not flashback_activo and estado == ESTADO_JUGANDO and tiempo >= proximo_flashback:
-            flashback_activo = True
-            flashback_inicio = tiempo
-            flashback_duracion_total = random.uniform(1.0, 2.0)
-        elif flashback_activo and tiempo - flashback_inicio >= flashback_duracion_total:
-            flashback_activo = False
-            proximo_flashback = tiempo + random.uniform(6.0, 14.0)
-
-        for evento in pygame.event.get():
-            if evento.type == pygame.QUIT:
-                jugando = False
-            elif evento.type == pygame.KEYDOWN and evento.key == pygame.K_F11:
-                configuracion["pantalla_completa"] = not configuracion["pantalla_completa"]
-                aplicar_modo_pantalla()
-            if estado == ESTADO_ADVERTENCIA and evento.type in (
-                pygame.KEYDOWN,
-                pygame.MOUSEBUTTONDOWN,
-            ):
-                estado = ESTADO_MENU
-            elif estado == ESTADO_MENU:
-                evento_menu = evento
-                if evento.type == pygame.MOUSEBUTTONDOWN:
-                    evento_menu = pygame.event.Event(
-                        evento.type,
-                        {
-                            "button": evento.button,
-                            "pos": (
-                                int(evento.pos[0] * WIDTH / screen.get_width()),
-                                int(evento.pos[1] * HEIGHT / screen.get_height()),
-                            ),
-                        },
-                    )
-                accion_menu = menu.manejar_evento(evento_menu)
-                if accion_menu == "jugar":
-                    estado = ESTADO_JUGANDO
-                elif accion_menu == "opciones":
-                    estado_despues_opciones = ESTADO_MENU
-                    estado = ESTADO_OPCIONES
-                elif accion_menu == "salir":
-                    jugando = False
-            elif estado == ESTADO_PAUSA:
-                evento_pausa = evento
-                if evento.type == pygame.MOUSEBUTTONDOWN:
-                    evento_pausa = pygame.event.Event(
-                        evento.type,
-                        {
-                            "button": evento.button,
-                            "pos": (
-                                int(evento.pos[0] * WIDTH / screen.get_width()),
-                                int(evento.pos[1] * HEIGHT / screen.get_height()),
-                            ),
-                        },
-                    )
-                accion_pausa = pausa.manejar_evento(evento_pausa)
-                if accion_pausa == "continuar":
-                    estado = ESTADO_JUGANDO
-                elif accion_pausa == "opciones":
-                    estado_despues_opciones = ESTADO_PAUSA
-                    estado = ESTADO_OPCIONES
-                elif accion_pausa == "salir":
-                    jugando = False
-            elif estado == ESTADO_OPCIONES:
-                evento_opciones = evento
-                if evento.type == pygame.MOUSEBUTTONDOWN:
-                    evento_opciones = pygame.event.Event(
-                        evento.type,
-                        {
-                            "button": evento.button,
-                            "pos": (
-                                int(evento.pos[0] * WIDTH / screen.get_width()),
-                                int(evento.pos[1] * HEIGHT / screen.get_height()),
-                            ),
-                        },
-                    )
-                accion_opciones = opciones.manejar_evento(evento_opciones)
-                if accion_opciones == "volver":
-                    estado = estado_despues_opciones
-                elif accion_opciones == "aplicar":
-                    guardar_configuracion(configuracion)
-                    aplicar_volumen_audio(configuracion, jugador)
-                    aplicar_modo_pantalla()
-                    menu.actualizar_tamano(WIDTH, HEIGHT)
-                    menu.establecer_idioma(configuracion["idioma"])
-                    menu.establecer_escala_ui(configuracion["escala_ui"])
-                    pausa.actualizar_tamano(WIDTH, HEIGHT)
-                    pausa.establecer_idioma(configuracion["idioma"])
-                    pausa.establecer_escala_ui(configuracion["escala_ui"])
-                    opciones.actualizar_tamano(WIDTH, HEIGHT)
-                    pygame.display.set_caption(texto(configuracion["idioma"], "window_title"))
-                    texto_boton = texto(configuracion["idioma"], "retry")
-                    tamano_fuente = 36
-                    while tamano_fuente > 16 and pygame.font.SysFont(None, tamano_fuente, bold=True).size(texto_boton)[0] > boton_reintentar.width - 28:
-                        tamano_fuente -= 1
-                    fuente_boton = pygame.font.SysFont(None, tamano_fuente, bold=True)
-                    superficie_texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
-                    idioma_mostrado = None
-                    estado = estado_despues_opciones
-            if estado == ESTADO_JUGANDO and evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_ESCAPE:
-                    pausa.establecer_idioma(configuracion["idioma"])
-                    estado = ESTADO_PAUSA
-                elif evento.key == configuracion["controles"]["jump"]:
-                    jugador.solicitar_salto()
-            elif estado == ESTADO_GAME_OVER and evento.type == pygame.KEYDOWN and evento.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_r):
-                nivel = 1
-                plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
-                jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
-                jugador.rect.center = POS_SPAWN
-                ajustar_dificultad_jugador(jugador, nivel)
-                transicion = None
-                estado = ESTADO_JUGANDO
-            if (
-                evento.type == pygame.MOUSEBUTTONDOWN
-                and evento.button == pygame.BUTTON_LEFT
-                and estado == ESTADO_GAME_OVER
-                and boton_reintentar.collidepoint(
-                    (
-                        int(evento.pos[0] * WIDTH / screen.get_width()),
-                        int(evento.pos[1] * HEIGHT / screen.get_height()),
-                    )
-                )
-            ):
-                nivel = 1
-                plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
-                jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
-                jugador.rect.center = POS_SPAWN
-                ajustar_dificultad_jugador(jugador, nivel)
-                transicion = None
-                estado = ESTADO_JUGANDO
+        contexto_eventos = EstadoEventos(
+            screen=screen,
+            jugando=jugando,
+            estado=estado,
+            estado_despues_opciones=estado_despues_opciones,
+            jugador=jugador,
+            nivel=nivel,
+            plataformas=plataformas,
+            hue_fondo=hue_fondo,
+            hue_jugador=hue_jugador,
+            entidades=entidades,
+            transicion=transicion,
+            boton_reintentar=boton_reintentar,
+            texto_boton=texto_boton,
+            tamano_fuente=tamano_fuente,
+            fuente_boton=fuente_boton,
+            superficie_texto_boton=superficie_texto_boton,
+            idioma_mostrado=idioma_mostrado,
+        )
+        procesar_eventos(
+            pygame.event.get(), contexto_eventos, dependencias_eventos
+        )
+        screen = contexto_eventos.screen
+        jugando = contexto_eventos.jugando
+        estado = contexto_eventos.estado
+        estado_despues_opciones = contexto_eventos.estado_despues_opciones
+        jugador = contexto_eventos.jugador
+        nivel = contexto_eventos.nivel
+        plataformas = contexto_eventos.plataformas
+        hue_fondo = contexto_eventos.hue_fondo
+        hue_jugador = contexto_eventos.hue_jugador
+        entidades = contexto_eventos.entidades
+        transicion = contexto_eventos.transicion
+        texto_boton = contexto_eventos.texto_boton
+        tamano_fuente = contexto_eventos.tamano_fuente
+        fuente_boton = contexto_eventos.fuente_boton
+        superficie_texto_boton = contexto_eventos.superficie_texto_boton
+        idioma_mostrado = contexto_eventos.idioma_mostrado
 
         # Durante la transición se bloquean los controles y solo se actualiza
         # la entrada visual del jugador al nuevo nivel.
@@ -593,7 +358,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             en_aire_antes = not jugador.en_suelo
             jugador.mover(plataformas, configuracion["controles"])
             evento_flashback_activo = (
-                flashback_nivel_10_activo or flashback_nivel_20_activo
+                eventos_visuales.evento_flashback_especial_activo
             )
             if not evento_flashback_activo:
                 for entidad in entidades:
@@ -624,29 +389,19 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             if jugador.en_suelo and plataforma_pisada is not None and plataforma_pisada.es_trampa:
                 plataforma_pisada.activar_trampa()
                 jugador.iniciar_engullido(plataforma_pisada)
-                inicio_game_over = pygame.time.get_ticks()
                 intensidad_shake = 9.0
-                indice_imagen_game_over = 0
-                if nivel >= 20 and gif_game_over_nivel_alto:
-                    gif_game_over, duracion_fotograma_gif = gif_game_over_nivel_alto[0]
-                elif nivel >= 10 and secuencia_game_over:
-                    gif_game_over, duracion_fotograma_gif = secuencia_game_over[0]
-                elif gifs_game_over:
-                    gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
+                eventos_visuales.iniciar_game_over(
+                    nivel, pygame.time.get_ticks()
+                )
                 estado = ESTADO_GAME_OVER
 
             if estado == ESTADO_JUGANDO and any(
                 entidad.rect.colliderect(jugador.rect) for entidad in entidades
             ):
-                inicio_game_over = pygame.time.get_ticks()
                 intensidad_shake = 9.0
-                indice_imagen_game_over = 0
-                if nivel >= 20 and gif_game_over_nivel_alto:
-                    gif_game_over, duracion_fotograma_gif = gif_game_over_nivel_alto[0]
-                elif nivel >= 10 and secuencia_game_over:
-                    gif_game_over, duracion_fotograma_gif = secuencia_game_over[0]
-                elif gifs_game_over:
-                    gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
+                eventos_visuales.iniciar_game_over(
+                    nivel, pygame.time.get_ticks()
+                )
                 estado = ESTADO_GAME_OVER
 
             # Se cambia de nivel en cuanto la mitad del cuerpo cruza el borde
@@ -661,12 +416,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 # deslizándose mientras sigue al personaje hacia el siguiente.
                 dibujar_nivel(capa_nivel_anterior, fondo_cache, plataformas, entidades, tiempo, nivel)
                 nivel += 1
-                if nivel == 10:
-                    flashback_nivel_10_activo = True
-                    inicio_flashback_nivel_10 = tiempo
-                elif nivel == 20:
-                    flashback_nivel_20_activo = True
-                    inicio_flashback_nivel_20 = tiempo
+                eventos_visuales.entrar_nivel(nivel, tiempo)
                 color_origen = jugador.color
                 pos_origen = pygame.Vector2(jugador.rect.center)
 
@@ -687,11 +437,12 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 ajustar_dificultad_jugador(jugador, nivel)
                 estado = ESTADO_TRANSICION
             elif salio_por_otro_borde:
-                inicio_game_over = pygame.time.get_ticks()
                 intensidad_shake = 9.0
-                indice_imagen_game_over = 0
-                if gifs_game_over:
-                    gif_game_over, duracion_fotograma_gif = random.choice(gifs_game_over)
+                eventos_visuales.iniciar_game_over(
+                    nivel,
+                    pygame.time.get_ticks(),
+                    seleccionar_por_nivel=False,
+                )
                 estado = ESTADO_GAME_OVER
 
         elif estado == ESTADO_GAME_OVER:
@@ -711,10 +462,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 aplicar_volumen_audio(configuracion, jugador)
                 estado = ESTADO_JUGANDO
 
-        if flashback_nivel_10_activo and tiempo - inicio_flashback_nivel_10 >= duracion_flashback_nivel_10:
-            flashback_nivel_10_activo = False
-        if flashback_nivel_20_activo and tiempo - inicio_flashback_nivel_20 >= duracion_flashback_nivel_20:
-            flashback_nivel_20_activo = False
+        eventos_visuales.actualizar_flashbacks_especiales(tiempo)
 
         # --- Renderizado ---
         if estado == ESTADO_ADVERTENCIA:
@@ -766,12 +514,15 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         else:
             # La escena se dibuja aparte para poder desaturarla como un todo
             # antes de mezclarla con el resto de la interfaz.
-            hay_gif_game_over = estado == ESTADO_GAME_OVER and bool(gif_game_over)
+            hay_gif_game_over = (
+                estado == ESTADO_GAME_OVER
+                and bool(eventos_visuales.gif_game_over)
+            )
 
             if not hay_gif_game_over:
-                tiempo_flashback = tiempo - flashback_inicio
-                indice_flashback = int(tiempo_flashback / duracion_flashback) % len(fotogramas_flashback) if flashback_activo else 0
-                fotograma_flashback = fotogramas_flashback[indice_flashback] if flashback_activo else None
+                fotograma_flashback = (
+                    eventos_visuales.obtener_fotograma_flashback(tiempo)
+                )
 
                 # El fondo abstracto es lo más pesado de dibujar; con las
                 # optimizaciones de fondo.py ya es mucho más barato, pero
@@ -862,27 +613,12 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             lienzo.blit(texto_nivel, (14, 10))
 
             if estado == ESTADO_GAME_OVER:
-                if nivel >= 20 and gif_game_over_nivel_alto:
-                    gif_game_over, duracion_fotograma_gif = gif_game_over_nivel_alto[0]
-
-                elif nivel >= 10 and secuencia_game_over:
-                    indice_imagen_game_over = min(
-                        int((pygame.time.get_ticks() - inicio_game_over) / 1000 / duracion_imagen_game_over),
-                        len(secuencia_game_over) - 1,
-                    )
-                    gif_game_over, duracion_fotograma_gif = secuencia_game_over[indice_imagen_game_over]
-
-                if gif_game_over:
-                    indice_gif = int(
-                        (pygame.time.get_ticks() - inicio_game_over)
-                        / (duracion_fotograma_gif * 1000)
-                    ) % len(gif_game_over)
-                    fotograma_gif = gif_game_over[indice_gif]
-                    offset_game_over = (
-                        int(2 * math.sin(tiempo * 28.0)),
-                        int(2 * math.cos(tiempo * 31.0)),
-                    )
-                    lienzo.blit(fotograma_gif, offset_game_over)
+                eventos_visuales.dibujar_game_over(
+                    lienzo,
+                    nivel,
+                    pygame.time.get_ticks(),
+                    tiempo,
+                )
 
                 ahora_boton = pygame.time.get_ticks() / 1000.0
                 posicion_raton = pygame.mouse.get_pos()
@@ -913,51 +649,14 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                         2,
                     )
 
-            if flashback_nivel_10_activo:
-                lienzo.fill((0, 0, 0))
-                texto_flashback = font.render(
-                    texto(configuracion["idioma"], "level_10_flashback"),
-                    True,
-                    (255, 255, 255),
-                )
-                desplazamiento_flash = int(3 * math.sin(tiempo * 40.0))
-                rect_flashback = texto_flashback.get_rect(center=(WIDTH // 2, HEIGHT // 2))
-                rect_flashback.x += desplazamiento_flash
-                lienzo.blit(
-                    texto_flashback,
-                    rect_flashback,
-                )
-            elif flashback_nivel_20_activo:
-                lienzo.fill((0, 0, 0))
-                veladura = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-                veladura.fill((0, 0, 0, 185))
-                lienzo.blit(veladura, (0, 0))
-
-                edad = max(0.0, tiempo - inicio_flashback_nivel_20)
-                intensidad_flash = max(0.0, 1.0 - edad / duracion_flashback_nivel_20)
-                flash_alpha = int(210 * intensidad_flash * (0.5 + 0.5 * math.sin(tiempo * 34.0)))
-                if flash_alpha > 0:
-                    flash = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-                    flash.fill((255, 255, 255, flash_alpha))
-                    lienzo.blit(flash, (0, 0))
-
-                for _ in range(22):
-                    x = random.randint(0, WIDTH - 1)
-                    y = random.randint(0, HEIGHT - 1)
-                    w = random.randint(2, 7)
-                    h = random.randint(2, 7)
-                    pygame.draw.rect(lienzo, (245, 245, 245, 80), pygame.Rect(x, y, w, h))
-
-                frase = texto(configuracion["idioma"], "level_20_flashback").upper()
-                texto_flashback = font_advertencia_titulo.render(frase, True, (255, 245, 245))
-                sombra_flashback = font_advertencia_titulo.render(frase, True, (18, 18, 18))
-                rect_flashback = texto_flashback.get_rect(center=(WIDTH // 2, HEIGHT // 2))
-                desplazamiento_x = int(12 * math.sin(tiempo * 45.0))
-                desplazamiento_y = int(9 * math.cos(tiempo * 38.0))
-                sombra_rect = rect_flashback.copy().move(6 + desplazamiento_x, 7 + desplazamiento_y)
-                rect_temblor = rect_flashback.move(desplazamiento_x, desplazamiento_y)
-                lienzo.blit(sombra_flashback, sombra_rect)
-                lienzo.blit(texto_flashback, rect_temblor)
+            eventos_visuales.dibujar_flashback_especial(
+                lienzo,
+                tiempo,
+                configuracion["idioma"],
+                font,
+                font_advertencia_titulo,
+                texto,
+            )
 
             screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
 

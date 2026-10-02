@@ -17,23 +17,22 @@ class MenuPausa:
     ESCALA_MIN = 0.55
     ESCALA_MAX = 1.6
 
-    # Paleta tipo comic: colores planos y muy saturados
-    COLOR_FONDO_OVERLAY = (20, 10, 40, 170)
-    COLOR_TITULO = (255, 221, 87)
-    COLOR_TITULO_CONTORNO = (120, 40, 10)
+    # Paleta retro arcade: colores oscuros con luz neon y sensación CRT
+    COLOR_FONDO_OVERLAY = (10, 12, 26, 190)
+    COLOR_TITULO = (255, 228, 102)
+    COLOR_TITULO_CONTORNO = (20, 20, 32)
 
-    # Paleta "punk-fanzine": colores plancha de poster, nada de degradados
-    # arcoiris. Cada boton toma un color estable de aqui segun su posicion.
+    # Paleta arcade: primarios de máquina recreativa con neón brillante.
     PALETA_BOTONES = (
-        (255, 61, 127),   # rosa neon
-        (198, 255, 61),   # verde lima acido
-        (61, 217, 255),   # cian electrico
-        (255, 145, 41),   # naranja blaze
-        (167, 96, 255),   # violeta zap
+        (0, 255, 204),    # cyan arcade
+        (255, 214, 51),   # amarillo arcade
+        (255, 90, 120),   # magenta/neón
+        (110, 160, 255),  # azul de tablero
+        (140, 255, 100),  # verde láser
     )
-    COLOR_TINTA = (24, 18, 24)           # "marcador" negro calido del contorno
-    COLOR_SOMBRA_STICKER = (10, 6, 12)   # sombra dura, sin difuminado
-    COLOR_DORSO_STICKER = (235, 235, 225)  # reverso de la esquina despegada
+    COLOR_TINTA = (10, 10, 18)           # contorno muy oscuro, estilo gabinete
+    COLOR_SOMBRA_STICKER = (5, 8, 18)   # sombra dura de marco arcade
+    COLOR_DORSO_STICKER = (210, 225, 255)  # esquina brillante para destacar
 
     # Paleta de las formas de arte abstracto (RGBA)
     COLORES_ABSTRACTOS = (
@@ -90,6 +89,12 @@ class MenuPausa:
         margen_bajo_titulo = titulo_y + int(alto_boton * 0.85)
         y_maximo = self.alto - bloque_alto - int(self.alto * 0.04)
         y_inicio = min(max(margen_bajo_titulo, int(self.alto * 0.4)), max(margen_bajo_titulo, y_maximo))
+
+        panel_ancho = max(ancho_boton + 86, int(self.ancho * 0.52))
+        panel_alto = bloque_alto + 84
+        panel_top = max(40, y_inicio - 58)
+        panel_left = centro - panel_ancho // 2
+        self.panel_rect = pygame.Rect(panel_left, panel_top, panel_ancho, panel_alto)
 
         self.titulo_y = titulo_y
         self.boton_continuar = pygame.Rect(centro - ancho_boton // 2, y_inicio, ancho_boton, alto_boton)
@@ -177,6 +182,49 @@ class MenuPausa:
                 center=(forma["x"] + offset_x, forma["y"] + offset_y)
             )
             superficie.blit(lienzo_rotado, destino)
+
+    def _dibujar_panel_pausa(self, superficie):
+        panel = self.panel_rect.copy()
+        sombra = panel.move(16, 16)
+        sombra = sombra.inflate(12, 10)
+        pygame.draw.rect(superficie, (4, 7, 18), sombra, border_radius=18)
+
+        panel_suave = pygame.Surface((panel.width, panel.height), pygame.SRCALPHA)
+        pygame.draw.rect(panel_suave, (15, 20, 40, 210), panel_suave.get_rect(), border_radius=18)
+        pygame.draw.rect(panel_suave, (255, 214, 51, 170), panel_suave.get_rect(), width=4, border_radius=18)
+        superficie.blit(panel_suave, panel.topleft)
+
+        # Línea de escaneo estilo CRT para sensación de gabinete retro.
+        for y in range(panel.top + 16, panel.bottom, 6):
+            pygame.draw.rect(superficie, (255, 255, 255, 14), pygame.Rect(panel.left + 16, y, panel.width - 32, 2))
+
+        for x in range(panel.left + 18, panel.right - 20, 28):
+            pygame.draw.line(superficie, (96, 120, 255, 110), (x, panel.top + 14), (x, panel.bottom - 14), 2)
+
+        for x in range(panel.left + 30, panel.right - 30, 32):
+            for y in range(panel.top + 30, panel.bottom - 20, 30):
+                if (x + y) % 3 == 0:
+                    pygame.draw.circle(superficie, (255, 214, 51, 90), (x, y), 2)
+
+    def _dibujar_titulo_pausa(self, superficie):
+        centro = (self.ancho // 2, self.titulo_y)
+        bamboleo = math.sin(self._tiempo * 3.0) * 4
+        centro = (centro[0], centro[1] + bamboleo)
+
+        # Rayita tipo arcade con brillo neón.
+        linea = pygame.Rect(self.ancho // 2 - 130, self.titulo_y + 38, 260, 8)
+        pygame.draw.rect(superficie, (0, 255, 204), linea, border_radius=5)
+        pygame.draw.rect(superficie, (255, 214, 51), linea.inflate(-10, -2), border_radius=4)
+
+        self._texto_contorno(
+            superficie,
+            texto(self.idioma, "pause"),
+            self.fuente_titulo,
+            centro,
+            self.COLOR_TITULO,
+            self.COLOR_TITULO_CONTORNO,
+            grosor=4,
+        )
 
     # ---------- utilidades de dibujo "caricaturesco" ----------
 
@@ -349,16 +397,8 @@ class MenuPausa:
         capa.fill(self.COLOR_FONDO_OVERLAY)
         superficie.blit(capa, (0, 0))
 
-        bamboleo = math.sin(self._tiempo * 3.0) * 4
-        self._texto_contorno(
-            superficie,
-            texto(self.idioma, "pause"),
-            self.fuente_titulo,
-            (self.ancho // 2, self.titulo_y + bamboleo),
-            self.COLOR_TITULO,
-            self.COLOR_TITULO_CONTORNO,
-            grosor=4,
-        )
+        self._dibujar_panel_pausa(superficie)
+        self._dibujar_titulo_pausa(superficie)
 
         botones = (
             (self.boton_continuar, "continue"),

@@ -14,6 +14,7 @@ import numpy as np
 import pygame
 
 from dificultad import parametros_dificultad
+from despertar import play_wake_animation
 from eventos import (
     ESTADO_ADVERTENCIA,
     ESTADO_GAME_OVER,
@@ -271,6 +272,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
     estado = ESTADO_ADVERTENCIA
     transicion = None
+    despertar_mostrado = False
     menu = MenuInicio(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
     pausa = MenuPausa(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
@@ -461,6 +463,14 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             if transicion_terminada:
                 aplicar_volumen_audio(configuracion, jugador)
                 estado = ESTADO_JUGANDO
+
+        if estado == ESTADO_JUGANDO and nivel == 30 and not despertar_mostrado:
+            despertar_mostrado = True
+            play_wake_animation(
+                screen,
+                clock,
+                exit_text=texto(configuracion["idioma"], "exit"),
+            )
 
         eventos_visuales.actualizar_flashbacks_especiales(tiempo)
 

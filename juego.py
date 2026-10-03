@@ -470,6 +470,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 screen,
                 clock,
                 exit_text=texto(configuracion["idioma"], "exit"),
+                button_renderer=menu,
             )
 
         eventos_visuales.actualizar_flashbacks_especiales(tiempo)
@@ -526,7 +527,10 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             # antes de mezclarla con el resto de la interfaz.
             hay_gif_game_over = (
                 estado == ESTADO_GAME_OVER
-                and bool(eventos_visuales.gif_game_over)
+                and (
+                    bool(eventos_visuales.gif_game_over)
+                    or eventos_visuales.game_over_nivel_alto_activo
+                )
             )
 
             if not hay_gif_game_over:

@@ -1,18 +1,31 @@
 """
-Animación en pygame (solo código, sin imágenes): el personaje sale de un trance.
+Animación en pygame (solo código, sin imágenes): el despertar tras una adicción.
 
-Línea de tiempo (9 s en total):
-    0.0 - 2.2 s  trance: ojos cerrados, cabeza caída, respiración lenta, ondas de fondo
-    2.2 - 3.4 s  los párpados tiemblan (dos espasmos)
-    3.4 - 5.4 s  abre los ojos poco a poco y levanta la cabeza
+Idea visual
+    La primera mitad es el TRANCE: un mundo gris-verdoso y enfermizo, una espiral
+    hipnótica que gira, hilos oscuros (como de marioneta) que sujetan la cabeza,
+    ojeras, ojos inyectados en sangre, grano de TV, aberración cromática y una
+    viñeta que late como un corazón lento.
+    El momento clave es la RUPTURA: los hilos se rompen, la espiral estalla en
+    fragmentos, un destello blanco, una gran bocanada de aire... y el color VUELVE
+    (piel, ojos, fondo), la luz del amanecer entra, la pupila se contrae y cae
+    una lágrima de alivio.
+
+Secuencia inicial (9 s; después la respiración, el parpadeo y el ambiente siguen):
+    0.0 - 2.2 s  trance: ojos cerrados, cabeza caída, espiral, hilos, glitch
+    2.2 - 3.3 s  los párpados tiemblan, los hilos se tensan
+    3.3 s        RUPTURA: hilos rotos, destello, la espiral estalla, bocanada
+    3.4 - 5.4 s  abre los ojos y levanta la cabeza; el color regresa
     5.5 s        parpadeo
-    5.9 - 8.1 s  mira a la izquierda, a la derecha y al frente (ya despierto)
+    4.6 - 7 s    una lágrima de alivio
+    5.9 - 8.1 s  mira a izquierda, derecha y al frente, ya despierto
 
 Para usarla como intro de tu juego:
     from despertar import play_wake_animation
-    play_wake_animation(screen)          # devuelve True si terminó
+    play_wake_animation(screen)          # permanece activa hasta pulsar «Salir»
 """
 import math
+import random
 import pygame
 
 # ----------------------------------------------------------------------------
@@ -21,13 +34,18 @@ import pygame
 BASE_W, BASE_H = 1200, 890          # sistema de coordenadas con el que se definió el dibujo
 LOW_W, LOW_H = 320, 238             # resolución interna (look pixel-art)
 S = LOW_W / BASE_W
-DURATION = 9.0                      # segundos (mínimo pedido: 5)
-
-BG = (234, 240, 216)
+BG = (244, 236, 212)                # piel despierta (cálida)
 INK = (27, 27, 40)
-SHADE = (150, 160, 180)
+SHADE = (176, 166, 184)             # sombras despiertas
+SKIN_SICK = (168, 184, 166)         # piel pálida / verdosa del trance
+SHADE_SICK = (88, 98, 108)
 WHITE = (246, 248, 238, 255)
-RING = (205, 213, 196)
+WHITE_SICK = (232, 190, 190)        # ojo inyectado en sangre
+NIGHT_TOP = (16, 14, 26)
+NIGHT_BOTTOM = (46, 52, 44)
+DAWN_TOP = (62, 72, 112)
+DAWN_BOTTOM = (238, 166, 112)
+T_SNAP = 3.3                        # instante de la ruptura
 
 HEAD_PIVOT = (450, 640)
 
@@ -194,10 +212,23 @@ def state(t):
         o = 1.0
     o *= 1 - 0.95 * blink_amount(t)
 
+    # sick: 1 = atrapado por la adicción, 0 = libre (el color vuelve poco a poco)
+    sick = 1.0 if t < T_SNAP else 1 - smooth((t - T_SNAP) / 2.8)
+    awake = 1 - sick
+    dt = t - T_SNAP
+    flash = math.exp(-dt * 7) if dt >= 0 else 0.0
+    gasp = math.sin(math.pi * clamp(dt / 0.9)) if dt >= 0 else 0.0
+
+    # latido: lento y pesado en el trance, más vivo al despertar
+    rate = lerp(1.0, 1.5, awake)
+    ph = (t * rate) % 1.0
+    beat = math.exp(-ph * 10) + 0.55 * math.exp(-((ph - 0.3) % 1.0) * 12)
+
     droop = 1 - smooth((t - 3.0) / 2.6)          # 1 = cabeza caída, 0 = erguida
     jolt = 5 * math.sin(math.pi * clamp((t - 3.2) / 0.5))
     sway = 1.3 * math.sin(0.9 * (t - 5.8)) if t > 5.8 else 0.0
-    angle = droop * (10 + 3 * math.sin(1.3 * t)) - jolt + sway
+    tremor = 0.7 * sick * math.sin(t * 37) * smooth((t - 1.0) / 1.5)   # temblor del síndrome
+    angle = droop * (10 + 3 * math.sin(1.3 * t)) - jolt + sway + tremor
 
     wander = 1 - smooth((t - 4.6) / 1.2)
     gx = keyframes(t, [(0, 0), (5.9, 0), (6.6, -14), (6.7, -14), (7.2, 13), (7.7, 13), (8.2, 0)])
@@ -207,13 +238,20 @@ def state(t):
     focus = smooth((t - 5.0) / 1.5)
     breath = math.sin(t * lerp(1.5, 2.4, 1 - droop))
 
-    return dict(o=o, droop=droop, angle=angle, gaze=(gx, gy), focus=focus, breath=breath)
+    return dict(
+        o=o, droop=droop, angle=angle, gaze=(gx, gy), focus=focus, breath=breath,
+        sick=sick, awake=awake, flash=flash, gasp=gasp, beat=beat,
+        skin=mix(SKIN_SICK, BG, awake),
+        shade=mix(SHADE_SICK, SHADE, awake),
+        white=mix(WHITE_SICK, WHITE[:3], awake) + (255,),
+    )
 
 
 # ----------------------------------------------------------------------------
 # Dibujo
 # ----------------------------------------------------------------------------
-def draw_eye(low, eye, o, gaze, focus, xf):
+def draw_eye(low, eye, o, gaze, st, xf):
+    sick = st["sick"]
     p0, p1 = eye
     vx, vy = p1[0] - p0[0], p1[1] - p0[1]
     L = math.hypot(vx, vy)
@@ -225,16 +263,35 @@ def draw_eye(low, eye, o, gaze, focus, xf):
     up = quad(p0, (mid[0] + nx * up_sag, mid[1] + ny * up_sag), p1)
     lo = quad(p0, (mid[0] + nx * low_sag, mid[1] + ny * low_sag), p1)
 
+    # ojeras: media luna morada bajo el ojo que se desvanece al despertar
+    if sick > 0.03:
+        bag = quad((p0[0] + nx * 6, p0[1] + ny * 6),
+                   (mid[0] + nx * (low_sag + 62), mid[1] + ny * (low_sag + 62)),
+                   (p1[0] + nx * 6, p1[1] + ny * 6))
+        bag_col = mix(st["skin"], (92, 70, 112), 0.62 * sick)
+        pygame.draw.polygon(low, bag_col, to_low(lo, xf) + to_low(bag[::-1], xf))
+
     if o > 0.03:
         poly = to_low(up, xf) + to_low(lo[::-1], xf)
         layer = pygame.Surface((LOW_W, LOW_H), pygame.SRCALPHA)
         mask = pygame.Surface((LOW_W, LOW_H), pygame.SRCALPHA)
-        pygame.draw.polygon(layer, WHITE, poly)
+        pygame.draw.polygon(layer, st["white"], poly)
+
+        # venitas rojas del ojo cansado
+        if sick > 0.08:
+            vein = (205, 70, 82, int(230 * sick))
+            for (qx, qy), sgn in ((p0, 1), (p1, -1)):
+                for k in (-0.16, 0.16):
+                    s = (qx + nx * (low_sag * 0.3), qy + ny * (low_sag * 0.3))
+                    e = (s[0] + sgn * vx * 0.38 / 1.0, s[1] + sgn * vy * 0.38 + k * L)
+                    (a1, a2) = to_low([s, e], xf)
+                    pygame.draw.line(layer, vein, a1, a2, 1)
 
         k = (up_sag + low_sag) / 4
         cx, cy = mid[0] + nx * k + gaze[0], mid[1] + ny * k + gaze[1]
         (px, py), = to_low([(cx, cy)], xf)
-        r = lerp(20, 14, focus) * S
+        # pupila dilatada en el trance; se contrae con la luz
+        r = lerp(13, 23, sick) * S
         pygame.draw.circle(layer, INK, (px, py), r)
         pygame.draw.circle(layer, WHITE, (px - 1.4, py - 1.4), max(1.0, r * 0.28))
 
@@ -246,8 +303,8 @@ def draw_eye(low, eye, o, gaze, focus, xf):
     if o > 0.15:
         stroke(low, lo, xf, 1)
 
-    # ceja
-    h = lerp(58, 82, o)
+    # ceja (caída y tensa en el trance, arqueada al despertar)
+    h = lerp(58, 82, o) + 6 * (1 - sick) * o
     bc = (mid[0] - nx * h, mid[1] - ny * h)
     ux, uy = vx / L, vy / L
     pa = (bc[0] - ux * 40, bc[1] - uy * 40)
@@ -255,50 +312,238 @@ def draw_eye(low, eye, o, gaze, focus, xf):
     stroke(low, chaikin([pa, (bc[0] - nx * 6, bc[1] - ny * 6), pb]), xf, 2)
 
 
+def draw_atmosphere(low, t, st):
+    """Fondo: pasa de un mundo murky y enfermizo a un amanecer cálido."""
+    sick, awake, beat = st["sick"], st["awake"], st["beat"]
+    top = mix(NIGHT_TOP, DAWN_TOP, awake)
+    bottom = mix(NIGHT_BOTTOM, DAWN_BOTTOM, awake)
+    for y in range(LOW_H):
+        low.fill(mix(top, bottom, y / LOW_H), (0, y, LOW_W, 1))
+
+    # halo detrás de la cabeza: verdoso y latiendo -> dorado y amplio
+    center = (int(520 * S), int(365 * S))
+    pulse = 1.0 + 0.03 * math.sin(t * 1.7) + 0.05 * beat * sick
+    grow = 1.0 + 0.7 * awake
+    glow = pygame.Surface((LOW_W, LOW_H), pygame.SRCALPHA)
+    glow_color = mix((70, 120, 96), (255, 196, 128), awake)
+    for radius, alpha in ((90, 9), (74, 12), (60, 15), (46, 19)):
+        pygame.draw.circle(glow, (*glow_color, int(alpha * (0.8 + 0.8 * awake))),
+                           center, round(radius * S * pulse * grow))
+    low.blit(glow, (0, 0))
+
+    # rayos de luz del amanecer
+    if awake > 0.02:
+        rays = pygame.Surface((LOW_W, LOW_H), pygame.SRCALPHA)
+        src = (LOW_W * 0.97, -14)
+        for k in range(5):
+            ang = 1.95 + k * 0.2 + 0.03 * math.sin(t * 0.5 + k)
+            w = 0.05 + 0.012 * (k % 2)
+            al = int(34 * awake * (0.7 + 0.3 * math.sin(t * 0.8 + k * 1.3)))
+            pts = [src,
+                   (src[0] + 420 * math.cos(ang - w), src[1] + 420 * math.sin(ang - w)),
+                   (src[0] + 420 * math.cos(ang + w), src[1] + 420 * math.sin(ang + w))]
+            pygame.draw.polygon(rays, (255, 220, 160, al), pts)
+        low.blit(rays, (0, 0))
+
+    # ceniza que cae (trance) ...
+    if sick > 0.02:
+        for i in range(30):
+            x = (i * 61 + 7 + 4 * math.sin(t * 0.6 + i)) % LOW_W
+            y = (i * 43 + t * (5 + i % 5)) % LOW_H
+            v = int((40 + 30 * (i % 3)) * sick)
+            pygame.draw.circle(low, (v, v + 6, v + 2), (int(x), int(y)), 1)
+    # ... y luciérnagas doradas que suben (despertar)
+    if awake > 0.02:
+        for i in range(26):
+            x = (i * 67 + 23 + 7 * math.sin(t * 0.8 + i)) % LOW_W
+            y = LOW_H - ((i * 41 + (t - T_SNAP) * (8 + i % 5)) % LOW_H)
+            tw = 0.55 + 0.45 * math.sin(t * (1.4 + i % 3) + i)
+            b = clamp(tw * awake * 1.2)
+            col = tuple(int(c * b) for c in (255, 214, 150))
+            pygame.draw.circle(low, col, (int(x), int(y)), 1 if i % 4 else 2)
+
+
+def draw_spiral(low, t, st):
+    """Espiral hipnótica del trance. Al romperse se convierte en fragmentos."""
+    cx, cy = 520 * S, 365 * S
+    dt = t - T_SNAP
+    layer = pygame.Surface((LOW_W, LOW_H), pygame.SRCALPHA)
+
+    if dt < 0.3:
+        fade = 1.0 if dt < 0 else 1 - dt / 0.3
+        scale = 1.0 if dt < 0 else 1 + dt * 3.5
+        spin = t * (1.1 + 1.6 * smooth((t - 1.5) / 1.8))       # gira cada vez más rápido
+        col = mix((54, 78, 92), (96, 70, 112), 0.5 + 0.5 * math.sin(t * 0.7))
+        col = (*col, int(150 * fade))
+        for arm in (0, math.pi):
+            pts = []
+            for j in range(120):
+                th = j * 0.12
+                r = (2.9 * th) * scale * (1 + 0.05 * math.sin(th * 3 - t * 2.5))
+                a = th + spin + arm
+                pts.append((cx + r * math.cos(a), cy + r * math.sin(a) * 0.92))
+            pygame.draw.lines(layer, col, False, pts, 1)
+
+    # fragmentos que salen despedidos
+    if 0 <= dt < 1.7:
+        life = 1 - dt / 1.7
+        for i in range(44):
+            ang = i * 2.39996 + 0.4
+            sp = 50 + (i * 37) % 70
+            d = sp * dt / (1 + dt * 1.4)
+            x, y = cx + d * math.cos(ang), cy + d * math.sin(ang) * 0.9 + 12 * dt * dt
+            ln = 2 + i % 4
+            col = mix((120, 150, 170), (255, 214, 150), clamp(dt / 0.9))
+            pygame.draw.line(layer, (*col, int(230 * life)), (x, y),
+                             (x + ln * math.cos(ang + dt * 3), y + ln * math.sin(ang + dt * 3)), 1)
+    low.blit(layer, (0, 0))
+
+
+STRING_ATTACH = [(400, 190), (480, 162), (560, 165), (640, 200), (700, 260), (340, 240)]
+
+
+def draw_strings(low, t, head_xf):
+    """Hilos de marioneta que sujetan la cabeza; se rompen en T_SNAP."""
+    layer = pygame.Surface((LOW_W, LOW_H), pygame.SRCALPHA)
+    dt = t - T_SNAP
+    tension = smooth((t - 2.0) / 1.2)
+    n = 18
+    for i, a in enumerate(STRING_ATTACH):
+        ax, ay = head_xf(a)
+        top = (a[0] + (a[0] - 520) * 0.35, -120)
+        amp = lerp(9, 1.2, tension)
+        pts = []
+        for j in range(n + 1):
+            u = j / n                                   # 0 arriba, 1 en la cabeza
+            wob = amp * math.sin(u * 9 + t * 2.6 + i) * (1 - 0.3 * u)
+            pts.append((lerp(top[0], ax, u) + wob, lerp(top[1], ay, u)))
+
+        if dt < 0:
+            segs = [(pts, 230)]
+        else:
+            fade = clamp(1 - dt / 1.1)
+            kb = int(n * 0.45)
+            upper = [(x, y - dt * dt * 1500) for x, y in pts[:kb + 1]]
+            lower = []
+            m = len(pts) - kb
+            for j, (x, y) in enumerate(pts[kb:]):
+                u2 = j / (m - 1)
+                lower.append((x + 40 * dt * (1 - u2) * (1 if i % 2 else -1),
+                              y + dt * dt * 900 * (1 - u2)))
+            segs = [(upper, int(230 * fade)), (lower, int(230 * fade))]
+
+        for seg, al in segs:
+            if al > 4:
+                pygame.draw.lines(layer, (24, 20, 34, al), False,
+                                  [(x * S, y * S) for x, y in seg], 1)
+    low.blit(layer, (0, 0))
+
+
+def draw_tear(low, t, st, xf):
+    """Una lágrima de alivio que resbala por la mejilla derecha."""
+    dt = t - 4.6
+    if not (0 <= dt < 2.4):
+        return
+    u = dt / 2.4
+    x = 662 - dt * 3
+    y = 372 + (dt ** 1.4) * 46
+    size = clamp(dt / 0.5)
+    col = mix((196, 224, 244), st["skin"], clamp((u - 0.75) / 0.25))
+    start = (662, 372)
+    stroke(low, [start, (x, y)], xf, 1, mix(col, st["skin"], 0.45))
+    fill(low, blob(x, y, 7 * size, 10 * size, 8), xf, col)
+    (hx, hy), = to_low([(x - 2, y - 3)], xf)
+    low.set_at((int(hx), int(hy)), (250, 252, 255))
+
+
+_VIG = None
+
+
+def get_vignette():
+    global _VIG
+    if _VIG is None:
+        sw, sh = 32, 24
+        small = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        for yy in range(sh):
+            for xx in range(sw):
+                d = math.hypot((xx - sw / 2) / (sw / 2), (yy - sh / 2) / (sh / 2))
+                a = clamp((d - 0.45) / 0.85) ** 1.5
+                small.set_at((xx, yy), (0, 0, 0, int(255 * a)))
+        _VIG = pygame.transform.smoothscale(small, (LOW_W, LOW_H))
+    return _VIG
+
+
+def chromatic(low, k):
+    """Aberración cromática: separa los canales R y B k píxeles."""
+    if k < 1:
+        return
+    out = pygame.Surface((LOW_W, LOW_H))
+    out.fill((0, 0, 0))
+    for chan, dx in (((255, 0, 0), -k), ((0, 255, 0), 0), ((0, 0, 255), k)):
+        c = low.copy()
+        c.fill(chan, special_flags=pygame.BLEND_RGB_MULT)
+        out.blit(c, (dx, 0), special_flags=pygame.BLEND_RGB_ADD)
+    low.blit(out, (0, 0))
+
+
+def glitch(low, t, st):
+    """Cortes horizontales y grano de TV; desaparecen al despertar."""
+    sick = st["sick"]
+    dt = t - T_SNAP
+    rng = random.Random(int(t * 12))
+    forced = 0 <= dt < 0.3
+    if sick > 0.2 and (forced or rng.random() < 0.2 * sick):
+        for _ in range(3 if forced else 2):
+            y = rng.randrange(0, LOW_H - 12)
+            h = rng.randrange(3, 10)
+            dx = rng.choice((-1, 1)) * rng.randrange(4, 14 if forced else 10)
+            strip = low.subsurface((0, y, LOW_W, h)).copy()
+            low.blit(strip, (dx, y))
+    for _ in range(int(90 * sick)):
+        x, y = rng.randrange(LOW_W), rng.randrange(LOW_H)
+        c = low.get_at((x, y))
+        d = rng.choice((-24, 24))
+        low.set_at((x, y), (int(clamp(c[0] + d, 0, 255)), int(clamp(c[1] + d, 0, 255)), int(clamp(c[2] + d, 0, 255))))
+
+
 def render(low, t):
     st = state(t)
-    droop, o = st["droop"], st["o"]
-    low.fill(BG)
+    droop, o, sick = st["droop"], st["o"], st["sick"]
+    skin, shade = st["skin"], st["shade"]
+    draw_atmosphere(low, t, st)
+    draw_spiral(low, t, st)
 
-    # ondas del trance (se desvanecen al despertar)
-    if droop > 0.02:
-        col = mix(BG, RING, droop)
-        cx, cy = to_low([(520, 370)], lambda p: p)[0]
-        for i in range(6):
-            r = (t * 22 + i * 38) % 228 + 8
-            pygame.draw.circle(low, col, (cx, cy), r, 1)
-
-    breath = st["breath"]
-    body_xf = make_xf(0, 0, breath * 1.5, (450, 680))
-    neck_xf = make_xf(st["angle"] * 0.35, 0, breath * 1.5 + droop * 3, (450, 690))
-    head_xf = make_xf(st["angle"], breath * 0.8, breath * 2 + droop * 8, HEAD_PIVOT)
+    breath, gasp = st["breath"], st["gasp"]
+    body_xf = make_xf(0, 0, breath * 1.5 - gasp * 4, (450, 680))
+    neck_xf = make_xf(st["angle"] * 0.35, 0, breath * 1.5 + droop * 3 - gasp * 3, (450, 690))
+    head_xf = make_xf(st["angle"], breath * 0.8, breath * 2 + droop * 8 - gasp * 3, HEAD_PIVOT)
 
     # cuerpo y cuello
-    fill(low, BODY + [(600, 920), (40, 920)], body_xf, SHADE)
+    fill(low, BODY + [(600, 920), (40, 920)], body_xf, shade)
     stroke(low, BODY, body_xf, 2)
     stroke(low, COLLAR, body_xf, 2)
     stroke(low, BODY_MARK, body_xf, 2)
-    fill(low, NECK, neck_xf, SHADE)
+    fill(low, NECK, neck_xf, shade)
     stroke(low, NECK_L, neck_xf, 2)
     stroke(low, NECK_R, neck_xf, 2)
 
-    # cabeza
-    fill(low, HEAD, head_xf, BG)
+    # cabeza (la piel recupera el color)
+    fill(low, HEAD, head_xf, skin)
     for b in BLOTS:
-        fill(low, b, head_xf, SHADE)
-    fill(low, EAR_BLOT, head_xf, SHADE)
+        fill(low, b, head_xf, shade)
+    fill(low, EAR_BLOT, head_xf, shade)
     stroke(low, HEAD + [HEAD[0]], head_xf, 2)
     stroke(low, EAR_R, head_xf, 2)
     stroke(low, EAR_L, head_xf, 2)
 
     # ojos
-    draw_eye(low, EYE_L, o, st["gaze"], st["focus"], head_xf)
-    draw_eye(low, EYE_R, o, st["gaze"], st["focus"], head_xf)
+    draw_eye(low, EYE_L, o, st["gaze"], st, head_xf)
+    draw_eye(low, EYE_R, o, st["gaze"], st, head_xf)
 
-    # nariz y boca (la boca se entreabre un poco al despertar)
+    # nariz y boca (jadea con la bocanada y se entreabre al despertar)
     stroke(low, NOSE_A, head_xf, 2)
     stroke(low, NOSE_B, head_xf, 2)
-    open_mouth = (1 - droop) * 5 * (0.5 + 0.5 * math.sin(t * 2.4))
+    open_mouth = (1 - droop) * 5 * (0.5 + 0.5 * math.sin(t * 2.4)) + gasp * 9
     stroke(low, MOUTH_A, head_xf, 2)
     stroke(low, MOUTH_B, head_xf, 2, off=(0, open_mouth))
 
@@ -307,11 +552,34 @@ def render(low, t):
         off = (2.5 * math.sin(t * 1.6 + i * 0.9), 2.0 * math.sin(t * 1.3 + i * 1.7))
         stroke(low, h, head_xf, 2, off=off)
 
-    # viñeta oscura mientras dura el trance + fundido inicial desde negro
-    dark = max(droop * 0.38, 1 - smooth(t / 0.7))
+    draw_tear(low, t, st, head_xf)
+    draw_strings(low, t, head_xf)
+
+    # efectos de pantalla: grano, cortes y aberración cromática
+    glitch(low, t, st)
+    dt = t - T_SNAP
+    k = 2.2 * sick * (0.6 + 0.8 * st["beat"])
+    if dt >= 0:
+        k += 6 * math.exp(-dt * 10)
+    chromatic(low, int(round(k)))
+
+    # viñeta que late en el trance y se abre al despertar
+    vig = get_vignette()
+    vig.set_alpha(int(255 * clamp((0.3 + 0.7 * sick) * (1 + 0.14 * st["beat"] * sick))))
+    low.blit(vig, (0, 0))
+
+    # destello blanco de la ruptura
+    if st["flash"] > 0.02:
+        fl = pygame.Surface((LOW_W, LOW_H))
+        fl.fill((255, 246, 228))
+        fl.set_alpha(int(235 * st["flash"]))
+        low.blit(fl, (0, 0))
+
+    # Fundido inicial desde negro.
+    dark = 1 - smooth(t / 0.7)
     if dark > 0.01:
         veil = pygame.Surface((LOW_W, LOW_H))
-        veil.fill((20, 25, 45))
+        veil.fill((8, 11, 20))
         veil.set_alpha(int(255 * dark))
         low.blit(veil, (0, 0))
 
@@ -321,14 +589,18 @@ def draw_frame(screen, low, t):
     sw, sh = screen.get_size()
     sc = min(sw / LOW_W, sh / LOW_H)
     w, h = int(LOW_W * sc), int(LOW_H * sc)
-    screen.fill(BG)
+    screen.fill(NIGHT_TOP)
     screen.blit(pygame.transform.scale(low, (w, h)), ((sw - w) // 2, (sh - h) // 2))
 
 
 def play_wake_animation(
-    screen, clock=None, duration=DURATION, exit_text="EXIT", exit_delay=5.0
+    screen,
+    clock=None,
+    exit_text="EXIT",
+    exit_delay=5.0,
+    button_renderer=None,
 ):
-    """Reproduce la animación; muestra el botón para cerrarla tras `exit_delay`."""
+    """Mantiene la animación en movimiento hasta que se pulse el botón de salida."""
     clock = clock or pygame.time.Clock()
     low = pygame.Surface((LOW_W, LOW_H))
     t0 = pygame.time.get_ticks()
@@ -336,15 +608,29 @@ def play_wake_animation(
         t = (pygame.time.get_ticks() - t0) / 1000
         exit_button = None
         exit_surface = None
-        if t >= exit_delay:
-            sw, sh = screen.get_size()
+        sw, sh = screen.get_size()
+        if button_renderer is not None:
+            sx = sw / button_renderer.ancho
+            sy = sh / button_renderer.alto
+            original = button_renderer.boton_salir
+            exit_button = pygame.Rect(
+                round(original.x * sx),
+                round(original.y * sy),
+                round(original.width * sx),
+                round(original.height * sy),
+            )
+            escala_ui = min(sx, sy) * button_renderer._escala()
+            fuente = pygame.font.SysFont(
+                "comicsansms", max(14, round(22 * escala_ui)), bold=True
+            )
+        else:
             escala = min(sw / LOW_W, sh / LOW_H)
-            fuente = pygame.font.SysFont(None, max(18, round(26 * escala)), bold=True)
-            exit_surface = fuente.render(exit_text, True, (255, 255, 255))
-            ancho = exit_surface.get_width() + 36
-            alto = exit_surface.get_height() + 20
-            exit_button = pygame.Rect(0, 0, ancho, alto)
-            exit_button.center = (sw // 2, sh - max(38, alto // 2 + 16))
+            fuente = pygame.font.SysFont(
+                None, max(18, round(26 * escala)), bold=True
+            )
+            exit_button = pygame.Rect(0, 0, 170, 54)
+            exit_button.bottomright = (sw - 26, sh - 26)
+        exit_surface = fuente.render(exit_text, True, (255, 255, 255))
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 pygame.event.post(e)
@@ -356,17 +642,32 @@ def play_wake_animation(
                 and exit_button.collidepoint(e.pos)
             ):
                 return False
-        if t >= duration:
-            return True
         draw_frame(screen, low, t)
         if exit_button is not None:
             hover = exit_button.collidepoint(pygame.mouse.get_pos())
-            pygame.draw.rect(
-            screen, (105, 44, 58) if hover else (62, 38, 48),
-            exit_button, border_radius=8,
-            )
-            pygame.draw.rect(screen, (245, 220, 190), exit_button, 2, border_radius=8)
-            screen.blit(exit_surface, exit_surface.get_rect(center=exit_button.center))
+            if button_renderer is not None:
+                button_renderer.reloj_pulso = (
+                    pygame.time.get_ticks() - t0
+                ) / 1000
+                rect_dibujo = button_renderer._dibujar_boton_comic(
+                    screen, exit_button, hover
+                )
+                button_renderer._texto_centrado(
+                    screen, exit_text, fuente, rect_dibujo.center, (255, 255, 255)
+                )
+            else:
+                pygame.draw.rect(
+                    screen,
+                    (105, 44, 58) if hover else (62, 38, 48),
+                    exit_button,
+                    border_radius=8,
+                )
+                pygame.draw.rect(
+                    screen, (245, 220, 190), exit_button, 2, border_radius=8
+                )
+                screen.blit(
+                    exit_surface, exit_surface.get_rect(center=exit_button.center)
+                )
         pygame.display.flip()
         clock.tick(60)
 

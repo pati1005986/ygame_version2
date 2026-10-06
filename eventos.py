@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import pygame
 
-from decaida import AnimacionDecaimiento
+from despertar import CarboncilloAnimado
 
 
 ESTADO_MENU = "menu"
@@ -333,7 +333,7 @@ class EventosVisuales:
         self.gif_game_over = []
         self.duracion_fotograma_gif = 0.1
         self.indice_imagen_game_over = 0
-        self.animacion_decaimiento = AnimacionDecaimiento(ancho, alto)
+        self.animacion_despertar = CarboncilloAnimado()
         self.game_over_nivel_alto_activo = False
 
         self.flashbacks_por_nivel = {
@@ -460,7 +460,7 @@ class EventosVisuales:
 
     def dibujar_game_over(self, lienzo, nivel, tiempo_ms, tiempo):
         if self.game_over_nivel_alto_activo:
-            self.animacion_decaimiento.dibujar(
+            self.animacion_despertar.dibujar(
                 lienzo, max(0.0, (tiempo_ms - self.inicio_game_over) / 1000)
             )
             return

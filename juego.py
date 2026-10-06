@@ -14,7 +14,7 @@ import numpy as np
 import pygame
 
 from dificultad import parametros_dificultad
-from despertar import play_wake_animation
+from catarsis import play_catarsis_animation
 from eventos import (
     ESTADO_ADVERTENCIA,
     ESTADO_GAME_OVER,
@@ -466,7 +466,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
         if estado == ESTADO_JUGANDO and nivel == 30 and not despertar_mostrado:
             despertar_mostrado = True
-            play_wake_animation(
+            play_catarsis_animation(
                 screen,
                 clock,
                 exit_text=texto(configuracion["idioma"], "exit"),

@@ -955,6 +955,82 @@ class AnimacionCatarsis:
             destino.blit(v, (0, 0))
 
 
+def play_catarsis_animation(
+    screen,
+    clock=None,
+    exit_text="EXIT",
+    exit_delay=5.0,
+    button_renderer=None,
+):
+    """Muestra Catarsis en la ventana actual hasta que se pulse salir."""
+    clock = clock or pygame.time.Clock()
+    animacion = AnimacionCatarsis(*screen.get_size())
+    animacion.iniciar()
+    inicio = pygame.time.get_ticks()
+
+    while True:
+        tiempo = (pygame.time.get_ticks() - inicio) / 1000.0
+        ancho, alto = screen.get_size()
+        if button_renderer is not None:
+            sx = ancho / button_renderer.ancho
+            sy = alto / button_renderer.alto
+            original = button_renderer.boton_salir
+            boton = pygame.Rect(
+                round(original.x * sx),
+                round(original.y * sy),
+                round(original.width * sx),
+                round(original.height * sy),
+            )
+            escala_ui = min(sx, sy) * button_renderer._escala()
+            fuente = pygame.font.SysFont(
+                "comicsansms", max(14, round(22 * escala_ui)), bold=True
+            )
+        else:
+            escala = min(ancho / W, alto / H)
+            fuente = pygame.font.SysFont(None, max(18, round(26 * escala)), bold=True)
+            boton = pygame.Rect(0, 0, 170, 54)
+            boton.bottomright = (ancho - 26, alto - 26)
+
+        for evento in pygame.event.get():
+            if evento.type == pygame.QUIT:
+                pygame.event.post(evento)
+                return False
+            if (
+                tiempo >= exit_delay
+                and evento.type == pygame.MOUSEBUTTONDOWN
+                and evento.button == pygame.BUTTON_LEFT
+                and boton.collidepoint(evento.pos)
+            ):
+                return False
+
+        animacion.dibujar(screen, tiempo)
+        hover = boton.collidepoint(pygame.mouse.get_pos())
+        if button_renderer is not None:
+            button_renderer.reloj_pulso = tiempo
+            rect_dibujo = button_renderer._dibujar_boton_comic(
+                screen, boton, hover
+            )
+            button_renderer._texto_centrado(
+                screen, exit_text, fuente, rect_dibujo.center, (255, 255, 255)
+            )
+        else:
+            pygame.draw.rect(
+                screen,
+                (105, 44, 58) if hover else (62, 38, 48),
+                boton,
+                border_radius=8,
+            )
+            pygame.draw.rect(screen, (245, 220, 190), boton, 2, border_radius=8)
+            superficie_texto = fuente.render(exit_text, True, (255, 255, 255))
+            screen.blit(
+                superficie_texto,
+                superficie_texto.get_rect(center=boton.center),
+            )
+
+        pygame.display.flip()
+        clock.tick(60)
+
+
 # ------------------------------------------------------------------ principal
 def main():
     try:

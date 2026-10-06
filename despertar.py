@@ -157,17 +157,19 @@ def build_tone(seed=7, grain_amount=1.0):
         line([(x0, y0 + 0.01), (0.42, yc), (0.62, yc + 0.005), (x1, y0)], w, 0.20, k=0.8)
     line([(0.35, 0.14), (0.44, 0.19), (0.50, 0.22)], 0.006, 0.18, k=0.8)
 
-    # ---- cejas: gruesas y enfadadas ----
-    line([(0.19, 0.215), (0.34, 0.145), (0.50, 0.175), (0.54, 0.265)], 0.030, 0.03, 0.050)
-    line([(0.62, 0.215), (0.72, 0.12), (0.82, 0.10)], 0.034, 0.03, 0.018)
-    line([(0.66, 0.15), (0.78, 0.13)], 0.006, 0.03, 0.003)
-    # pelos de las cejas
-    for _ in range(14):
-        u0 = rng.uniform(0.22, 0.5)
-        line([(u0, 0.16 + rng.uniform(0, .05)), (u0 + 0.03, 0.11 + rng.uniform(0, .04))], 0.003, 0.05, 0.002)
-    for _ in range(12):
-        u0 = rng.uniform(0.63, 0.80)
-        line([(u0, 0.17 + rng.uniform(-.02, .03)), (u0 + 0.03, 0.115 + rng.uniform(0, .03))], 0.003, 0.05, 0.002)
+    # ---- cejas arqueadas, parcialmente ocultas por las gafas ----
+    line([(0.19, 0.255), (0.29, 0.205), (0.40, 0.20), (0.49, 0.245)],
+         0.016, 0.04, 0.010)
+    line([(0.57, 0.245), (0.66, 0.20), (0.78, 0.205), (0.85, 0.255)],
+         0.016, 0.04, 0.010)
+    for _ in range(10):
+        u0 = rng.uniform(0.24, 0.46)
+        line([(u0, 0.21 + rng.uniform(0, .04)),
+              (u0 + 0.025, 0.19 + rng.uniform(0, .03))], 0.0025, 0.06, 0.0015)
+    for _ in range(10):
+        u0 = rng.uniform(0.62, 0.82)
+        line([(u0, 0.20 + rng.uniform(0, .04)),
+              (u0 + 0.025, 0.19 + rng.uniform(0, .03))], 0.0025, 0.06, 0.0015)
 
     # ---- cuencas y ojos ----
     eyes = [(0.335, 0.385, 0.135, 0.095, -0.08), (0.685, 0.365, 0.135, 0.095, -0.12)]
@@ -205,6 +207,16 @@ def build_tone(seed=7, grain_amount=1.0):
         line([(x, y + 0.052) for x, y in bot], 0.009, 0.16, 0.005, k=0.6)
         # contorno del globo ocular
         ink(smooth(1 - np.abs(ell(cx, cy, rx, ry, rot) - 1.0), 0.80, 1.0), 0.05, 0.9)
+
+    # ---- gafas redondas, rasgo principal del retrato de referencia ----
+    for cx, cy in [(0.335, 0.385), (0.685, 0.365)]:
+        marco = ell(cx, cy, 0.165, 0.135, rot=-0.04)
+        ink(smooth(1 - np.abs(marco - 1.0), 0.94, 1.0), 0.025, 1.0)
+        marco_interior = ell(cx, cy, 0.154, 0.124, rot=-0.04)
+        ink(smooth(1 - np.abs(marco_interior - 1.0), 0.94, 1.0), 0.09, 0.65)
+    line([(0.49, 0.365), (0.525, 0.35), (0.55, 0.36)], 0.012, 0.025)
+    line([(0.17, 0.36), (0.135, 0.34), (0.105, 0.35)], 0.009, 0.04, 0.005)
+    line([(0.85, 0.34), (0.89, 0.32), (0.92, 0.34)], 0.009, 0.04, 0.005)
 
     # patas de gallo / arrugas laterales
     line([(0.185, 0.36), (0.14, 0.40)], 0.005, 0.1)
@@ -257,7 +269,7 @@ def build_tone(seed=7, grain_amount=1.0):
     ink(smooth(1 - ell(0.275, 0.71, 0.02, 0.025), 0, 1.0), 0.03, 0.9)
 
     # ---- nariz bulbosa (se dibuja sobre la boca) ----
-    nose = ell(0.525, 0.628, 0.088, 0.078)
+    nose = ell(0.525, 0.628, 0.100, 0.085)
     ink(smooth(1 - nose, 0, 0.10), 0.97 - 0.32 * nose ** 3)
     ink(smooth(1 - np.abs(nose - 1.0), 0.80, 1.0) * ((U < 0.545) | (V > 0.66)), 0.05, 0.95)
     line([(0.445, 0.595), (0.447, 0.66), (0.50, 0.705)], 0.016, 0.04, 0.010)
@@ -266,23 +278,7 @@ def build_tone(seed=7, grain_amount=1.0):
     line([(0.49, 0.665), (0.515, 0.675)], 0.010, 0.10)
     ink(smooth(1 - ell(0.53, 0.72, 0.09, 0.022), 0, 1.0), 0.04, 0.5)
 
-    # ---- manos / puños bajo el mentón ----
-    finger_left = [(0.130, 0.20), (0.228, 0.22), (0.326, 0.23), (0.424, 0.24)]
-    for u0, w in finger_left:
-        tilt = 0.012
-        f = stroke([(u0 + tilt, 0.89), (u0 - tilt, 1.02)], 0.100, 0.096, soft=0.014, n=6)
-        ink(f, 0.90 - 0.18 * np.abs(U - u0) / 0.06)
-        line([(u0 + 0.046, 0.90), (u0 + 0.042, 1.02)], 0.011, 0.05)
-        line([(u0 - 0.03 + tilt, 0.895), (u0 + tilt, 0.91), (u0 + 0.03, 0.895)], 0.010, 0.10)
-    for u0 in [0.72, 0.81, 0.90, 0.99]:
-        f = stroke([(u0 - 0.01, 0.88), (u0 + 0.01, 1.02)], 0.090, 0.086, soft=0.014, n=6)
-        ink(f, 0.86 - 0.18 * np.abs(U - u0) / 0.06)
-        line([(u0 + 0.044, 0.89), (u0 + 0.050, 1.02)], 0.011, 0.05)
-        line([(u0 - 0.03, 0.885), (u0 + 0.0, 0.905), (u0 + 0.03, 0.89)], 0.005, 0.10)
-    ink(smooth(1 - ell(0.58, 1.0, 0.10, 0.07), 0, 1.0), 0.05, 0.9)   # sombra entre las manos
-    ink(smooth(1 - ell(0.96, 0.82, 0.04, 0.05), 0, 1.0), 0.20, 0.5)
-
-    # ---- sombra del cuello / mandíbula ----
+    # ---- sombras de la mandíbula ----
     ink(smooth(1 - ell(0.10, 0.80, 0.14, 0.18), 0, 1.0), 0.04, 0.8)
     ink(smooth(1 - ell(0.93, 0.70, 0.08, 0.14), 0, 1.0), 0.05, 0.7)
 

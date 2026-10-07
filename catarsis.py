@@ -10,13 +10,16 @@ susurro). Poco a poco su cuerpo se mueve, los párpados aletean, abre los ojos,
 las voces se quedan dormidas y se deshacen en burbujas, el cielo pasa de noche
 a amanecer, bosteza y sonríe.
 
-Además lleva grano de película animado, polvo y rayones sobre toda la imagen.
+Además lleva grano de película animado, polvo y rayones, una capa de pixelado y
+un tramado (dither) de sombras y luces que le da volumen a las formas planas.
+Los contornos usan curvas (splines / Bézier) en vez de polígonos rectos.
 
 Requisitos:  pip install pygame
 
 Controles:
   ESPACIO  -> adelantar el despertar
   G        -> activar / quitar el grano
+  P        -> activar / quitar el pixelado
   R        -> reiniciar
   M        -> silenciar / activar sonido
   ESC      -> salir
@@ -37,6 +40,8 @@ W, H = 640, 900
 FPS = 60
 T_DESPIERTA = 5.0          # segundo en que empieza a abrir los ojos
 T_REINICIO = 28.0          # segundo en que la escena se reinicia (en main)
+PIXEL = 2                  # tamaño del pixelado (1 = sin pixelar, 2-4 = más retro)
+CELDA = 2                  # tamaño de cada punto del tramado de sombras
 TAU = math.tau
 
 INK = (14, 14, 20)
@@ -88,8 +93,54 @@ def tpoly(s, col, pts, w):
         tline(s, col, a, b, w)
 
 
-def poli(s, relleno, pts, w):
-    """Polígono relleno con contorno de tinta grueso y esquinas redondeadas."""
+def bez(p0, p1, p2, n=6):
+    """Curva de Bézier cuadrática de p0 a p2 con control p1."""
+    out = []
+    for i in range(n + 1):
+        u = i / n
+        a, b, c = (1 - u) ** 2, 2 * u * (1 - u), u * u
+        out.append((a * p0[0] + b * p1[0] + c * p2[0], a * p0[1] + b * p1[1] + c * p2[1]))
+    return out
+
+
+def spline(pts, n=3):
+    """Catmull-Rom cerrada: convierte un polígono en un contorno curvo y continuo."""
+    m = len(pts)
+    out = []
+    for i in range(m):
+        p0, p1, p2, p3 = pts[i - 1], pts[i], pts[(i + 1) % m], pts[(i + 2) % m]
+        for k in range(n):
+            u = k / n
+            u2, u3 = u * u, u * u * u
+            out.append((0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * u + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * u2
+                               + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * u3),
+                        0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * u + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * u2
+                               + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * u3)))
+    return out
+
+
+def redondear(pts, r=22, n=6):
+    """Redondea las esquinas de un polígono con radio fijo (sin encoger los lados largos)."""
+    m = len(pts)
+    out = []
+    for i in range(m):
+        p0, p1, p2 = pts[i - 1], pts[i], pts[(i + 1) % m]
+        d1 = math.hypot(p0[0] - p1[0], p0[1] - p1[1]) or 1.0
+        d2 = math.hypot(p2[0] - p1[0], p2[1] - p1[1]) or 1.0
+        r1, r2 = min(r, d1 / 2), min(r, d2 / 2)
+        a = (p1[0] + (p0[0] - p1[0]) / d1 * r1, p1[1] + (p0[1] - p1[1]) / d1 * r1)
+        b = (p1[0] + (p2[0] - p1[0]) / d2 * r2, p1[1] + (p2[1] - p1[1]) / d2 * r2)
+        out += bez(a, p1, b, n)
+    return out
+
+
+def poli(s, relleno, pts, w, modo=None, r=22):
+    """Polígono relleno con contorno de tinta grueso.
+    modo 'spline' = contorno orgánico; 'redondo' = esquinas redondeadas; None = recto."""
+    if modo == "spline":
+        pts = spline(pts)
+    elif modo == "redondo":
+        pts = redondear(pts, r)
     pygame.draw.polygon(s, relleno, pts)
     tpoly(s, INK, list(pts) + [pts[0]], w)
 
@@ -206,6 +257,53 @@ def dibujar_espiral(s):
         pygame.draw.ellipse(s, (60, 60, 66), (x - 7, 12, 14, 9))          # agujero
         pygame.draw.rect(s, (28, 28, 34), (x - 5, 2, 10, 24), border_radius=5)
         pygame.draw.rect(s, (150, 150, 160), (x - 2, 5, 3, 16), border_radius=2)
+
+
+# ------------------------------------------------------------------ tramado de píxeles
+# Matriz de Bayer 4x4: decide qué puntos se encienden para simular medios tonos.
+BAYER = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
+SOMBRA_MULT = (150, 160, 212)      # multiplica: oscurece/enfría las zonas claras (la tinta no cambia)
+LUZ_ADD = (36, 30, 12)             # suma: brillo cálido en las zonas iluminadas
+
+
+def crear_tramado(fase):
+    """Capas de sombra (multiplicar) y luz (sumar) con puntos ordenados.
+    La luz viene de arriba a la derecha; abajo a la izquierda queda en sombra."""
+    w, h = W // CELDA, H // CELDA
+    sombra = pygame.Surface((w, h))
+    luz = pygame.Surface((w, h))
+    sombra.fill((255, 255, 255))
+    luz.fill((0, 0, 0))
+    for y in range(h):
+        v = y / h
+        fila = BAYER[(y + fase) & 3]
+        for x in range(w):
+            u = x / w
+            claridad = 0.55 * u + 0.45 * (1 - v)
+            umbral = (fila[(x + fase) & 3] + 0.5) / 16
+            if (0.55 - claridad) / 0.55 > umbral:
+                sombra.set_at((x, y), SOMBRA_MULT)
+            elif (claridad - 0.64) / 0.36 > umbral:
+                luz.set_at((x, y), LUZ_ADD)
+    return (pygame.transform.scale(sombra, (W, H)), pygame.transform.scale(luz, (W, H)))
+
+
+def tramado(fase):
+    if "tramado" not in _CACHE:
+        _CACHE["tramado"] = [crear_tramado(0), crear_tramado(1)]
+    return _CACHE["tramado"][fase & 1]
+
+
+def precalentar():
+    """Crea las texturas pesadas una sola vez (llamar tras abrir la ventana)."""
+    grano()
+    tramado(0)
+
+
+def pixelar(destino, tam):
+    if tam > 1:
+        chico = pygame.transform.scale(destino, (W // tam, H // tam))
+        destino.blit(pygame.transform.scale(chico, (W, H)), (0, 0))
 
 
 # ------------------------------------------------------------------ grano de película
@@ -428,8 +526,8 @@ class Ente:
             ondas_voz(s, px, py, largo, ux, uy, t, self.seed, fuerza * k)
 
         pts = blob_points(px, py, rx, ry, self.rot, self.seed, t, 1 + 1.5 * fuerza)
-        pygame.draw.polygon(s, mix(bg, (0, 0, 30), 0.35), [(x + 8, y + 10) for x, y in pts])
-        poli(s, papel, pts, 5)
+        pygame.draw.polygon(s, mix(bg, (0, 0, 30), 0.35), [(x + 8, y + 10) for x, y in spline(pts)])
+        poli(s, papel, pts, 5, "spline")
         self.rayado(s, px, py, rx, ry)
         if k < 0.35:
             return
@@ -529,30 +627,31 @@ class Personaje:
 
     # ---- cuerpo, bata y suéter
     def cuerpo(self, s, cx, top):
-        pygame.draw.polygon(s, (168, 168, 174),
-                            [(cx - 100, top - 15), (cx + 100, top - 15), (cx + 140, H), (cx - 140, H)])
+        pygame.draw.polygon(s, (168, 168, 174), redondear(
+            [(cx - 100, top - 15), (cx + 100, top - 15), (cx + 140, H + 80), (cx - 140, H + 80)], 30))
         y = top + 14
         while y < H:
             w = 100 + (y - top) * 0.2
             pygame.draw.line(s, (112, 112, 122), (cx - w, y), (cx + w, y), 4)
             y += 15
         # sombra a la izquierda (como en el dibujo)
-        pygame.draw.polygon(s, INK, [(cx - 100, top - 15), (cx - 30, top - 15), (cx - 55, H), (cx - 140, H)])
+        pygame.draw.polygon(s, INK, redondear(
+            [(cx - 100, top - 15), (cx - 30, top - 15), (cx - 55, H + 80), (cx - 140, H + 80)], 26))
         for yy in range(int(top) + 6, H, 11):
             pygame.draw.line(s, (80, 80, 92), (cx - 28, yy), (cx - 6, yy - 10), 4)
         for side in (-1, 1):
             pts = [(cx + side * 100, top - 15), (cx + side * 235, top + 45),
-                   (cx + side * 320, H), (cx + side * 140, H)]
-            poli(s, (240, 238, 234), pts, 6)
+                   (cx + side * 320, H + 80), (cx + side * 140, H + 80)]
+            poli(s, (240, 238, 234), pts, 6, "redondo", 40)
             tline(s, INK, (cx + side * 100, top - 15), (cx + side * 84, top + 80), 5)
             tline(s, INK, (cx + side * 170, top + 20), (cx + side * 200, top + 160), 4)
 
     def cuello(self, s, cx, hy, top, jaw):
         pts = [(cx - 52, hy + 100), (cx + 52, hy + 100), (cx + 58, top), (cx - 58, top)]
-        poli(s, PIEL, pts, 6)
+        poli(s, PIEL, pts, 6, "redondo", 16)
         # hachurado bajo la barbilla
-        pygame.draw.polygon(s, INK, [(cx - 56, hy + 120), (cx + 56, hy + 120),
-                                     (cx + 40, hy + 175 + jaw), (cx - 40, hy + 175 + jaw)])
+        pygame.draw.polygon(s, INK, redondear([(cx - 56, hy + 120), (cx + 56, hy + 120),
+                                               (cx + 40, hy + 175 + jaw), (cx - 40, hy + 175 + jaw)], 14))
         for i in range(-5, 6):
             x = cx + i * 9
             tline(s, PIEL, (x, hy + 178 + jaw), (x + 12, hy + 215 + jaw), 4)
@@ -573,8 +672,8 @@ class Personaje:
         tb = int(t * 10)
         pygame.draw.ellipse(s, INK, (hc[0] - 172, hc[1] - 185, 344, 340))
         for side in (-1, 1):
-            pygame.draw.polygon(s, INK, [(cx + side * (RX - 4), hy - 60), (cx + side * (RX + 24), hy - 40),
-                                         (cx + side * (RX + 26), hy + 70), (cx + side * (RX - 8), hy + 100)])
+            pygame.draw.polygon(s, INK, redondear([(cx + side * (RX - 4), hy - 60), (cx + side * (RX + 24), hy - 40),
+                                                   (cx + side * (RX + 26), hy + 70), (cx + side * (RX - 8), hy + 100)], 18))
         for idx, (fr, L0, ao, ph, wd) in enumerate(self.pinchos):
             a = math.pi * 0.88 + fr * math.pi * 1.24
             bx = hc[0] + 168 * math.cos(a) - math.cos(a) * 12
@@ -584,7 +683,11 @@ class Personaje:
             tip = (bx + math.cos(ang) * L + ruido(idx, tb) * 1.4,
                    by + math.sin(ang) * L + ruido(idx + 99, tb) * 1.4)
             nx, ny = -math.sin(ang), math.cos(ang)
-            pygame.draw.polygon(s, INK, [(bx + nx * wd, by + ny * wd), tip, (bx - nx * wd, by - ny * wd)])
+            rizo = wd * 0.9 * math.sin(ph)                      # cada mechón se curva a un lado
+            mx, my_ = (bx + tip[0]) / 2, (by + tip[1]) / 2
+            izq = bez((bx + nx * wd, by + ny * wd), (mx + nx * (wd * 0.55 + rizo), my_ + ny * (wd * 0.55 + rizo)), tip, 5)
+            der = bez(tip, (mx - nx * (wd * 0.55 - rizo), my_ - ny * (wd * 0.55 - rizo)), (bx - nx * wd, by - ny * wd), 5)
+            pygame.draw.polygon(s, INK, izq + der[1:])
 
     def flequillo_dibujar(self, s, cx, hy, t):
         y0 = hy - 132
@@ -592,13 +695,16 @@ class Personaje:
         wdt = 2 * RX + 16
         n = len(self.flequillo)
         step = wdt / n
-        pts = [(left, hy - 185), (left + wdt, hy - 185), (left + wdt, y0)]
-        for i in range(n - 1, -1, -1):
-            xt = left + (i + 0.5) * step + math.sin(t * 1.2 + i) * 1.2
+        pygame.draw.polygon(s, INK, [(left, hy - 185), (left + wdt, hy - 185), (left + wdt, y0 + 2), (left, y0 + 2)])
+        for i in range(n):
+            xa, xb = left + i * step, left + (i + 1) * step
+            xt = left + (i + 0.5) * step + math.sin(t * 1.2 + i) * 1.2 + (i % 3 - 1) * 4
             L = self.flequillo[i] + math.sin(t * 1.7 + i) * 1.5
-            pts.append((xt, y0 + L + ruido(i, int(t * 10)) * 1.2))
-            pts.append((left + i * step, y0))
-        pygame.draw.polygon(s, INK, pts)
+            yt = y0 + L + ruido(i, int(t * 10)) * 1.2
+            curva = 5 * math.sin(i * 1.7)                           # mechones curvados, no triángulos
+            izq = bez((xa - 1, y0), (xa + step * 0.12 + curva, y0 + L * 0.7), (xt, yt), 5)
+            der = bez((xt, yt), (xb - step * 0.12 + curva, y0 + L * 0.55), (xb + 1, y0), 5)
+            pygame.draw.polygon(s, INK, izq + der[1:])
 
     # ---- ojo grande del dibujo (abierto, entornado o cerrado)
     def ojo(self, s, ex, ey, R, op, lx, ly, pr):
@@ -671,7 +777,7 @@ class Personaje:
             pygame.draw.ellipse(s, PIEL, r)
             pygame.draw.ellipse(s, INK, r, 6)
             arco(s, INK, r.x + 17, r.y + 29, 9, 15, 0.5, 4.5, 4)
-        poli(s, PIEL, pts, 8)
+        poli(s, PIEL, pts, 8, "spline")
 
         # arrugas de las mejillas (líneas del dibujo)
         for side in (-1, 1):
@@ -889,7 +995,7 @@ def componer(canvas, e, dt, mundo, pers):
     dibujar_espiral(canvas)
 
 
-def postproceso(canvas, e, mundo, destino, con_grano=True):
+def postproceso(canvas, e, mundo, destino, con_grano=True, pixel=PIXEL):
     t = mundo.t
     zoom = 1.0 + 0.04 * (1 - smooth(4.5, 12.0, t)) + 0.006 * math.sin(t * 0.5) + 0.01 * mundo.pulso * e.sueno
     zw, zh = int(W * zoom), int(H * zoom)
@@ -901,6 +1007,13 @@ def postproceso(canvas, e, mundo, destino, con_grano=True):
         destino.blit(pygame.transform.smoothscale(canvas, (zw, zh)), (ox, oy))
     else:
         destino.blit(canvas, (ox, oy))
+
+    # capa de pixelado + tramado: rompe lo plano y da volumen con puntos de sombra y luz
+    pixelar(destino, pixel)
+    if pixel > 1 or CELDA > 1:
+        sombra, luz = tramado(int(t * 6))
+        destino.blit(sombra, (0, 0), special_flags=pygame.BLEND_RGB_MULT)
+        destino.blit(luz, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
 
     velo(destino, (6, 10, 40), 58 * e.sueno)                 # penumbra del sueño
     velo(destino, (255, 206, 140), 30 * e.alba)               # luz cálida de la mañana
@@ -925,6 +1038,7 @@ class AnimacionCatarsis:
         self.personaje = Personaje()
         self.inicio = 0.0
         self.ultimo_tiempo = None
+        precalentar()
 
     def iniciar(self):
         self.mundo.reiniciar()
@@ -1043,11 +1157,13 @@ def main():
     except Exception:
         screen = pygame.display.set_mode((W, H))
     pygame.display.set_caption("Las voces - el despertar")
+    precalentar()
     clock = pygame.time.Clock()
     mundo = Mundo()
     pers = Personaje()
     canvas = pygame.Surface((W, H))
     con_grano = True
+    pixelado = PIXEL
 
     latido = murmullo = campana = None
     sonido = True
@@ -1073,6 +1189,8 @@ def main():
                     pers = Personaje()
                 if ev.key == pygame.K_g:
                     con_grano = not con_grano
+                if ev.key == pygame.K_p:
+                    pixelado = 1 if pixelado > 1 else PIXEL
                 if ev.key == pygame.K_SPACE and mundo.t < T_DESPIERTA - 0.5:
                     mundo.t = T_DESPIERTA - 0.5
                 if ev.key == pygame.K_m and latido:
@@ -1093,7 +1211,7 @@ def main():
                 campana.play()
 
         componer(canvas, e, dt, mundo, pers)
-        postproceso(canvas, e, mundo, screen, con_grano)
+        postproceso(canvas, e, mundo, screen, con_grano, pixelado)
 
         # final: se desvanece a negro y vuelve a empezar
         fin = mundo.t - (T_REINICIO - 3.0)

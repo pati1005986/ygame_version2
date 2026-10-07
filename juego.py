@@ -212,9 +212,45 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     pygame.init()
     if not pygame.mixer.get_init():
         pygame.mixer.init()
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    configuracion_guardada = cargar_configuracion()
+    configuracion = normalizar_configuracion(configuracion_guardada)
+    configuracion["resoluciones"] = MenuOpciones.RESOLUCIONES
+    configuracion["idioma"] = configuracion.get("idioma", idioma_inicial)
+    if configuracion["idioma"] not in idiomas_disponibles:
+        configuracion["idioma"] = idioma_inicial
+    configuracion["resolucion"] = max(
+        0,
+        min(
+            configuracion.get("resolucion", 0),
+            len(MenuOpciones.RESOLUCIONES) - 1,
+        ),
+    )
+    configuracion["pantalla_completa"] = bool(
+        configuracion.get("pantalla_completa", False)
+    )
+    configuracion["volumen_musica"] = max(
+        0.0, min(1.0, float(configuracion.get("volumen_musica", 0.8)))
+    )
+    configuracion["volumen_efectos"] = max(
+        0.0, min(1.0, float(configuracion.get("volumen_efectos", 0.8)))
+    )
+    configuracion["escala_ui"] = float(configuracion.get("escala_ui", 1.0))
+    if configuracion["escala_ui"] not in MenuOpciones.ESCALAS_UI:
+        configuracion["escala_ui"] = 1.0
+    configuracion["controles"] = MenuOpciones.DEFAULTS["controles"].copy()
+    configuracion["controles"].update(
+        configuracion_guardada.get("controles", {})
+    )
+
+    resolucion = MenuOpciones.RESOLUCIONES[configuracion["resolucion"]]
+    flags_pantalla = (
+        pygame.FULLSCREEN if configuracion["pantalla_completa"] else 0
+    )
+    screen = pygame.display.set_mode(resolucion, flags_pantalla)
     lienzo = pygame.Surface((WIDTH, HEIGHT))
-    pygame.display.set_caption(texto(idioma_inicial, "window_title"))
+    pygame.display.set_caption(
+        texto(configuracion["idioma"], "window_title")
+    )
     clock = pygame.time.Clock()
     font = pygame.font.Font(None, 36)
     font_advertencia_titulo = pygame.font.Font(None, 46)
@@ -267,22 +303,6 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     nivel = max(1, int(nivel_inicial))
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
     particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
-
-    configuracion_guardada = cargar_configuracion()
-    configuracion = normalizar_configuracion(configuracion_guardada)
-    configuracion["resoluciones"] = MenuOpciones.RESOLUCIONES
-    configuracion["idioma"] = configuracion.get("idioma", idioma_inicial)
-    if configuracion["idioma"] not in {"en", "es", "pt", "ru"}:
-        configuracion["idioma"] = idioma_inicial
-    configuracion["resolucion"] = max(0, min(configuracion.get("resolucion", 0), len(MenuOpciones.RESOLUCIONES) - 1))
-    configuracion["pantalla_completa"] = bool(configuracion.get("pantalla_completa", False))
-    configuracion["volumen_musica"] = max(0.0, min(1.0, float(configuracion.get("volumen_musica", 0.8))))
-    configuracion["volumen_efectos"] = max(0.0, min(1.0, float(configuracion.get("volumen_efectos", 0.8))))
-    configuracion["escala_ui"] = float(configuracion.get("escala_ui", 1.0))
-    if configuracion["escala_ui"] not in MenuOpciones.ESCALAS_UI:
-        configuracion["escala_ui"] = 1.0
-    configuracion["controles"] = MenuOpciones.DEFAULTS["controles"].copy()
-    configuracion["controles"].update(configuracion_guardada.get("controles", {}))
 
     jugador = PersonajeHumanoide(
         *POS_SPAWN,

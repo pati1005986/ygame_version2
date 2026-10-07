@@ -311,21 +311,26 @@ def _dibujar_caleidoscopio(superficie, centro, radio, hue_base, tiempo, ancho, a
     superficie.blit(capa, (0, 0))
 
 
-_CACHE_CIUDAD = {}
-
-# Opacidad máxima de la ciudad sobre el fondo abstracto (0-255).
-_ALPHA_CIUDAD = 235
-# Altura de la calle en la parte inferior de la pantalla.
-_ALTO_SUELO = 22
-# Color de "tinta de cómic" para los contornos, igual que en el resto del fondo.
-_TINTA = (18, 14, 28)
-# Cuántas ciudades distintas se guardan (una por matiz cuantizado).
-_MAX_CIUDADES_CACHE = 6
-
-
 # ---------------------------------------------------------------------------
-# Utilidades de color y de dibujo
+# Lluvia de caras pensativas
+# A medida que suben los niveles caen más caras, más grandes y más
+# deformes/psicodélicas, hasta que el fondo entero se llena de ellas.
 # ---------------------------------------------------------------------------
+
+_TINTA = (18, 14, 28)          # tinta de cómic para los contornos
+_TAMANOS_CARA = (24, 36, 52)   # radios base: lejos, medio, cerca
+_ALPHA_CARA = (150, 205, 245)  # las lejanas son más translúcidas
+_PESOS_TAM = (0.45, 0.35, 0.20)
+_NUM_HUES_CARA = 6
+_ANGULOS_CARA = (-12, -6, 0, 6, 12)  # inclinaciones pre-renderizadas (balanceo)
+_ESCALA_ESTILO = (1.0, 1.1, 1.2)
+_CARAS_MIN = 6
+_CARAS_MAX = 68
+_GOTAS_MAX = 170
+
+_LLUVIA = {"dim": None, "estilo": -1, "sprites": [], "caras": [], "gotas": [], "t": None}
+_CACHE_VINETA = {}
+
 
 def _c(hue, sat, val):
     """Color RGB (tupla de enteros) a partir de matiz/saturación/valor."""
@@ -337,413 +342,225 @@ def _mezclar(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
-def _degradado_vertical(capa, ancho, y0, y1, paradas):
-    """Degradado vertical con varias paradas [(t, color), ...] con t en 0..1."""
-    total = max(1, y1 - y0)
-    for y in range(y0, y1):
-        t = (y - y0) / total
-        color = paradas[-1][1]
-        for k in range(len(paradas) - 1):
-            t0, c0 = paradas[k]
-            t1, c1 = paradas[k + 1]
-            if t <= t1:
-                u = 0.0 if t1 == t0 else max(0.0, min(1.0, (t - t0) / (t1 - t0)))
-                color = _mezclar(c0, c1, u)
-                break
-        pygame.draw.line(capa, color, (0, y), (ancho, y))
+def _crear_cara(R, hue, estilo, rng):
+    """Dibuja una cara pensativa (ceja alzada, mirada arriba, mano en la
+    barbilla y burbujas de pensamiento). Devuelve sus frames inclinados.
 
-
-def _crear_resplandor(radio, color, alpha_max, pasos=24):
-    """Sprite con un resplandor radial suave (círculos concéntricos)."""
-    radio = max(2, int(radio))
-    sprite = pygame.Surface((radio * 2, radio * 2), pygame.SRCALPHA)
-    for i in range(pasos, 0, -1):
-        f = i / pasos
-        alpha = int(alpha_max * (1 - f) ** 2)
-        pygame.draw.circle(sprite, (*color, alpha), (radio, radio), max(1, int(radio * f)))
-    return sprite
-
-
-def _niebla(capa, ancho, y0, y1, color, alpha_max):
-    """Velo de bruma que sube desde el suelo: separa las capas del skyline
-    y da sensación de profundidad atmosférica."""
-    alto_velo = max(1, y1 - y0)
-    velo = pygame.Surface((ancho, alto_velo), pygame.SRCALPHA)
-    for y in range(alto_velo):
-        t = y / alto_velo
-        pygame.draw.line(velo, (*color, int(alpha_max * t ** 1.3)), (0, y), (ancho, y))
-    capa.blit(velo, (0, y0))
-
-
-# ---------------------------------------------------------------------------
-# Cielo: degradado crepuscular, estrellas, luna con cráteres y nubes planas
-# ---------------------------------------------------------------------------
-
-def _dibujar_nube(capa, cx, cy, escala, color, color_sombra):
-    """Nube estilo cartoon: base plana, cúmulos redondos y una sombra inferior."""
-    w = int(230 * escala)
-    h = int(86 * escala)
-    nube = pygame.Surface((w, h + 8), pygame.SRCALPHA)
-    burbujas = ((0.20, 0.62, 0.30), (0.40, 0.46, 0.42), (0.62, 0.52, 0.36), (0.80, 0.66, 0.26))
-    for dy, col in ((5, color_sombra), (0, color)):
-        for bx, by, br in burbujas:
-            pygame.draw.circle(nube, col, (int(bx * w), int(by * h) + dy), int(br * h))
-        pygame.draw.rect(nube, col, (int(0.14 * w), int(0.60 * h) + dy, int(0.72 * w), int(0.32 * h)))
-        r_borde = max(2, int(0.16 * h))
-        pygame.draw.circle(nube, col, (int(0.14 * w), int(0.76 * h) + dy), r_borde)
-        pygame.draw.circle(nube, col, (int(0.86 * w), int(0.76 * h) + dy), r_borde)
-    capa.blit(nube, (int(cx - w / 2), int(cy)))
-
-
-def _dibujar_cielo(capa, ancho, alto, hue_base, rng):
-    """Devuelve (color_horizonte, color_medio, centro_luna, radio_luna)."""
-    cima = _c(hue_base, 0.10, 0.34)
-    medio = _c(hue_base, 0.08, 0.56)
-    horizonte = _c(hue_base + 0.05, 0.10, 0.74)
-    _degradado_vertical(capa, ancho, 0, alto, [(0.0, cima), (0.55, medio), (1.0, horizonte)])
-
-    luna = (int(ancho * 0.78), int(alto * 0.25))
-    r_luna = max(18, int(min(ancho, alto) * 0.055))
-
-    # Estrellas: más densas arriba, se desvanecen hacia el horizonte.
-    estrellas = pygame.Surface((ancho, alto), pygame.SRCALPHA)
-    tope = alto * 0.5
-    for _ in range(max(10, (ancho * alto) // 30000)):
-        x = rng.randrange(max(1, ancho))
-        y = int((rng.random() ** 1.4) * tope)
-        if math.hypot(x - luna[0], y - luna[1]) < r_luna * 2.2:
-            continue
-        alpha = min(255, int(90 * (1 - y / tope) ** 1.1) + 15)
-        col = (255, 255, 245, alpha)
-        sorteo = rng.random()
-        if sorteo < 0.07:  # destello en cruz
-            pygame.draw.line(estrellas, col, (x - 4, y), (x + 4, y), 1)
-            pygame.draw.line(estrellas, col, (x, y - 4), (x, y + 4), 1)
-        elif sorteo < 0.25:
-            pygame.draw.circle(estrellas, col, (x, y), 2)
-        else:
-            pygame.draw.circle(estrellas, col, (x, y), 1)
-    capa.blit(estrellas, (0, 0))
-
-    # Halo grande y suave alrededor de la luna.
-    halo = _crear_resplandor(int(min(ancho, alto) * 0.34), _c(hue_base, 0.08, 0.85), 70)
-    capa.blit(halo, (luna[0] - halo.get_width() // 2, luna[1] - halo.get_height() // 2))
-
-    # Luna con contorno de tinta y cráteres, como un dibujo de cómic.
-    disco = _c(hue_base, 0.05, 0.80)
-    sombra_disco = _mezclar(disco, medio, 0.35)
-    pygame.draw.circle(capa, disco, luna, r_luna)
-    for dx, dy, k in ((-0.35, -0.20, 0.22), (0.30, 0.25, 0.16), (0.10, -0.45, 0.12)):
-        pygame.draw.circle(
-            capa, sombra_disco,
-            (int(luna[0] + dx * r_luna), int(luna[1] + dy * r_luna)),
-            max(2, int(r_luna * k)),
-        )
-    pygame.draw.circle(capa, _TINTA, luna, r_luna, 3)
-
-    # Nubes planas repartidas por el cielo (esquivando la luna).
-    color_nube = _mezclar(medio, (150, 150, 155), 0.35)
-    sombra_nube = _mezclar(medio, cima, 0.45)
-    for i in range(7):
-        x = ancho * (0.04 + i * 0.15) + rng.uniform(-40, 40)
-        y = alto * rng.uniform(0.10, 0.40)
-        escala = rng.uniform(0.7, 1.4)
-        if math.hypot(x - luna[0], y - luna[1]) < r_luna * 3.5:
-            x -= r_luna * 7
-        _dibujar_nube(capa, x, y, escala, (*color_nube, 210), (*sombra_nube, 140))
-
-    return horizonte, medio, luna, r_luna
-
-
-# ---------------------------------------------------------------------------
-# Edificios
-# ---------------------------------------------------------------------------
-
-def _generar_skyline(rng, ancho, ancho_min, ancho_max, h_min, h_max, hueco):
-    """Lista de (x, ancho, alto). La altura sigue una onda suave (zonas de
-    rascacielos y zonas bajas) mezclada con azar, para que no sea una peineta."""
-    edificios = []
-    fase = rng.uniform(0, math.tau)
-    x = -rng.randint(0, ancho_min)
-    while x < ancho:
-        w = rng.randint(ancho_min, ancho_max)
-        onda = 0.5 + 0.5 * math.sin(x / max(1, ancho) * math.tau * 1.6 + fase)
-        factor = 0.55 * onda + 0.45 * rng.random()
-        edificios.append((x, w, int(h_min + (h_max - h_min) * factor)))
-        x += w + hueco
-    return edificios
-
-
-def _dibujar_remate(capa, brillo, tipo, x, y, w, color, sombra, hue_base, rng, balizas):
-    """Remate del techo. ``balizas`` recoge luces que parpadean en vivo."""
-    if tipo == 0:
-        # Escalonado (ziggurat): dos bloques cada vez más angostos.
-        inset = max(3, w // 5)
-        inset2 = inset + max(2, w // 8)
-        for ix, alto_r, y_r in ((inset, 12, y - 12), (inset2, 8, y - 20)):
-            rect = (x + ix, y_r, max(3, w - ix * 2), alto_r)
-            pygame.draw.rect(capa, color, rect)
-            pygame.draw.rect(capa, _TINTA, rect, 2)
-    elif tipo == 1:
-        # Tejado a dos aguas con una mitad en sombra.
-        cima = (x + w / 2, y - max(14, w // 2))
-        pygame.draw.polygon(capa, color, [cima, (x, y), (x + w, y)])
-        pygame.draw.polygon(capa, sombra, [cima, (x, y), (x + w / 2, y)])
-        pygame.draw.polygon(capa, _TINTA, [cima, (x, y), (x + w, y)], 2)
-    elif tipo == 2:
-        # Antena con travesaño y baliza roja parpadeante.
-        bx = x + w // 2
-        pygame.draw.line(capa, _TINTA, (bx, y), (bx, y - 30), 2)
-        pygame.draw.line(capa, _TINTA, (bx - 5, y - 21), (bx + 5, y - 21), 2)
-        rojo = (255, 70, 70)
-        pygame.draw.circle(capa, rojo, (bx, y - 31), 3)
-        balizas.append((bx, y - 31, rojo))
-    elif tipo == 3:
-        # Tanque de agua sobre patas.
-        r = max(5, w // 4)
-        centro = (int(x + w * 0.5), int(y - r - 5))
-        for dx in (-r * 0.6, r * 0.6):
-            pygame.draw.line(capa, _TINTA, (centro[0] + dx, centro[1] + r), (centro[0] + dx * 1.4, y), 2)
-        pygame.draw.circle(capa, color, centro, r)
-        pygame.draw.circle(capa, sombra, (centro[0] - r // 3, centro[1]), max(2, r - r // 3))
-        pygame.draw.circle(capa, color, (centro[0] + r // 4, centro[1]), max(2, r - r // 3))
-        pygame.draw.circle(capa, _TINTA, centro, r, 2)
-    elif tipo == 4:
-        # Cúpula (semicírculo calculado a mano).
-        r = max(6, w // 2 - 2)
-        cx = x + w // 2
-        arco = [
-            (cx + math.cos(math.pi + math.pi * i / 12) * r, y + math.sin(math.pi + math.pi * i / 12) * r)
-            for i in range(13)
-        ]
-        pygame.draw.polygon(capa, color, arco)
-        pygame.draw.polygon(capa, _TINTA, arco, 2)
-        pygame.draw.line(capa, _TINTA, (cx, y - r), (cx, y - r - 8), 2)
-    else:
-        # Letrero luminoso con patas.
-        neon = _c(hue_base + 0.35 + rng.random() * 0.4, 0.40, 0.80)
-        rect = (x + 3, y - 16, max(6, w - 6), 10)
-        for px in (x + 6, x + w - 7):
-            pygame.draw.line(capa, _TINTA, (px, y), (px, y - 6), 2)
-        pygame.draw.rect(capa, neon, rect)
-        pygame.draw.rect(capa, _TINTA, rect, 2)
-        pygame.draw.rect(brillo, (*neon, 70), (rect[0] - 4, rect[1] - 4, rect[2] + 8, rect[3] + 8))
-
-
-def _dibujar_capa_lejana(capa, edificios, y_suelo, color, rng):
-    """Silueta plana, sin detalle: la niebla la desdibuja después."""
-    borde = _mezclar(color, _TINTA, 0.25)
-    for x, w, h in edificios:
-        y = y_suelo - h
-        pygame.draw.rect(capa, color, (x, y, w, h + _ALTO_SUELO))
-        pygame.draw.rect(capa, borde, (x, y, w, h), 1)
-        if rng.random() < 0.25:  # alguna antena o aguja
-            pygame.draw.line(capa, borde, (x + w // 2, y), (x + w // 2, y - rng.randint(8, 18)), 2)
-
-
-def _dibujar_capa_media(capa, edificios, y_suelo, color, sombra, ventana, rng):
-    """Edificios intermedios: volumen sencillo y ventanitas escasas."""
-    borde = _mezclar(color, _TINTA, 0.55)
-    for x, w, h in edificios:
-        y = y_suelo - h
-        rect = (x, y, w, h + _ALTO_SUELO)
-        pygame.draw.rect(capa, color, rect)
-        pygame.draw.rect(capa, sombra, (x, y, max(3, w // 4), h + _ALTO_SUELO))
-        pygame.draw.rect(capa, borde, rect, 2)
-        for wy in range(y + 8, y_suelo - 6, 10):
-            for wx in range(x + 5, x + w - 5, 8):
-                if rng.random() < 0.16:
-                    pygame.draw.rect(capa, ventana, (wx, wy, 2, 3))
-
-
-def _dibujar_capa_cercana(capa, brillo, edificios, y_suelo, hue_base, nivel, colores, rng, balizas):
-    """Capa frontal: volumen cel-shaded, luz de borde, ventanas con brillo,
-    remates variados y tiendas con toldo en la planta baja."""
-    color, sombra, luz, calido, frio, apagada = colores
-    for indice, (x, w, h) in enumerate(edificios):
-        y = y_suelo - h
-        rect = (x, y, w, h + _ALTO_SUELO)
-        lado = max(4, w // 4)
-
-        pygame.draw.rect(capa, color, rect)
-        pygame.draw.rect(capa, sombra, (x, y, lado, h + _ALTO_SUELO))          # cara en sombra
-        pygame.draw.rect(capa, luz, (x + w - 4, y + 2, 2, h + _ALTO_SUELO))   # luz de borde
-        pygame.draw.rect(capa, _TINTA, rect, 2)
-
-        _dibujar_remate(capa, brillo, (indice + nivel) % 6, x, y, w, color, sombra, hue_base, rng, balizas)
-
-        # Baliza en los edificios más altos.
-        if h > (y_suelo * 0.42) and (indice + nivel) % 6 != 2:
-            rojo = (255, 70, 70)
-            pygame.draw.circle(capa, rojo, (x + w - 6, y - 3), 2)
-            balizas.append((x + w - 6, y - 3, rojo))
-
-        # Ventanas: hay pisos enteros encendidos y otros casi apagados.
-        for wy in range(y + 10, y_suelo - 26, 13):
-            piso_activo = rng.random() < 0.30
-            for wx in range(x + 5, x + w - 9, 9):
-                if rng.random() < (0.55 if piso_activo else 0.06):
-                    col = calido if rng.random() < 0.7 else frio
-                    pygame.draw.rect(capa, col, (wx, wy, 5, 7))
-                    pygame.draw.rect(brillo, (*col, 55), (wx - 3, wy - 3, 11, 13))
-                else:
-                    pygame.draw.rect(capa, apagada, (wx, wy, 5, 7))
-
-        # Tienda en la planta baja: vitrina iluminada y toldo de color.
-        if w >= 30 and rng.random() < 0.7:
-            ty = y_suelo - 12
-            toldo = _c(hue_base + 0.30 + rng.random() * 0.5, 0.30, 0.62)
-            pygame.draw.rect(capa, calido, (x + 4, ty + 4, w - 8, 8))
-            pygame.draw.rect(capa, toldo, (x + 3, ty, w - 6, 5))
-            pygame.draw.rect(capa, _TINTA, (x + 3, ty, w - 6, 5), 1)
-            pygame.draw.rect(brillo, (*calido, 70), (x + 2, ty + 2, w - 4, 12))
-
-
-# ---------------------------------------------------------------------------
-# Calle y farolas
-# ---------------------------------------------------------------------------
-
-def _dibujar_calle(capa, ancho, alto, y_suelo, color_cerca, horizonte):
-    asfalto = _mezclar(color_cerca, _TINTA, 0.5)
-    pygame.draw.rect(capa, asfalto, (0, y_suelo, ancho, _ALTO_SUELO))
-    pygame.draw.line(capa, _TINTA, (0, y_suelo), (ancho, y_suelo), 3)
-    pygame.draw.line(capa, _mezclar(asfalto, horizonte, 0.3), (0, y_suelo + 3), (ancho, y_suelo + 3), 1)
-    marca = _mezclar(asfalto, (255, 240, 170), 0.55)
-    for x in range(8, ancho, 44):
-        pygame.draw.rect(capa, marca, (x, alto - 8, 22, 2))
-
-
-def _dibujar_farolas(capa, ancho, y_suelo, hue_base):
-    """Farolas con poste, brazo, cono de luz y halo: anclan la ciudad al suelo."""
-    luz = _c(hue_base + 0.12, 0.35, 0.90)
-    halo = _crear_resplandor(46, luz, 105)
-    alto_cono = 62
-    cono = pygame.Surface((70, alto_cono + 1), pygame.SRCALPHA)
-    pygame.draw.polygon(cono, (*luz, 38), [(35, 0), (1, alto_cono), (69, alto_cono)])
-
-    for i, x in enumerate(range(70, ancho, 190)):
-        signo = 1 if i % 2 == 0 else -1
-        lx = x + signo * 14
-        ly = y_suelo - 62
-        capa.blit(cono, (lx - 35, ly))
-        pygame.draw.line(capa, _TINTA, (x, y_suelo + 2), (x, y_suelo - 58), 3)
-        pygame.draw.line(capa, _TINTA, (x, y_suelo - 58), (lx, ly), 3)
-        pygame.draw.rect(capa, _TINTA, (lx - 5, ly, 10, 4))
-        capa.blit(halo, (lx - 46, ly + 2 - 46))
-        pygame.draw.circle(capa, luz, (lx, ly + 4), 3)
-
-
-# ---------------------------------------------------------------------------
-# Construcción y dibujo de la ciudad
-# ---------------------------------------------------------------------------
-
-def _construir_ciudad(ancho, alto, hue_fondo, nivel):
-    """Renderiza la ciudad completa en una Surface opaca. Devuelve
-    ``(capa, balizas)``: ``balizas`` son las luces que parpadean cada frame."""
-    hue_base = (hue_fondo + 0.08) % 1.0
-    rng = random.Random(nivel * 7919 + 13)  # misma ciudad para el mismo nivel
-    y_suelo = alto - _ALTO_SUELO
-
-    capa = pygame.Surface((ancho, alto))
-    horizonte, medio, _luna, _r_luna = _dibujar_cielo(capa, ancho, alto, hue_base, rng)
-
-    calido = _c(hue_base + 0.13, 0.35, 0.82)
-    frio = _c(hue_base + 0.55, 0.12, 0.72)
-
-    # --- Capa lejana + niebla ---
-    color_lejos = _c(hue_base + 0.08, 0.07, 0.48)
-    lejos = _generar_skyline(rng, ancho, 24, 44, int(alto * 0.14), int(alto * 0.36), 0)
-    _dibujar_capa_lejana(capa, lejos, y_suelo, color_lejos, rng)
-    _niebla(capa, ancho, int(alto * 0.30), y_suelo, horizonte, 200)
-
-    # --- Capa media + niebla más ligera ---
-    color_medio = _c(hue_base + 0.10, 0.07, 0.33)
-    sombra_medio = _mezclar(color_medio, _TINTA, 0.35)
-    ventana_media = _mezclar(calido, color_medio, 0.45)
-    medios = _generar_skyline(rng, ancho, 28, 50, int(alto * 0.18), int(alto * 0.46), -2)
-    _dibujar_capa_media(capa, medios, y_suelo, color_medio, sombra_medio, ventana_media, rng)
-    _niebla(capa, ancho, int(alto * 0.40), y_suelo, horizonte, 130)
-
-    # --- Capa cercana con detalle ---
-    color_cerca = _c(hue_base + 0.12, 0.06, 0.18)
-    colores = (
-        color_cerca,
-        _mezclar(color_cerca, _TINTA, 0.40),     # sombra
-        _mezclar(color_cerca, horizonte, 0.30),  # luz de borde (atardecer)
-        calido,
-        frio,
-        _mezclar(color_cerca, (10, 8, 20), 0.45),  # ventana apagada
-    )
-    balizas_pos = []
-    brillo = pygame.Surface((ancho, alto), pygame.SRCALPHA)
-    cercanos = _generar_skyline(rng, ancho, 34, 58, int(alto * 0.14), int(alto * 0.50), rng.choice((0, 2, 3)))
-    _dibujar_capa_cercana(capa, brillo, cercanos, y_suelo, hue_base, nivel, colores, rng, balizas_pos)
-    capa.blit(brillo, (0, 0))  # resplandor de ventanas, tiendas y letreros
-
-    _dibujar_calle(capa, ancho, alto, y_suelo, color_cerca, horizonte)
-    _dibujar_farolas(capa, ancho, y_suelo, hue_base)
-
-    # Llovizna fina y estática sobre toda la escena (ambiente triste).
-    lluvia = pygame.Surface((ancho, alto), pygame.SRCALPHA)
-    for _ in range(max(80, (ancho * alto) // 2200)):
-        x = rng.randrange(max(1, ancho))
-        y = rng.randrange(max(1, alto))
-        largo = rng.randint(7, 16)
-        pygame.draw.line(lluvia, (200, 205, 215, rng.randint(25, 55)), (x, y), (x - largo // 4, y + largo), 1)
-    capa.blit(lluvia, (0, 0))
-
-    # Sprites de resplandor para las balizas, en varios niveles de intensidad
-    # (se elige uno por frame según el pulso; así no hay que cambiar alphas).
-    sprites_por_color = {}
-    balizas = []
-    for bx, by, color in balizas_pos:
-        if color not in sprites_por_color:
-            sprites_por_color[color] = [
-                _crear_resplandor(12, color, int(230 * k / 5)) for k in range(1, 6)
-            ]
-        balizas.append((sprites_por_color[color], bx, by, rng.uniform(0, math.tau)))
-    return capa, balizas
-
-
-def _dibujar_ciudad(superficie, ancho, alto, hue_fondo, nivel, transicion, tiempo=0.0):
-    """Superpone un skyline urbano al atardecer con tres capas de parallax,
-    niebla atmosférica, ventanas con brillo, calle y farolas.
-
-    Rendimiento: la ciudad entera se renderiza una sola vez por nivel en una
-    Surface opaca y se cachea; en cada frame solo se hace un blit con alpha
-    global (la transición) y se animan unas pocas luces de baliza. El matiz
-    se cuantiza en pasos de 0.04 para que el pequeño vaivén de color del
-    fondo no obligue a reconstruir la ciudad continuamente.
+    estilo 0: cartoon sencillo.
+    estilo 1: pupilas hipnóticas, lágrimas de pintura y aura.
+    estilo 2: además se derrite por abajo y le sale un tercer ojo.
     """
-    if transicion <= 0:
+    w, h = int(R * 3.0), int(R * 3.7)
+    capa = pygame.Surface((w, h), pygame.SRCALPHA)
+    cx, cy = w / 2, R * 1.9
+    fase = rng.uniform(0, math.tau)
+    g = max(2, R // 11)
+    piel = _c(hue, 0.62, 0.98)
+    pop = _c(hue + 0.5, 0.9, 1.0)
+
+    def P(dx, dy):
+        return (int(cx + dx * R), int(cy + dy * R))
+
+    if estilo >= 1:  # aura psicodélica
+        pygame.draw.circle(capa, (*pop, 90), P(0, 0), int(R * 1.16), max(2, R // 9))
+
+    if estilo >= 2:  # chorreones de la cara derritiéndose
+        goteos = [(dx, rng.uniform(0.35, 0.7)) for dx in (-0.62, -0.15, 0.62)]
+        for grosor_g, color in ((int(R * 0.15) + 2 * g, _TINTA), (int(R * 0.15), piel)):
+            for dx, largo in goteos:
+                fin = P(dx, 0.95 + largo)
+                pygame.draw.line(capa, color, P(dx, 0.7), fin, grosor_g)
+                pygame.draw.circle(capa, color, fin, grosor_g // 2 + 1)
+
+    # Cara con contorno orgánico y borde de tinta.
+    pts = [
+        _punto_organico((cx, cy), R, (i / 36) * math.tau, 0.0, fase,
+                        amplitud=0.05 + 0.035 * estilo, asimetria=0.05 + 0.03 * estilo)
+        for i in range(36)
+    ]
+    pygame.draw.polygon(capa, (*piel, 255), pts)
+    pygame.draw.polygon(capa, (*_TINTA, 255), pts, g)
+
+    # Mejillas de color complementario.
+    for dx in (-0.62, 0.66):
+        pygame.draw.circle(capa, (*pop, 110), P(dx, 0.28), max(2, int(R * 0.2)))
+
+    # Ojos asimétricos mirando hacia arriba.
+    for dx, dy, rel in ((-0.36, -0.10, 0.23), (0.38, -0.16, 0.29)):
+        ex, ey = P(dx, dy)
+        er = max(3, int(rel * R))
+        pygame.draw.circle(capa, (255, 255, 255, 255), (ex, ey), er)
+        pygame.draw.circle(capa, (*_TINTA, 255), (ex, ey), er, max(2, g - 1))
+        px, py = ex + int(er * 0.22), ey - int(er * 0.28)
+        pr = max(2, int(er * 0.5))
+        if estilo == 0:
+            pygame.draw.circle(capa, (*_TINTA, 255), (px, py), pr)
+            pygame.draw.circle(capa, (255, 255, 255, 255), (px - pr // 3, py - pr // 3), max(1, pr // 3))
+        else:  # anillos hipnóticos
+            anillos = 3 if estilo == 1 else 4
+            for j in range(anillos):
+                col = pop if j % 2 == 0 else _TINTA
+                pygame.draw.circle(capa, (*col, 255), (px, py), max(1, int(pr * (1 - j / anillos))))
+        if estilo >= 1:  # lágrima de pintura
+            pygame.draw.line(capa, (*pop, 220), (ex, ey + er), (ex, ey + er + int(R * 0.5)), max(2, g - 1))
+            pygame.draw.circle(capa, (*pop, 220), (ex, ey + er + int(R * 0.5)), max(2, g))
+
+    if estilo >= 2:  # tercer ojo
+        ex, ey = P(0, -0.80)
+        er = max(3, int(R * 0.11))
+        pygame.draw.circle(capa, (255, 255, 255, 255), (ex, ey), er)
+        pygame.draw.circle(capa, (*_TINTA, 255), (ex, ey), er, 2)
+        pygame.draw.circle(capa, (*pop, 255), (ex, ey), max(1, er // 2))
+
+    # Cejas: una alzada y otra más baja ("hmmm...").
+    gc = max(2, R // 9)
+    pygame.draw.line(capa, _TINTA, P(-0.62, -0.50), P(-0.12, -0.66), gc)
+    pygame.draw.line(capa, _TINTA, P(0.10, -0.60), P(0.68, -0.54), gc)
+
+    # Boquita torcida de duda.
+    boca = [P(-0.05 + 0.45 * (u / 8), 0.40 + 0.05 * math.sin(u / 8 * math.tau * 1.5)) for u in range(9)]
+    pygame.draw.lines(capa, _TINTA, False, boca, g)
+
+    # Mano en la barbilla.
+    mx, my = P(0.26, 0.95)
+    mr = int(R * 0.32)
+    pygame.draw.circle(capa, (*_mezclar(piel, _TINTA, 0.10), 255), (mx, my), mr)
+    pygame.draw.circle(capa, (*_TINTA, 255), (mx, my), mr, max(2, g - 1))
+    for dx in (-0.12, 0.0, 0.12):
+        pygame.draw.line(capa, _TINTA, (mx + int(dx * R), my - int(R * 0.30)),
+                         (mx + int(dx * R), my - int(R * 0.08)), 2)
+
+    # Burbujas de pensamiento.
+    for dx, dy, rel in ((0.95, -1.05, 0.09), (1.15, -1.32, 0.13)):
+        bx, by = P(dx, dy)
+        br = max(2, int(rel * R))
+        pygame.draw.circle(capa, (255, 255, 255, 235), (bx, by), br)
+        pygame.draw.circle(capa, (*_TINTA, 255), (bx, by), br, 2)
+
+    return [pygame.transform.rotozoom(capa, a, 1.0) for a in _ANGULOS_CARA]
+
+
+def _construir_sprites(estilo):
+    """Pool de caras (3 tamaños x varios matices) para un estilo. Se genera
+    una sola vez por estilo; el alpha de profundidad queda 'horneado'."""
+    rng = random.Random(1234 + estilo)
+    sprites = []
+    for tam, radio in enumerate(_TAMANOS_CARA):
+        for k in range(_NUM_HUES_CARA):
+            hue = (k / _NUM_HUES_CARA + rng.uniform(-0.03, 0.03)) % 1.0
+            frames = _crear_cara(int(radio * _ESCALA_ESTILO[estilo]), hue, estilo, rng)
+            for f in frames:
+                f.fill((255, 255, 255, _ALPHA_CARA[tam]), special_flags=pygame.BLEND_RGBA_MULT)
+            sprites.append((tam, frames))
+    return sprites
+
+
+def _nueva_cara(ancho, alto, desde_arriba):
+    tam = random.choices(range(3), weights=_PESOS_TAM)[0]
+    radio = _TAMANOS_CARA[tam]
+    y = random.uniform(-alto * 0.6, -radio * 3) if desde_arriba else random.uniform(-radio * 3, alto)
+    return {
+        "x": random.uniform(0, ancho),
+        "y": y,
+        "vy": (70 + radio * 3.2) * random.uniform(0.85, 1.15),
+        "fase": random.uniform(0, math.tau),
+        "sprite": tam * _NUM_HUES_CARA + random.randrange(_NUM_HUES_CARA),
+        "tam": tam,
+    }
+
+
+def _crear_gotas(ancho, alto):
+    """Hilos finos de lluvia de colores que acompañan a las caras."""
+    return [
+        (random.uniform(0, ancho), random.uniform(0, alto), random.uniform(260, 520),
+         random.randint(14, 34), random.randrange(12))
+        for _ in range(_GOTAS_MAX)
+    ]
+
+
+def _obtener_vineta(ancho, alto):
+    """Viñeta morada oscura (se cachea; se escala una imagen diminuta)."""
+    v = _CACHE_VINETA.get((ancho, alto))
+    if v is None:
+        pw, ph = 48, 27
+        pequena = pygame.Surface((pw, ph), pygame.SRCALPHA)
+        for yy in range(ph):
+            for xx in range(pw):
+                d = math.hypot((xx / (pw - 1) - 0.5) * 2, (yy / (ph - 1) - 0.5) * 2) / 1.41
+                a = max(0.0, min(1.0, (d - 0.35) / 0.65)) ** 1.6
+                pequena.set_at((xx, yy), (24, 0, 48, int(255 * a)))
+        v = pygame.transform.smoothscale(pequena, (ancho, alto))
+        _CACHE_VINETA.clear()
+        _CACHE_VINETA[(ancho, alto)] = v
+    return v
+
+
+def _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo):
+    e = _LLUVIA
+    if e["dim"] != (ancho, alto):
+        e.update(dim=(ancho, alto), caras=[], gotas=_crear_gotas(ancho, alto), t=None)
+
+    objetivo = 0 if nivel < 1 else int(_CARAS_MIN + p * (_CARAS_MAX - _CARAS_MIN))
+    if objetivo == 0:
+        e["caras"].clear()
+        e["t"] = None
         return
 
-    hue_q = round(hue_fondo * 25) / 25
-    clave = (nivel, hue_q, ancho, alto)
-    entrada = _CACHE_CIUDAD.get(clave)
-    if entrada is None:
-        while len(_CACHE_CIUDAD) >= _MAX_CIUDADES_CACHE:
-            _CACHE_CIUDAD.pop(next(iter(_CACHE_CIUDAD)))
-        entrada = _construir_ciudad(ancho, alto, hue_q, nivel)
-        _CACHE_CIUDAD[clave] = entrada
+    # Las caras se transforman en el sitio al cambiar de etapa.
+    estilo = 0 if p < 0.34 else (1 if p < 0.67 else 2)
+    if e["estilo"] != estilo:
+        e["sprites"] = _construir_sprites(estilo)
+        e["estilo"] = estilo
 
-    capa, balizas = entrada
-    capa.set_alpha(int(_ALPHA_CIUDAD * transicion))
+    caras = e["caras"]
+    primera = not caras
+    while len(caras) < objetivo:
+        caras.append(_nueva_cara(ancho, alto, desde_arriba=not primera))
+    del caras[objetivo:]
+
+    dt = 1 / 60 if e["t"] is None else max(0.0, min(0.1, tiempo - e["t"]))
+    e["t"] = tiempo
+
+    paleta = [_c(hue_base + k / 12 + tiempo * 0.05, 0.8, 1.0) for k in range(12)]
+    capa = _obtener_superficie("lluvia", (ancho, alto))
+
+    # Hilos finos de lluvia psicodélica (más densos con el nivel).
+    n_gotas = int(_GOTAS_MAX * (0.25 + 0.75 * p))
+    for x, y0, vel, largo, k in e["gotas"][:n_gotas]:
+        y = (y0 + vel * tiempo) % (alto + largo) - largo
+        pygame.draw.line(capa, (*paleta[k], 110), (x, y), (x - largo * 0.15, y + largo), 2)
+
+    # Estela luminosa tras cada cara + actualización de posición.
+    for cara in caras:
+        cara["y"] += cara["vy"] * dt
+        tam, frames = e["sprites"][cara["sprite"]]
+        alto_sprite = frames[2].get_height()
+        if cara["y"] - alto_sprite / 2 > alto:
+            cara.update(_nueva_cara(ancho, alto, desde_arriba=True))
+            continue
+        x = cara["x"] + math.sin(tiempo * 1.1 + cara["fase"]) * 10
+        color = paleta[cara["sprite"] % 12]
+        pygame.draw.line(capa, (*color, 70), (x, cara["y"] - alto_sprite * 1.4),
+                         (x, cara["y"] - alto_sprite * 0.45), 2)
     superficie.blit(capa, (0, 0))
 
-    # Balizas que parpadean (antenas y azoteas altas).
-    for sprites, bx, by, fase in balizas:
-        luz = (0.5 + 0.5 * math.sin(tiempo * 2.4 + fase)) * transicion
-        if luz < 0.1:
-            continue
-        sprite = sprites[min(len(sprites) - 1, int(luz * len(sprites)))]
-        superficie.blit(sprite, (bx - sprite.get_width() // 2, by - sprite.get_height() // 2))
+    # Caras: las lejanas primero para que las cercanas queden delante.
+    for cara in sorted(caras, key=lambda c: c["tam"]):
+        _, frames = e["sprites"][cara["sprite"]]
+        giro = (math.sin(tiempo * 1.5 + cara["fase"]) + 1) / 2
+        img = frames[int(giro * (len(frames) - 1) + 0.5)]
+        x = cara["x"] + math.sin(tiempo * 1.1 + cara["fase"]) * 10
+        superficie.blit(img, img.get_rect(center=(int(x), int(cara["y"]))))
 
 
 def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0):
-    """Transición progresiva desde el fondo abstracto hacia un skyline urbano más coherente."""
-    hue_base = (hue_fondo + math.sin(tiempo * 0.35) * 0.05) % 1.0
-    transicion = max(0.0, min(1.0, (nivel - 2) / 8.0))
+    """Fondo psicodélico que, nivel a nivel, se va llenando de una lluvia de
+    caras pensativas. Nivel 0: solo psicodelia. Nivel 10+: lluvia total."""
+    p = max(0.0, min(1.0, (nivel - 1) / 9.0))  # progreso de la transformación
+    # El vaivén de color se intensifica con el nivel (más "viaje").
+    hue_base = (hue_fondo + math.sin(tiempo * 0.35) * (0.05 + 0.07 * p)) % 1.0
+    visible = 1.0 - 0.3 * p  # las manchas se atenúan un poco para dar paso a las caras
+    brazos = 6 + 2 * int(p * 3.99)  # el caleidoscopio gana brazos: 6, 8, 10, 12
 
     _fondo_degradado(superficie, ancho, alto, hue_base, tiempo)
 
@@ -756,6 +573,7 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0
         tiempo,
         ancho,
         alto,
+        brazos=brazos,
     )
     _puntos_halftone(capa_abstracta, ancho, alto, tiempo, hue_base)
 
@@ -772,14 +590,14 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0
         capa = _obtener_superficie(("bloque", i), tam)
         centro_local = (radio + margen, radio + margen)
 
-        _mancha_organica(capa, centro_local, radio, color, int(58 * (1.0 - transicion)), tiempo, i * 1.7, puntos=24, asimetria=0.18)
-        _trazo_contorno(capa, centro_local, radio, color_pop, int(80 * (1.0 - transicion)), tiempo, i * 1.7, grosor=3)
-        _trazo_tinta(capa, centro_local, radio, tiempo, i * 1.7, alpha=int(110 * (1.0 - transicion)), grosor=5)
+        _mancha_organica(capa, centro_local, radio, color, int(58 * visible), tiempo, i * 1.7, puntos=24, asimetria=0.18)
+        _trazo_contorno(capa, centro_local, radio, color_pop, int(80 * visible), tiempo, i * 1.7, grosor=3)
+        _trazo_tinta(capa, centro_local, radio, tiempo, i * 1.7, alpha=int(110 * visible), grosor=5)
 
         rect_local = pygame.Rect(margen, margen, radio * 2, radio * 2)
         pygame.draw.arc(
             capa,
-            (*color_pop, int(130 * (1.0 - transicion))),
+            (*color_pop, int(130 * visible)),
             rect_local.inflate(18, 18),
             math.radians(20 + i * 18 + tiempo * 14),
             math.radians(190 + i * 18 + tiempo * 14),
@@ -806,5 +624,10 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0
         _dibujar_remolino(capa_abstracta, x, y, radio, hue, tiempo, i)
 
     superficie.blit(capa_abstracta, (0, 0))
-    # Se pasa hue_fondo (sin el vaivén de hue_base) para que la ciudad cacheada sea estable.
-    _dibujar_ciudad(superficie, ancho, alto, hue_fondo, nivel, transicion, tiempo)
+
+    _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo)
+
+    if p > 0:  # viñeta oscura que crece con el nivel
+        vineta = _obtener_vineta(ancho, alto)
+        vineta.set_alpha(int(170 * p))
+        superficie.blit(vineta, (0, 0))

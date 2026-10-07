@@ -1,10 +1,18 @@
+from types import SimpleNamespace
+
 import pygame
 
 from plataformas import Plataforma
 from personaje import PersonajeHumanoide
 from transicion import TransicionCaricaturesca
 from idioma import alternar_idioma, texto
-from opciones import MenuOpciones, cargar_configuracion, guardar_configuracion
+from eventos import procesar_eventos
+from opciones import (
+    MenuOpciones,
+    cargar_configuracion,
+    guardar_configuracion,
+    normalizar_configuracion,
+)
 
 
 def test_transicion_se_pone_triste_a_partir_del_nivel_10():
@@ -71,6 +79,7 @@ def test_guardar_y_cargar_configuracion_persistente(tmp_path):
             "right": pygame.K_e,
             "jump": pygame.K_w,
             "down": pygame.K_x,
+            "dash": pygame.K_LCTRL,
         },
     }
 
@@ -81,8 +90,61 @@ def test_guardar_y_cargar_configuracion_persistente(tmp_path):
     assert cargada["volumen_musica"] == 0.35
     assert cargada["volumen_efectos"] == 0.65
     assert cargada["controles"]["jump"] == pygame.K_w
+    assert cargada["controles"]["dash"] == pygame.K_LCTRL
     assert cargada["resolucion"] == 1
     assert cargada["pantalla_completa"] is True
+
+
+def test_control_dash_se_puede_reasignar_en_opciones():
+    pygame.font.init()
+    configuracion = normalizar_configuracion({})
+    opciones = MenuOpciones(800, 600, configuracion)
+    boton_dash = opciones.botones_controles["dash"]
+
+    opciones.manejar_evento(
+        pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            button=pygame.BUTTON_LEFT,
+            pos=boton_dash.center,
+        )
+    )
+    assert opciones.tecla_esperada == "dash"
+
+    opciones.manejar_evento(
+        pygame.event.Event(pygame.KEYDOWN, key=pygame.K_q)
+    )
+
+    assert configuracion["controles"]["dash"] == pygame.K_q
+    assert opciones.tecla_esperada is None
+
+
+def test_control_dash_reasignado_activa_dash():
+    llamadas = []
+    contexto = SimpleNamespace(
+        estado="jugando",
+        jugador=SimpleNamespace(solicitar_dash=lambda: llamadas.append(True)),
+        jugando=True,
+    )
+    dependencias = SimpleNamespace(
+        configuracion={
+            "controles": {"jump": pygame.K_SPACE, "dash": pygame.K_q}
+        },
+        pausa=None,
+    )
+
+    procesar_eventos(
+        [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_LSHIFT)],
+        contexto,
+        dependencias,
+    )
+    assert llamadas == []
+
+    procesar_eventos(
+        [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_q)],
+        contexto,
+        dependencias,
+    )
+    assert llamadas == [True]
 
 
 def test_jugador_se_mueve_con_plataforma_vertical():

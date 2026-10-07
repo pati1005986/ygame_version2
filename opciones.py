@@ -17,7 +17,7 @@ class MenuOpciones:
     """
 
     RESOLUCIONES = ((800, 600), (640, 480), (480, 360))
-    CONTROLES = ("left", "right", "jump", "down")
+    CONTROLES = ("left", "right", "jump", "down", "dash")
     # Valores cicleables del slider de escala de UI: independiente de la
     # resolucion de ventana, multiplica el tamano de fuentes y botones de
     # los tres menus (inicio, pausa, opciones).
@@ -40,6 +40,7 @@ class MenuOpciones:
             "right": pygame.K_d,
             "jump": pygame.K_SPACE,
             "down": pygame.K_s,
+            "dash": pygame.K_LSHIFT,
         },
     }
 
@@ -138,7 +139,7 @@ class MenuOpciones:
         # +1.4 "unidades" de holgura: separación entre el bloque general y
         # el de controles, más espacio para el texto "press_key".
         unidades = n_generales + n_controles + 1.4
-        alto_fila = max(20, min(38, alto_disponible / unidades))
+        alto_fila = max(14, min(38, alto_disponible / unidades))
 
         ancho_fila = int(max(240, min(460, self.ancho * 0.62)))
         alto_caja = max(16, int(alto_fila * 0.8))
@@ -554,6 +555,7 @@ class MenuOpciones:
             "right": "move_right",
             "jump": "jump",
             "down": "crouch",
+            "dash": "dash",
         }
         for nombre in self.CONTROLES:
             rect = self.botones_controles[nombre]

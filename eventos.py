@@ -224,7 +224,7 @@ def procesar_eventos(eventos, contexto, dependencias):
                 contexto.estado = ESTADO_PAUSA
             elif evento.key == dependencias.configuracion["controles"]["jump"]:
                 contexto.jugador.solicitar_salto()
-            elif evento.key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
+            elif evento.key == dependencias.configuracion["controles"]["dash"]:
                 contexto.jugador.solicitar_dash()
         elif (
             contexto.estado == ESTADO_GAME_OVER

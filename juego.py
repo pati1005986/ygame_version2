@@ -744,12 +744,13 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             clave_hud_combo = (
                 configuracion["idioma"],
                 combo_actual if tiempo * 1000 <= combo_expira else 0,
+                configuracion["controles"]["dash"],
                 jugador.dashes_disponibles > 0
                 and jugador.dash_enfriamiento <= 0,
             )
             if clave_hud_combo != combo_hud_clave:
                 combo_hud_clave = clave_hud_combo
-                idioma_hud, combo_visible, dash_listo = clave_hud_combo
+                idioma_hud, combo_visible, tecla_dash, dash_listo = clave_hud_combo
                 lineas_hud = []
                 if combo_visible > 0:
                     lineas_hud.append(
@@ -761,7 +762,8 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     )
                 lineas_hud.append(
                     fuente_combo.render(
-                        f"{texto(idioma_hud, 'dash_control')} "
+                        f"{pygame.key.name(tecla_dash).upper()}: "
+                        f"{texto(idioma_hud, 'dash')} "
                         f"{texto(idioma_hud, 'ready') if dash_listo else '...'}",
                         True,
                         (130, 255, 190) if dash_listo else (165, 165, 175),

@@ -144,9 +144,10 @@ class ParticulaAbstracta:
         self._centro_cache = None
         self._contador_regen = random.randint(0, 4)  # desfasado entre partículas
 
-    def actualizar(self):
-        self.pos.x = (self.pos.x + self.vel.x) % self.ancho
-        self.pos.y = (self.pos.y + self.vel.y) % self.alto
+    def actualizar(self, dt=1 / 60):
+        factor_fotograma = dt * 60
+        self.pos.x = (self.pos.x + self.vel.x * factor_fotograma) % self.ancho
+        self.pos.y = (self.pos.y + self.vel.y * factor_fotograma) % self.alto
 
     def dibujar(self, superficie, tiempo):
         self._contador_regen += 1

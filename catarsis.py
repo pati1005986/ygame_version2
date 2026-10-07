@@ -1081,6 +1081,18 @@ def play_catarsis_animation(
     animacion = AnimacionCatarsis(*screen.get_size())
     animacion.iniciar()
     inicio = pygame.time.get_ticks()
+    fuentes_salida = {}
+
+    def obtener_fuente_salida(familia, tamano):
+        clave = (familia, tamano)
+        if clave not in fuentes_salida:
+            if familia is None:
+                fuente = pygame.font.Font(None, tamano)
+                fuente.set_bold(True)
+            else:
+                fuente = pygame.font.SysFont(familia, tamano, bold=True)
+            fuentes_salida[clave] = fuente
+        return fuentes_salida[clave]
 
     while True:
         tiempo = (pygame.time.get_ticks() - inicio) / 1000.0
@@ -1096,12 +1108,14 @@ def play_catarsis_animation(
                 round(original.height * sy),
             )
             escala_ui = min(sx, sy) * button_renderer._escala()
-            fuente = pygame.font.SysFont(
-                "comicsansms", max(14, round(22 * escala_ui)), bold=True
+            fuente = obtener_fuente_salida(
+                "comicsansms", max(14, round(22 * escala_ui))
             )
         else:
             escala = min(ancho / W, alto / H)
-            fuente = pygame.font.SysFont(None, max(18, round(26 * escala)), bold=True)
+            fuente = obtener_fuente_salida(
+                None, max(18, round(26 * escala))
+            )
             boton = pygame.Rect(0, 0, 170, 54)
             boton.bottomright = (ancho - 26, alto - 26)
 

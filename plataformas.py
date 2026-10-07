@@ -275,15 +275,17 @@ class Plataforma:
         rect.y = self.rect.bottom - rect.height
         return rect
 
-    def actualizar(self):
+    def actualizar(self, dt=1 / 60):
         """Avanza, cuadro a cuadro, todas las animaciones de la plataforma:
         el progreso de la trampa, el deslizamiento de las plataformas
         móviles, el resorte de aterrizaje (squash/wobble) y las partículas
         de impacto."""
-        dt = 1 / 60
+        factor_fotograma = dt * 60
 
         if self.trampa_activada:
-            self.progreso_trampa = min(1.0, self.progreso_trampa + 0.045)
+            self.progreso_trampa = min(
+                1.0, self.progreso_trampa + 0.045 * factor_fotograma
+            )
 
         if self.patron_movimiento:
             self._reloj_movimiento += dt

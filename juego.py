@@ -216,17 +216,23 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     lienzo = pygame.Surface((WIDTH, HEIGHT))
     pygame.display.set_caption(texto(idioma_inicial, "window_title"))
     clock = pygame.time.Clock()
-    font = pygame.font.SysFont(None, 36)
-    font_advertencia_titulo = pygame.font.SysFont(None, 46, bold=True)
-    font_advertencia = pygame.font.SysFont(None, 26)
-    font_advertencia_prompt = pygame.font.SysFont(None, 22)
+    font = pygame.font.Font(None, 36)
+    font_advertencia_titulo = pygame.font.Font(None, 46)
+    font_advertencia_titulo.set_bold(True)
+    font_advertencia = pygame.font.Font(None, 26)
+    font_advertencia_prompt = pygame.font.Font(None, 22)
     boton_reintentar = pygame.Rect(WIDTH // 2 - 110, HEIGHT // 2 + 45, 220, 52)
     texto_boton = texto(idioma_inicial, "retry")
     tamano_fuente = 36
-    while tamano_fuente > 16 and pygame.font.SysFont(None, tamano_fuente, bold=True).size(texto_boton)[0] > boton_reintentar.width - 28:
+    fuente_boton = pygame.font.Font(None, tamano_fuente)
+    fuente_boton.set_bold(True)
+    while tamano_fuente > 16 and fuente_boton.size(texto_boton)[0] > boton_reintentar.width - 28:
         tamano_fuente -= 1
-    fuente_boton = pygame.font.SysFont(None, tamano_fuente, bold=True)
+        fuente_boton = pygame.font.Font(None, tamano_fuente)
+        fuente_boton.set_bold(True)
     superficie_texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
+    idioma_advertencia_mostrado = None
+    textos_advertencia = None
     escena = pygame.Surface((WIDTH, HEIGHT))
     capa_nivel_anterior = pygame.Surface((WIDTH, HEIGHT))  # foto fija del nivel que se deja atrás
     capa_nivel_nuevo = pygame.Surface((WIDTH, HEIGHT))
@@ -240,9 +246,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     texto_nivel = None
     opacidad_mostrada = None
     nivel_fondo = None
-    contador_frames = 0
     intensidad_shake = 0.0  # sacudida de cámara: da sensación de impacto/velocidad
     alerta_enemigos = 0.0  # 0-1: qué tan cerca está el enemigo más próximo
+    tiempo_ultimo_fondo = -1.0
     eventos_visuales = EventosVisuales(WIDTH, HEIGHT)
 
     nivel = max(1, int(nivel_inicial))
@@ -296,16 +302,159 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         texto=texto,
     )
 
-    while jugando:
-        contador_frames += 1
-        clock.tick(FPS)
-        tiempo = pygame.time.get_ticks() / 1000.0
+    # Conserva la física histórica por fotograma, desacoplándola del render.
+    paso_fisica = 1 / FPS
+    acumulador_fisica = paso_fisica
+
+    def actualizar_mundo(dt):
+        nonlocal intensidad_shake, alerta_enemigos
+        nonlocal jugador, estado, nivel, plataformas
+        nonlocal hue_fondo, hue_jugador, entidades, transicion
+
+        tiempo_mundo = pygame.time.get_ticks() / 1000.0
         intensidad_shake *= 0.82
         if intensidad_shake < 0.05:
             intensidad_shake = 0.0
-        alerta_enemigos *= 0.9  # decae más despacio: la tensión no debe
-        if alerta_enemigos < 0.02:  # cortarse en seco al alejarse un poco
+        alerta_enemigos *= 0.9
+        if alerta_enemigos < 0.02:
             alerta_enemigos = 0.0
+
+        hay_gif_game_over = (
+            estado == ESTADO_GAME_OVER
+            and (
+                bool(eventos_visuales.gif_game_over)
+                or eventos_visuales.game_over_nivel_alto_activo
+            )
+        )
+        if estado == ESTADO_JUGANDO:
+            en_aire_antes = not jugador.en_suelo
+            jugador.mover(plataformas, configuracion["controles"])
+            if not eventos_visuales.evento_flashback_especial_activo:
+                for entidad in entidades:
+                    entidad.mover(plataformas, jugador.rect)
+                alerta_enemigos = max(
+                    alerta_enemigos,
+                    max(
+                        (entidad.nivel_alerta() for entidad in entidades),
+                        default=0.0,
+                    ),
+                )
+                if alerta_enemigos > 0:
+                    intensidad_shake = max(
+                        intensidad_shake, alerta_enemigos * 2.2
+                    )
+
+            if jugador.en_suelo and en_aire_antes:
+                intensidad_shake = max(intensidad_shake, 3.5)
+
+            plataforma_pisada = jugador.plataforma_actual
+            if (
+                jugador.en_suelo
+                and plataforma_pisada is not None
+                and plataforma_pisada.es_trampa
+            ):
+                plataforma_pisada.activar_trampa()
+                jugador.iniciar_engullido(plataforma_pisada)
+                intensidad_shake = 9.0
+                eventos_visuales.iniciar_game_over(
+                    nivel, pygame.time.get_ticks()
+                )
+                estado = ESTADO_GAME_OVER
+
+            if estado == ESTADO_JUGANDO and any(
+                entidad.rect.colliderect(jugador.rect) for entidad in entidades
+            ):
+                intensidad_shake = 9.0
+                eventos_visuales.iniciar_game_over(
+                    nivel, pygame.time.get_ticks()
+                )
+                estado = ESTADO_GAME_OVER
+
+            salio_por_la_derecha = jugador.rect.centerx >= WIDTH
+            salio_por_otro_borde = (
+                jugador.rect.top > HEIGHT or jugador.rect.right < 0
+            )
+            if salio_por_la_derecha:
+                dibujar_nivel(
+                    capa_nivel_anterior,
+                    fondo_cache,
+                    plataformas,
+                    entidades,
+                    tiempo_mundo,
+                    nivel,
+                )
+                nivel += 1
+                eventos_visuales.entrar_nivel(nivel, tiempo_mundo)
+                color_origen = jugador.color
+                pos_origen = pygame.Vector2(jugador.rect.center)
+
+                plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(
+                    nivel
+                )
+                color_destino = color_desde_hue(hue_jugador)
+                transicion = TransicionCaricaturesca(
+                    color_origen,
+                    color_destino,
+                    pos_origen,
+                    POS_SPAWN,
+                    nivel=nivel,
+                    volumen_efectos=configuracion["volumen_efectos"],
+                    suelo_spawn=plataformas[0].rect.top,
+                    ancho_pantalla=WIDTH,
+                )
+                jugador.vel_y = 0
+                ajustar_dificultad_jugador(jugador, nivel)
+                estado = ESTADO_TRANSICION
+            elif salio_por_otro_borde:
+                intensidad_shake = 9.0
+                eventos_visuales.iniciar_game_over(
+                    nivel,
+                    pygame.time.get_ticks(),
+                    seleccionar_por_nivel=False,
+                )
+                estado = ESTADO_GAME_OVER
+
+        elif estado == ESTADO_GAME_OVER:
+            for plataforma in plataformas:
+                plataforma.actualizar(dt)
+            if jugador.muriendo:
+                jugador.actualizar_engullido()
+            elif any(plataforma.trampa_activada for plataforma in plataformas):
+                jugador.rect.y += 3
+
+        elif estado == ESTADO_TRANSICION:
+            transicion_terminada = transicion.actualizar(jugador)
+            for fuerza_impacto in transicion.recoger_impactos():
+                intensidad_shake = max(intensidad_shake, fuerza_impacto)
+            if transicion_terminada:
+                aplicar_volumen_audio(configuracion, jugador)
+                estado = ESTADO_JUGANDO
+
+        if estado == ESTADO_JUGANDO:
+            for plataforma in plataformas:
+                plataforma.actualizar(dt)
+
+        hay_gif_game_over = (
+            estado == ESTADO_GAME_OVER
+            and (
+                bool(eventos_visuales.gif_game_over)
+                or eventos_visuales.game_over_nivel_alto_activo
+            )
+        )
+        if estado in (
+            ESTADO_JUGANDO,
+            ESTADO_TRANSICION,
+            ESTADO_GAME_OVER,
+        ) and not hay_gif_game_over:
+            for particula in particulas:
+                particula.actualizar(dt)
+
+    while jugando:
+        # Limita el avance tras una pausa del sistema; el acumulador hace
+        # varios pasos pequeños si el render no alcanza los 60 FPS.
+        dt = min(clock.tick(FPS) / 1000.0, 0.25)
+        acumulador_fisica += dt
+        tiempo = pygame.time.get_ticks() / 1000.0
 
         eventos_visuales.actualizar_flashback(
             nivel, estado, tiempo, ESTADO_JUGANDO
@@ -350,119 +499,12 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         superficie_texto_boton = contexto_eventos.superficie_texto_boton
         idioma_mostrado = contexto_eventos.idioma_mostrado
 
-        # Durante la transición se bloquean los controles y solo se actualiza
-        # la entrada visual del jugador al nuevo nivel.
-        if estado == ESTADO_ADVERTENCIA:
-            pass
-        elif estado == ESTADO_MENU:
+        if estado == ESTADO_MENU:
             menu.actualizar()
-        elif estado == ESTADO_JUGANDO:
-            en_aire_antes = not jugador.en_suelo
-            jugador.mover(plataformas, configuracion["controles"])
-            evento_flashback_activo = (
-                eventos_visuales.evento_flashback_especial_activo
-            )
-            if not evento_flashback_activo:
-                for entidad in entidades:
-                    entidad.mover(plataformas, jugador.rect)
-                # El aviso de "enemigo muy cerca" usa el más peligroso de
-                # todos (no un promedio): si uno solo está encima del
-                # jugador, eso es lo que importa, aunque los demás estén
-                # lejos. Se toma el máximo contra el valor ya decaído de
-                # este fotograma para que la subida sea inmediata y solo
-                # la bajada sea gradual (ver el *0.9 de arriba).
-                alerta_enemigos = max(
-                    alerta_enemigos,
-                    max((entidad.nivel_alerta() for entidad in entidades), default=0.0),
-                )
-                if alerta_enemigos > 0:
-                    # Un temblor sutil acompaña a la viñeta: crece con la
-                    # cercanía, pero se queda muy por debajo del golpe de
-                    # 9.0 del game over para no confundirse con un choque.
-                    intensidad_shake = max(intensidad_shake, alerta_enemigos * 2.2)
 
-            # Pequeña sacudida de cámara al aterrizar: es barato (solo un
-            # offset al hacer blit) y ayuda mucho a que los saltos se
-            # sientan con más impacto/velocidad.
-            if jugador.en_suelo and en_aire_antes:
-                intensidad_shake = max(intensidad_shake, 3.5)
-
-            plataforma_pisada = jugador.plataforma_actual
-            if jugador.en_suelo and plataforma_pisada is not None and plataforma_pisada.es_trampa:
-                plataforma_pisada.activar_trampa()
-                jugador.iniciar_engullido(plataforma_pisada)
-                intensidad_shake = 9.0
-                eventos_visuales.iniciar_game_over(
-                    nivel, pygame.time.get_ticks()
-                )
-                estado = ESTADO_GAME_OVER
-
-            if estado == ESTADO_JUGANDO and any(
-                entidad.rect.colliderect(jugador.rect) for entidad in entidades
-            ):
-                intensidad_shake = 9.0
-                eventos_visuales.iniciar_game_over(
-                    nivel, pygame.time.get_ticks()
-                )
-                estado = ESTADO_GAME_OVER
-
-            # Se cambia de nivel en cuanto la mitad del cuerpo cruza el borde
-            # vista y la cámara lo acompaña hacia el nivel siguiente.
-            salio_por_la_derecha = jugador.rect.centerx >= WIDTH
-            salio_por_otro_borde = (
-                jugador.rect.top > HEIGHT
-                or jugador.rect.right < 0
-            )
-            if salio_por_la_derecha:
-                # Foto fija del nivel que se deja atrás: la cámara lo mostrará
-                # deslizándose mientras sigue al personaje hacia el siguiente.
-                dibujar_nivel(capa_nivel_anterior, fondo_cache, plataformas, entidades, tiempo, nivel)
-                nivel += 1
-                eventos_visuales.entrar_nivel(nivel, tiempo)
-                color_origen = jugador.color
-                pos_origen = pygame.Vector2(jugador.rect.center)
-
-                plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
-                color_destino = color_desde_hue(hue_jugador)
-
-                transicion = TransicionCaricaturesca(
-                    color_origen,
-                    color_destino,
-                    pos_origen,
-                    POS_SPAWN,
-                    nivel=nivel,
-                    volumen_efectos=configuracion["volumen_efectos"],
-                    suelo_spawn=plataformas[0].rect.top,  # los rebotes ocurren sobre la primera plataforma
-                    ancho_pantalla=WIDTH,
-                )
-                jugador.vel_y = 0
-                ajustar_dificultad_jugador(jugador, nivel)
-                estado = ESTADO_TRANSICION
-            elif salio_por_otro_borde:
-                intensidad_shake = 9.0
-                eventos_visuales.iniciar_game_over(
-                    nivel,
-                    pygame.time.get_ticks(),
-                    seleccionar_por_nivel=False,
-                )
-                estado = ESTADO_GAME_OVER
-
-        elif estado == ESTADO_GAME_OVER:
-            for plataforma in plataformas:
-                plataforma.actualizar()
-            if jugador.muriendo:
-                jugador.actualizar_engullido()
-            elif any(plataforma.trampa_activada for plataforma in plataformas):
-                jugador.rect.y += 3
-
-        elif estado == ESTADO_TRANSICION:
-            transicion_terminada = transicion.actualizar(jugador)
-            # Cada rebote del personaje al aterrizar sacude un poco la cámara.
-            for fuerza_impacto in transicion.recoger_impactos():
-                intensidad_shake = max(intensidad_shake, fuerza_impacto)
-            if transicion_terminada:
-                aplicar_volumen_audio(configuracion, jugador)
-                estado = ESTADO_JUGANDO
+        while acumulador_fisica >= paso_fisica:
+            actualizar_mundo(paso_fisica)
+            acumulador_fisica -= paso_fisica
 
         if estado == ESTADO_JUGANDO and nivel == 30 and not despertar_mostrado:
             despertar_mostrado = True
@@ -478,30 +520,50 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         # --- Renderizado ---
         if estado == ESTADO_ADVERTENCIA:
             lienzo.fill((8, 8, 12))
-            titulo_advertencia = font_advertencia_titulo.render(
-                texto(configuracion["idioma"], "epilepsy_warning_title"),
-                True,
-                (255, 210, 80),
-            )
-            linea_advertencia_1 = font_advertencia.render(
-                texto(configuracion["idioma"], "epilepsy_warning_line_1"),
-                True,
-                (245, 245, 245),
-            )
-            linea_advertencia_2 = font_advertencia.render(
-                texto(configuracion["idioma"], "epilepsy_warning_line_2"),
-                True,
-                (245, 245, 245),
-            )
-            prompt_advertencia = font_advertencia_prompt.render(
-                texto(configuracion["idioma"], "epilepsy_warning_continue"),
-                True,
-                (180, 180, 190),
-            )
-            lienzo.blit(titulo_advertencia, titulo_advertencia.get_rect(center=(WIDTH // 2, 190)))
-            lienzo.blit(linea_advertencia_1, linea_advertencia_1.get_rect(center=(WIDTH // 2, 275)))
-            lienzo.blit(linea_advertencia_2, linea_advertencia_2.get_rect(center=(WIDTH // 2, 315)))
-            lienzo.blit(prompt_advertencia, prompt_advertencia.get_rect(center=(WIDTH // 2, 430)))
+            if idioma_advertencia_mostrado != configuracion["idioma"]:
+                idioma_advertencia_mostrado = configuracion["idioma"]
+                textos_advertencia = (
+                    (
+                        font_advertencia_titulo.render(
+                            texto(idioma_advertencia_mostrado, "epilepsy_warning_title"),
+                            True,
+                            (255, 210, 80),
+                        ),
+                        (WIDTH // 2, 190),
+                    ),
+                    (
+                        font_advertencia.render(
+                            texto(idioma_advertencia_mostrado, "epilepsy_warning_line_1"),
+                            True,
+                            (245, 245, 245),
+                        ),
+                        (WIDTH // 2, 275),
+                    ),
+                    (
+                        font_advertencia.render(
+                            texto(idioma_advertencia_mostrado, "epilepsy_warning_line_2"),
+                            True,
+                            (245, 245, 245),
+                        ),
+                        (WIDTH // 2, 315),
+                    ),
+                    (
+                        font_advertencia_prompt.render(
+                            texto(
+                                idioma_advertencia_mostrado,
+                                "epilepsy_warning_continue",
+                            ),
+                            True,
+                            (180, 180, 190),
+                        ),
+                        (WIDTH // 2, 430),
+                    ),
+                )
+            for superficie_texto, centro in textos_advertencia:
+                lienzo.blit(
+                    superficie_texto,
+                    superficie_texto.get_rect(center=centro),
+                )
             screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
         elif estado == ESTADO_MENU:
             posicion_raton = pygame.mouse.get_pos()
@@ -517,10 +579,10 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 int(posicion_raton[0] * WIDTH / screen.get_width()),
                 int(posicion_raton[1] * HEIGHT / screen.get_height()),
             )
-            pausa.dibujar(lienzo, posicion_raton_logica)
+            pausa.dibujar(lienzo, posicion_raton_logica, dt)
             screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
         elif estado == ESTADO_OPCIONES:
-            opciones.dibujar(lienzo)
+            opciones.dibujar(lienzo, dt=dt)
             screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
         else:
             # La escena se dibuja aparte para poder desaturarla como un todo
@@ -543,9 +605,13 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 # de todas formas no hace falta recalcularlo en cada
                 # fotograma: sus formas se mueven lento y a 20 Hz (cada 3
                 # fotogramas a 60 FPS) sigue viéndose fluido.
-                if contador_frames % 3 == 0 or nivel != nivel_fondo:
+                if (
+                    tiempo - tiempo_ultimo_fondo >= 1 / 20
+                    or nivel != nivel_fondo
+                ):
                     dibujar_fondo_segmentado(fondo_cache, tiempo, hue_fondo, WIDTH, HEIGHT, nivel)
                     nivel_fondo = nivel
+                    tiempo_ultimo_fondo = tiempo
                 if estado == ESTADO_TRANSICION:
                     # Los dos niveles se dibujan uno junto al otro y la cámara
                     # se desliza del viejo al nuevo siguiendo al personaje.
@@ -555,7 +621,6 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     escena.blit(capa_nivel_nuevo, (WIDTH - camara, 0))
 
                     for particula in particulas:
-                        particula.actualizar()
                         particula.dibujar(escena, tiempo)
 
                     # Foco y cara primero; el personaje va por encima para que
@@ -569,12 +634,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                         escena.blit(fondo_cache, (0, 0))
 
                     for particula in particulas:
-                        particula.actualizar()
                         particula.dibujar(escena, tiempo)
 
                     for plataforma in plataformas:
-                        if estado != ESTADO_GAME_OVER:
-                            plataforma.actualizar()
                         plataforma.dibujar(escena, tiempo, nivel)
 
                     for entidad in entidades:
@@ -585,7 +647,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 # Los colores se van perdiendo a medida que suben los niveles;
                 # durante la transición el cambio es gradual, al ritmo de la cámara.
                 nivel_visual = nivel - 1 + transicion.progreso_camara() if estado == ESTADO_TRANSICION else nivel
-                escena = escala_grises(escena, saturacion_nivel(nivel_visual))
+                escala_grises(escena, saturacion_nivel(nivel_visual))
                 if intensidad_shake > 0:
                     lienzo.fill((0, 0, 0))
                     offset = (

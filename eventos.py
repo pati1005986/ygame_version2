@@ -195,17 +195,20 @@ def procesar_eventos(eventos, contexto, dependencias):
                     dependencias.configuracion["idioma"], "retry"
                 )
                 contexto.tamano_fuente = 36
+                contexto.fuente_boton = pygame.font.Font(
+                    None, contexto.tamano_fuente
+                )
+                contexto.fuente_boton.set_bold(True)
                 while (
                     contexto.tamano_fuente > 16
-                    and pygame.font.SysFont(
-                        None, contexto.tamano_fuente, bold=True
-                    ).size(contexto.texto_boton)[0]
+                    and contexto.fuente_boton.size(contexto.texto_boton)[0]
                     > contexto.boton_reintentar.width - 28
                 ):
                     contexto.tamano_fuente -= 1
-                contexto.fuente_boton = pygame.font.SysFont(
-                    None, contexto.tamano_fuente, bold=True
-                )
+                    contexto.fuente_boton = pygame.font.Font(
+                        None, contexto.tamano_fuente
+                    )
+                    contexto.fuente_boton.set_bold(True)
                 contexto.superficie_texto_boton = contexto.fuente_boton.render(
                     contexto.texto_boton, True, (255, 245, 255)
                 )
@@ -278,7 +281,8 @@ def escala_grises(superficie, factor):
 
     mezcla = colores * (1 - factor) + gris * factor
     resultado_chico = pygame.surfarray.make_surface(mezcla.astype(np.uint8))
-    return pygame.transform.scale(resultado_chico, (ancho, alto))
+    pygame.transform.scale(resultado_chico, (ancho, alto), superficie)
+    return superficie
 
 
 def cargar_gif(ruta, tamano):

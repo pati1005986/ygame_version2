@@ -34,7 +34,7 @@ class PersonajeHumanoide:
     # - Buffer de salto: la pulsación adelantada se guarda y se ejecuta
     #   apenas se puede, en vez de perderse.
     # ------------------------------------------------------------------
-    COYOTE_FRAMES = 6        # ~0.1 s
+    COYOTE_FRAMES = 12       # ~0.2 s para iniciar el salto tras dejar un borde
     BUFFER_SALTO_FRAMES = 8  # ~0.13 s
 
     # ------------------------------------------------------------------

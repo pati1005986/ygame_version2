@@ -249,6 +249,19 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     intensidad_shake = 0.0  # sacudida de cámara: da sensación de impacto/velocidad
     alerta_enemigos = 0.0  # 0-1: qué tan cerca está el enemigo más próximo
     tiempo_ultimo_fondo = -1.0
+    combo_actual = 0
+    combo_mejor_nivel = 0
+    combo_expira = 0
+    resumen_combo = 0
+    resumen_expira = 0
+    combo_hud_clave = None
+    combo_hud_superficie = None
+    resumen_clave = None
+    resumen_superficies = None
+    fuente_combo = pygame.font.Font(None, 26)
+    fuente_combo.set_bold(True)
+    fuente_resumen = pygame.font.Font(None, 32)
+    fuente_resumen.set_bold(True)
     eventos_visuales = EventosVisuales(WIDTH, HEIGHT)
 
     nivel = max(1, int(nivel_inicial))
@@ -271,7 +284,12 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     configuracion["controles"] = MenuOpciones.DEFAULTS["controles"].copy()
     configuracion["controles"].update(configuracion_guardada.get("controles", {}))
 
-    jugador = PersonajeHumanoide(*POS_SPAWN, color_desde_hue(hue_jugador), configuracion["volumen_efectos"])
+    jugador = PersonajeHumanoide(
+        *POS_SPAWN,
+        color_desde_hue(hue_jugador),
+        configuracion["volumen_efectos"],
+        dash_habilitado=True,
+    )
     jugador.rect.center = POS_SPAWN
     ajustar_dificultad_jugador(jugador, nivel)
     aplicar_volumen_audio(configuracion, jugador)
@@ -310,6 +328,8 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         nonlocal intensidad_shake, alerta_enemigos
         nonlocal jugador, estado, nivel, plataformas
         nonlocal hue_fondo, hue_jugador, entidades, transicion
+        nonlocal combo_actual, combo_mejor_nivel, combo_expira
+        nonlocal resumen_combo, resumen_expira
 
         tiempo_mundo = pygame.time.get_ticks() / 1000.0
         intensidad_shake *= 0.82
@@ -328,7 +348,14 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         )
         if estado == ESTADO_JUGANDO:
             en_aire_antes = not jugador.en_suelo
+            dash_activo = jugador.dash_restante > 0
             jugador.mover(plataformas, configuracion["controles"])
+            ahora_combo = pygame.time.get_ticks()
+            if jugador._salto_ejecutado_este_frame and en_aire_antes:
+                registrar_truco(ahora_combo)
+            if jugador.dash_ejecutado_este_frame:
+                registrar_truco(ahora_combo)
+                jugador.dash_ejecutado_este_frame = False
             if not eventos_visuales.evento_flashback_especial_activo:
                 for entidad in entidades:
                     entidad.mover(plataformas, jugador.rect)
@@ -361,7 +388,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 )
                 estado = ESTADO_GAME_OVER
 
-            if estado == ESTADO_JUGANDO and any(
+            if estado == ESTADO_JUGANDO and not dash_activo and any(
                 entidad.rect.colliderect(jugador.rect) for entidad in entidades
             ):
                 intensidad_shake = 9.0
@@ -369,12 +396,20 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     nivel, pygame.time.get_ticks()
                 )
                 estado = ESTADO_GAME_OVER
+                combo_actual = 0
+                combo_mejor_nivel = 0
+                combo_expira = 0
 
             salio_por_la_derecha = jugador.rect.centerx >= WIDTH
             salio_por_otro_borde = (
                 jugador.rect.top > HEIGHT or jugador.rect.right < 0
             )
             if salio_por_la_derecha:
+                resumen_combo = combo_mejor_nivel
+                resumen_expira = pygame.time.get_ticks() + 1800
+                combo_actual = 0
+                combo_mejor_nivel = 0
+                combo_expira = 0
                 dibujar_nivel(
                     capa_nivel_anterior,
                     fondo_cache,
@@ -413,8 +448,15 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     seleccionar_por_nivel=False,
                 )
                 estado = ESTADO_GAME_OVER
+                combo_actual = 0
+                combo_mejor_nivel = 0
+                combo_expira = 0
 
         elif estado == ESTADO_GAME_OVER:
+            combo_actual = 0
+            combo_mejor_nivel = 0
+            combo_expira = 0
+            resumen_expira = 0
             for plataforma in plataformas:
                 plataforma.actualizar(dt)
             if jugador.muriendo:
@@ -448,6 +490,17 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         ) and not hay_gif_game_over:
             for particula in particulas:
                 particula.actualizar(dt)
+
+        if combo_actual and pygame.time.get_ticks() > combo_expira:
+            combo_actual = 0
+
+    def registrar_truco(ahora):
+        nonlocal combo_actual, combo_mejor_nivel, combo_expira
+        if ahora > combo_expira:
+            combo_actual = 0
+        combo_actual += 1
+        combo_mejor_nivel = max(combo_mejor_nivel, combo_actual)
+        combo_expira = ahora + 2000
 
     while jugando:
         # Limita el avance tras una pausa del sistema; el acumulador hace
@@ -687,6 +740,69 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 nivel_mostrado = nivel_hud
                 idioma_mostrado = configuracion["idioma"]
             lienzo.blit(texto_nivel, (14, 10))
+
+            clave_hud_combo = (
+                configuracion["idioma"],
+                combo_actual if tiempo * 1000 <= combo_expira else 0,
+                jugador.dashes_disponibles > 0
+                and jugador.dash_enfriamiento <= 0,
+            )
+            if clave_hud_combo != combo_hud_clave:
+                combo_hud_clave = clave_hud_combo
+                idioma_hud, combo_visible, dash_listo = clave_hud_combo
+                lineas_hud = []
+                if combo_visible > 0:
+                    lineas_hud.append(
+                        fuente_combo.render(
+                            f"{texto(idioma_hud, 'combo')} x{combo_visible}",
+                            True,
+                            (255, 225, 100),
+                        )
+                    )
+                lineas_hud.append(
+                    fuente_combo.render(
+                        f"{texto(idioma_hud, 'dash_control')} "
+                        f"{texto(idioma_hud, 'ready') if dash_listo else '...'}",
+                        True,
+                        (130, 255, 190) if dash_listo else (165, 165, 175),
+                    )
+                )
+                combo_hud_superficie = lineas_hud
+            for indice, linea_hud in enumerate(combo_hud_superficie):
+                rect_hud = linea_hud.get_rect(topright=(WIDTH - 14, 10 + indice * 26))
+                lienzo.blit(linea_hud, rect_hud)
+
+            if (
+                estado == ESTADO_TRANSICION
+                and pygame.time.get_ticks() <= resumen_expira
+            ):
+                clave_resumen = (
+                    configuracion["idioma"],
+                    nivel - 1,
+                    resumen_combo,
+                )
+                if clave_resumen != resumen_clave:
+                    resumen_clave = clave_resumen
+                    idioma_resumen, nivel_resumen, combo_resumen = clave_resumen
+                    resumen_superficies = (
+                        fuente_resumen.render(
+                            f"{texto(idioma_resumen, 'level_clear')} "
+                            f"{nivel_resumen}",
+                            True,
+                            (255, 245, 205),
+                        ),
+                        fuente_combo.render(
+                            f"{texto(idioma_resumen, 'best_combo')} "
+                            f"x{combo_resumen}",
+                            True,
+                            (255, 215, 105),
+                        ),
+                    )
+                for linea, y in zip(resumen_superficies, (58, 92)):
+                    lienzo.blit(
+                        linea,
+                        linea.get_rect(center=(WIDTH // 2, y)),
+                    )
 
             if estado == ESTADO_GAME_OVER:
                 eventos_visuales.dibujar_game_over(

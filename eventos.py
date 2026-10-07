@@ -97,6 +97,7 @@ def _reiniciar_juego(contexto, dependencias):
         *dependencias.pos_spawn,
         dependencias.color_desde_hue(contexto.hue_jugador),
         dependencias.configuracion["volumen_efectos"],
+        dash_habilitado=True,
     )
     contexto.jugador.rect.center = dependencias.pos_spawn
     dependencias.ajustar_dificultad_jugador(contexto.jugador, contexto.nivel)
@@ -223,6 +224,8 @@ def procesar_eventos(eventos, contexto, dependencias):
                 contexto.estado = ESTADO_PAUSA
             elif evento.key == dependencias.configuracion["controles"]["jump"]:
                 contexto.jugador.solicitar_salto()
+            elif evento.key in (pygame.K_LSHIFT, pygame.K_RSHIFT):
+                contexto.jugador.solicitar_dash()
         elif (
             contexto.estado == ESTADO_GAME_OVER
             and evento.type == pygame.KEYDOWN

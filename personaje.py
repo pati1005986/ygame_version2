@@ -56,7 +56,7 @@ class PersonajeHumanoide:
     VEL_CAIDA_MAX = 16.0         # velocidad terminal
     AJUSTE_ESQUINA = 10          # px de "perdón" al golpear una esquina con la cabeza
 
-    # Dash (opt-in)
+    # Dash
     DASH_FRAMES = 9
     DASH_VELOCIDAD = 15.0
     DASH_ENFRIAMIENTO = 24
@@ -153,13 +153,14 @@ class PersonajeHumanoide:
         self.velocidad_giro = 28
         self.sonido_doble_salto = self._crear_sonido(620, 0.16, 1.0, 1100)
 
-        # --- Dash (opt-in) ---
+        # --- Dash ---
         self.dash_habilitado = dash_habilitado
         self.dashes_maximos = 1
         self.dashes_disponibles = self.dashes_maximos
         self.dash_restante = 0
         self.dash_enfriamiento = 0
         self.dash_direccion = 1
+        self.dash_ejecutado_este_frame = False
         self.rastro = []  # [silueta, ancla, vida]
         self.sonido_dash = self._crear_sonido(900, 0.12, 1.0, 260, ruido=0.45)
 
@@ -757,6 +758,7 @@ class PersonajeHumanoide:
             return
         self.dashes_disponibles -= 1
         self.dash_restante = self.DASH_FRAMES
+        self.dash_ejecutado_este_frame = True
         self.dash_direccion = self.direccion
         self.vel_y = 0
         self._resto_y = 0.0

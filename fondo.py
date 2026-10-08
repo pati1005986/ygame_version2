@@ -328,7 +328,15 @@ _CARAS_MIN = 6
 _CARAS_MAX = 68
 _GOTAS_MAX = 170
 
-_LLUVIA = {"dim": None, "estilo": -1, "sprites": [], "caras": [], "gotas": [], "t": None}
+_LLUVIA = {
+    "dim": None,
+    "estilo": -1,
+    "etapa_distorsion": -1,
+    "sprites": [],
+    "caras": [],
+    "gotas": [],
+    "t": None,
+}
 _CACHE_VINETA = {}
 
 
@@ -342,13 +350,14 @@ def _mezclar(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
-def _crear_cara(R, hue, estilo, rng):
+def _crear_cara(R, hue, estilo, rng, distorsion=0.0):
     """Dibuja una cara pensativa (ceja alzada, mirada arriba, mano en la
     barbilla y burbujas de pensamiento). Devuelve sus frames inclinados.
 
     estilo 0: cartoon sencillo.
     estilo 1: pupilas hipnóticas, lágrimas de pintura y aura.
     estilo 2: además se derrite por abajo y le sale un tercer ojo.
+    `distorsion` aumenta los rasgos desiguales y ondulados entre niveles.
     """
     w, h = int(R * 3.0), int(R * 3.7)
     capa = pygame.Surface((w, h), pygame.SRCALPHA)
@@ -375,7 +384,8 @@ def _crear_cara(R, hue, estilo, rng):
     # Cara con contorno orgánico y borde de tinta.
     pts = [
         _punto_organico((cx, cy), R, (i / 36) * math.tau, 0.0, fase,
-                        amplitud=0.05 + 0.035 * estilo, asimetria=0.05 + 0.03 * estilo)
+                        amplitud=0.05 + 0.035 * estilo + 0.2 * distorsion,
+                        asimetria=0.05 + 0.03 * estilo + 0.18 * distorsion)
         for i in range(36)
     ]
     pygame.draw.polygon(capa, (*piel, 255), pts)
@@ -386,9 +396,12 @@ def _crear_cara(R, hue, estilo, rng):
         pygame.draw.circle(capa, (*pop, 110), P(dx, 0.28), max(2, int(R * 0.2)))
 
     # Ojos asimétricos mirando hacia arriba.
-    for dx, dy, rel in ((-0.36, -0.10, 0.23), (0.38, -0.16, 0.29)):
+    for indice, (dx, dy, rel) in enumerate(((-0.36, -0.10, 0.23), (0.38, -0.16, 0.29))):
+        lado = -1 if indice == 0 else 1
+        dx += lado * math.sin(fase + indice) * 0.14 * distorsion
+        dy += math.cos(fase * 1.3 + indice) * 0.12 * distorsion
         ex, ey = P(dx, dy)
-        er = max(3, int(rel * R))
+        er = max(3, int(rel * R * (1 + lado * 0.25 * distorsion)))
         pygame.draw.circle(capa, (255, 255, 255, 255), (ex, ey), er)
         pygame.draw.circle(capa, (*_TINTA, 255), (ex, ey), er, max(2, g - 1))
         px, py = ex + int(er * 0.22), ey - int(er * 0.28)
@@ -418,7 +431,13 @@ def _crear_cara(R, hue, estilo, rng):
     pygame.draw.line(capa, _TINTA, P(0.10, -0.60), P(0.68, -0.54), gc)
 
     # Boquita torcida de duda.
-    boca = [P(-0.05 + 0.45 * (u / 8), 0.40 + 0.05 * math.sin(u / 8 * math.tau * 1.5)) for u in range(9)]
+    boca = [
+        P(
+            -0.05 + 0.45 * (u / 8),
+            0.40 + (0.05 + 0.14 * distorsion) * math.sin(u / 8 * math.tau * 1.5 + fase),
+        )
+        for u in range(9)
+    ]
     pygame.draw.lines(capa, _TINTA, False, boca, g)
 
     # Mano en la barbilla.
@@ -440,15 +459,18 @@ def _crear_cara(R, hue, estilo, rng):
     return [pygame.transform.rotozoom(capa, a, 1.0) for a in _ANGULOS_CARA]
 
 
-def _construir_sprites(estilo):
-    """Pool de caras (3 tamaños x varios matices) para un estilo. Se genera
-    una sola vez por estilo; el alpha de profundidad queda 'horneado'."""
-    rng = random.Random(1234 + estilo)
+def _construir_sprites(estilo, distorsion=0.0):
+    """Pool de caras (3 tamaños x varios matices) para una etapa de distorsión.
+    Se genera una sola vez por etapa; el alpha de profundidad queda 'horneado'."""
+    etapa_distorsion = round(distorsion * 9)
+    rng = random.Random(1234 + estilo * 10 + etapa_distorsion)
     sprites = []
     for tam, radio in enumerate(_TAMANOS_CARA):
         for k in range(_NUM_HUES_CARA):
             hue = (k / _NUM_HUES_CARA + rng.uniform(-0.03, 0.03)) % 1.0
-            frames = _crear_cara(int(radio * _ESCALA_ESTILO[estilo]), hue, estilo, rng)
+            frames = _crear_cara(
+                int(radio * _ESCALA_ESTILO[estilo]), hue, estilo, rng, distorsion
+            )
             for f in frames:
                 f.fill((255, 255, 255, _ALPHA_CARA[tam]), special_flags=pygame.BLEND_RGBA_MULT)
             sprites.append((tam, frames))
@@ -508,9 +530,12 @@ def _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo
 
     # Las caras se transforman en el sitio al cambiar de etapa.
     estilo = 0 if p < 0.34 else (1 if p < 0.67 else 2)
-    if e["estilo"] != estilo:
-        e["sprites"] = _construir_sprites(estilo)
+    etapa_distorsion = round(p * 9)
+    if e["estilo"] != estilo or e["etapa_distorsion"] != etapa_distorsion:
+        distorsion = etapa_distorsion / 9
+        e["sprites"] = _construir_sprites(estilo, distorsion)
         e["estilo"] = estilo
+        e["etapa_distorsion"] = etapa_distorsion
 
     caras = e["caras"]
     primera = not caras
@@ -555,7 +580,8 @@ def _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo
 
 def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0):
     """Fondo psicodélico que, nivel a nivel, se va llenando de una lluvia de
-    caras pensativas. Nivel 0: solo psicodelia. Nivel 10+: lluvia total."""
+    caras pensativas que se deforman progresivamente. Nivel 0: solo psicodelia.
+    Nivel 10+: lluvia total y distorsión máxima."""
     p = max(0.0, min(1.0, (nivel - 1) / 9.0))  # progreso de la transformación
     # El vaivén de color se intensifica con el nivel (más "viaje").
     hue_base = (hue_fondo + math.sin(tiempo * 0.35) * (0.05 + 0.07 * p)) % 1.0

@@ -40,6 +40,9 @@ TRADUCCIONES = {
         "ready": "READY",
         "level_clear": "LEVEL CLEAR",
         "best_combo": "BEST COMBO",
+        "credits_author": "AUTHOR: PATI",
+        "thanks_for_playing": "THANKS FOR PLAYING",
+        "return_main_menu": "RETURN TO MAIN MENU",
         "window_title": "Procedural Platforms - Abstract Canvas",
     },
     "es": {
@@ -83,6 +86,9 @@ TRADUCCIONES = {
         "ready": "LISTO",
         "level_clear": "NIVEL COMPLETADO",
         "best_combo": "MEJOR COMBO",
+        "credits_author": "AUTOR: PATI",
+        "thanks_for_playing": "GRACIAS POR JUGAR",
+        "return_main_menu": "VOLVER AL MENU PRINCIPAL",
         "window_title": "Plataformas Procedurales - Lienzo Abstracto",
     },
     "pt": {
@@ -126,6 +132,9 @@ TRADUCCIONES = {
         "ready": "PRONTO",
         "level_clear": "NÍVEL CONCLUÍDO",
         "best_combo": "MELHOR COMBO",
+        "credits_author": "AUTOR: PATI",
+        "thanks_for_playing": "OBRIGADO POR JOGAR",
+        "return_main_menu": "VOLTAR AO MENU PRINCIPAL",
         "window_title": "Plataformas Procedurais - Tela Abstrata",
     },
     "ru": {
@@ -169,6 +178,9 @@ TRADUCCIONES = {
         "ready": "ГОТОВ",
         "level_clear": "УРОВЕНЬ ПРОЙДЕН",
         "best_combo": "ЛУЧШЕЕ КОМБО",
+        "credits_author": "АВТОР: PATI",
+        "thanks_for_playing": "СПАСИБО ЗА ИГРУ",
+        "return_main_menu": "ВЕРНУТЬСЯ В ГЛАВНОЕ МЕНЮ",
         "window_title": "Процедурные платформы - абстрактный холст",
     },
 }

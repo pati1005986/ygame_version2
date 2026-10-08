@@ -19,6 +19,7 @@ ESTADO_PAUSA = "pausa"
 ESTADO_JUGANDO = "jugando"
 ESTADO_TRANSICION = "transicion"
 ESTADO_GAME_OVER = "game_over"
+ESTADO_CREDITOS = "creditos"
 
 
 @dataclass
@@ -40,6 +41,8 @@ class EstadoEventos:
     fuente_boton: pygame.font.Font
     superficie_texto_boton: pygame.Surface
     idioma_mostrado: Any
+    boton_creditos_menu: pygame.Rect
+    creditos_listos: bool
 
 
 @dataclass
@@ -135,6 +138,31 @@ def procesar_eventos(eventos, contexto, dependencias):
                 contexto.estado = ESTADO_OPCIONES
             elif accion_menu == "salir":
                 contexto.jugando = False
+        elif contexto.estado == ESTADO_CREDITOS and contexto.creditos_listos:
+            if evento.type == pygame.KEYDOWN and evento.key in (
+                pygame.K_RETURN,
+                pygame.K_SPACE,
+                pygame.K_ESCAPE,
+            ):
+                contexto.estado = ESTADO_MENU
+            elif (
+                evento.type == pygame.MOUSEBUTTONDOWN
+                and evento.button == pygame.BUTTON_LEFT
+            ):
+                posicion = (
+                    int(
+                        evento.pos[0]
+                        * dependencias.width
+                        / contexto.screen.get_width()
+                    ),
+                    int(
+                        evento.pos[1]
+                        * dependencias.height
+                        / contexto.screen.get_height()
+                    ),
+                )
+                if contexto.boton_creditos_menu.collidepoint(posicion):
+                    contexto.estado = ESTADO_MENU
         elif contexto.estado == ESTADO_PAUSA:
             evento_pausa = evento
             if evento.type == pygame.MOUSEBUTTONDOWN:
@@ -330,9 +358,6 @@ class EventosVisuales:
                 "image13.gif",
             ),
         )
-        self.gif_game_over_nivel_alto = self._cargar_secuencia(
-            carpeta_assets, ("image14.gif",)
-        )
         self.secuencia_game_over = self._cargar_secuencia(
             carpeta_assets, ("image7.gif", "image8.gif", "image9.gif")
         )
@@ -342,12 +367,17 @@ class EventosVisuales:
         self.indice_imagen_game_over = 0
         self.animacion_despertar = CarboncilloAnimado()
         self.game_over_nivel_alto_activo = False
+        self.final_juego_activo = False
+        self.inicio_final_juego = 0.0
+        self.duracion_animacion_final = 5.0
+        self.final_juego_dibujo = None
+        self.final_juego_mouse = (0.0, 0.0)
 
         self.flashbacks_por_nivel = {
             1: self._cargar_gif(carpeta_assets, "image15.gif"),
             6: self._cargar_gif(carpeta_assets, "image6.gif"),
             10: self._cargar_gif(carpeta_assets, "image5.gif"),
-            20: self._cargar_gif(carpeta_assets, "image16.gif"),
+            20: self._cargar_gif(carpeta_assets, "image14.gif"),
         }
         self.flashback_activo = False
         self.flashback_inicio = 0.0
@@ -445,6 +475,88 @@ class EventosVisuales:
         indice = int((tiempo - self.flashback_inicio) / self.duracion_flashback)
         indice %= len(self.fotogramas_flashback)
         return self.fotogramas_flashback[indice]
+
+    def iniciar_final_juego(self, inicio):
+        self.final_juego_activo = True
+        self.inicio_final_juego = inicio
+        self.final_juego_mouse = (self.ancho // 2, self.alto // 2)
+        from alfin import Dibujo, PIXEL_SIZES
+
+        ruta_imagen = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "assets", "dibujo.png"
+        )
+        if not os.path.isfile(ruta_imagen):
+            raise FileNotFoundError(f"No se encontró la imagen final: {ruta_imagen}")
+        self.final_juego_dibujo = Dibujo(ruta_imagen, self.ancho, self.alto)
+        self.final_juego_dibujo.build(PIXEL_SIZES[2])
+
+    def creditos_listos(self, tiempo_ms):
+        return (
+            self.final_juego_activo
+            and tiempo_ms - self.inicio_final_juego
+            >= self.duracion_animacion_final * 1000
+        )
+
+    def dibujar_final_juego(
+        self, lienzo, tiempo_ms, fuente, fuente_titulo, creditos_listos, idioma
+    ):
+        if not self.final_juego_activo:
+            return
+
+        tiempo_transcurrido = max(0.0, (tiempo_ms - self.inicio_final_juego) / 1000.0)
+
+        from alfin import render
+
+        intro = min(1.0, tiempo_transcurrido / 3.5)
+        mouse = (
+            self.final_juego_mouse[0] / max(1, self.final_juego_dibujo.px),
+            self.final_juego_mouse[1] / max(1, self.final_juego_dibujo.px),
+        )
+        gris = render(
+            self.final_juego_dibujo,
+            tiempo_transcurrido,
+            mouse,
+            levels=6,
+            grain_on=True,
+            dither_on=True,
+            intro=intro,
+        )
+        rgb = np.repeat(gris.T[:, :, None], 3, axis=2)
+        superficie = pygame.surfarray.make_surface(rgb)
+        lienzo.blit(
+            pygame.transform.scale(superficie, (self.ancho, self.alto)), (0, 0)
+        )
+
+        if creditos_listos:
+            brillo = min(
+                1.0,
+                (tiempo_transcurrido - self.duracion_animacion_final) / 2.5,
+            )
+            texto_titulo = fuente_titulo.render("PATI", True, (255, 245, 245))
+            sombra = fuente_titulo.render("PATI", True, (22, 18, 18))
+            rect = texto_titulo.get_rect(center=(self.ancho // 2, self.alto // 2 - 22))
+            rect_sombra = rect.move(7, 8)
+            lienzo.blit(sombra, rect_sombra)
+            lienzo.blit(texto_titulo, rect)
+
+            from idioma import texto
+
+            texto_autor = fuente.render(
+                texto(idioma, "credits_author"), True, (220, 220, 220)
+            )
+            rect_autor = texto_autor.get_rect(center=(self.ancho // 2, self.alto // 2 + 40))
+            lienzo.blit(texto_autor, rect_autor)
+
+            texto_creditos = fuente.render(
+                texto(idioma, "thanks_for_playing"), True, (255, 220, 110)
+            )
+            rect_creditos = texto_creditos.get_rect(center=(self.ancho // 2, self.alto // 2 + 90))
+            lienzo.blit(texto_creditos, rect_creditos)
+
+            if brillo > 0:
+                v = pygame.Surface((self.ancho, self.alto), pygame.SRCALPHA)
+                v.fill((255, 255, 255, int(40 * brillo)))
+                lienzo.blit(v, (0, 0))
 
     def iniciar_game_over(self, nivel, inicio, seleccionar_por_nivel=True):
         self.indice_imagen_game_over = 0

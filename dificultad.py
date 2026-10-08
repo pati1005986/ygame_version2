@@ -24,24 +24,33 @@ estabilice en partidas muy largas en vez de crecer sin límite.
 def parametros_dificultad(nivel):
     """Devuelve los parámetros de dificultad para ``nivel``.
 
-    ``nivel`` 1 siempre da los valores base (progreso 0); a partir de ahí
-    todo escala linealmente hasta su tope.
+    Hasta el nivel 30 la curva sube linealmente hasta sus tope. A partir de
+    ahí, el juego vuelve a la línea base del nivel 1 y luego se hace más
+    fácil progresivamente para relajar la experiencia en niveles muy altos.
     """
-    progreso = max(0, nivel - 1)
+    if nivel <= 30:
+        progreso = max(0, nivel - 1)
+        factor = 1.0
+    else:
+        # Desde el nivel 30 se reinicia a la dificultad del nivel 1; a partir
+        # de ahí baja suavemente para que quede todo mucho más cómodo.
+        progreso = 0
+        factor = max(0.45, 1.0 - (nivel - 30) * 0.08)
+
+    jugador_base = 6.0 + progreso * 0.12
+    gravedad_base = 0.6 + progreso * 0.018
+    prob_movil_base = 0.20 + progreso * 0.015
+    patrulla_base = 1.8 + progreso * 0.05
+    persecucion_base = 3.0 + progreso * 0.08
+    rango_base = 220 + progreso * 4
+
     return {
-        # Jugador (ver ajustar_dificultad_jugador en juego.py). Estos dos
-        # valores ya existían; se centralizan aquí sin cambiar el ritmo.
-        "velocidad_jugador": min(6.0 + progreso * 0.12, 8.5),
-        "gravedad_jugador": min(0.6 + progreso * 0.018, 0.9),
-        # Plataformas móviles (ver Plataforma en plataformas.py). Antes
-        # era un 35% fijo en todos los niveles; ahora empieza más suave y
-        # termina más exigente.
-        "probabilidad_plataforma_movil": min(0.20 + progreso * 0.015, 0.55),
-        # Enemigos (ver EntidadGris y generar_entidades en enemigo.py).
-        # Crecen a un ritmo comparable al del jugador para que perseguir
-        # siga siendo una amenaza real en niveles altos, en vez de
-        # quedarse atrás mientras el jugador se vuelve más rápido.
-        "velocidad_enemigo_patrulla": min(1.8 + progreso * 0.05, 3.2),
-        "velocidad_enemigo_persecucion": min(3.0 + progreso * 0.08, 5.0),
-        "rango_deteccion_enemigo": min(220 + progreso * 4, 320),
+        # Jugador: a partir del 30 vuelve a la línea base y luego se relaja.
+        "velocidad_jugador": min(jugador_base * factor, 8.5),
+        "gravedad_jugador": min(gravedad_base * factor, 0.9),
+        # Plataformas y enemigos vuelven a ser mucho más suaves desde el 30.
+        "probabilidad_plataforma_movil": min(prob_movil_base * factor, 0.55),
+        "velocidad_enemigo_patrulla": min(patrulla_base * factor, 3.2),
+        "velocidad_enemigo_persecucion": min(persecucion_base * factor, 5.0),
+        "rango_deteccion_enemigo": min(rango_base * factor, 320),
     }

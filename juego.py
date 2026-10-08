@@ -17,6 +17,7 @@ from dificultad import parametros_dificultad
 from catarsis import play_catarsis_animation
 from eventos import (
     ESTADO_ADVERTENCIA,
+    ESTADO_CREDITOS,
     ESTADO_GAME_OVER,
     ESTADO_JUGANDO,
     ESTADO_MENU,
@@ -267,6 +268,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         fuente_boton = pygame.font.Font(None, tamano_fuente)
         fuente_boton.set_bold(True)
     superficie_texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
+    boton_creditos_menu = pygame.Rect(WIDTH // 2 - 165, HEIGHT - 82, 330, 54)
     idioma_advertencia_mostrado = None
     textos_advertencia = None
     escena = pygame.Surface((WIDTH, HEIGHT))
@@ -533,6 +535,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             nivel, estado, tiempo, ESTADO_JUGANDO
         )
 
+        estado_antes_eventos = estado
         contexto_eventos = EstadoEventos(
             screen=screen,
             jugando=jugando,
@@ -551,6 +554,10 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             fuente_boton=fuente_boton,
             superficie_texto_boton=superficie_texto_boton,
             idioma_mostrado=idioma_mostrado,
+            boton_creditos_menu=boton_creditos_menu,
+            creditos_listos=eventos_visuales.creditos_listos(
+                pygame.time.get_ticks()
+            ),
         )
         procesar_eventos(
             pygame.event.get(), contexto_eventos, dependencias_eventos
@@ -572,6 +579,20 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         superficie_texto_boton = contexto_eventos.superficie_texto_boton
         idioma_mostrado = contexto_eventos.idioma_mostrado
 
+        if estado_antes_eventos == ESTADO_CREDITOS and estado == ESTADO_MENU:
+            eventos_visuales.final_juego_activo = False
+            eventos_visuales.final_juego_dibujo = None
+            nivel = 1
+            plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
+            jugador = PersonajeHumanoide(
+                *POS_SPAWN,
+                color_desde_hue(hue_jugador),
+                configuracion["volumen_efectos"],
+                dash_habilitado=True,
+            )
+            jugador.rect.center = POS_SPAWN
+            ajustar_dificultad_jugador(jugador, nivel)
+
         if estado == ESTADO_MENU:
             menu.actualizar()
 
@@ -587,6 +608,11 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 exit_text=texto(configuracion["idioma"], "exit"),
                 button_renderer=menu,
             )
+
+        if estado == ESTADO_JUGANDO and nivel >= 40 and not eventos_visuales.final_juego_activo:
+            eventos_visuales.iniciar_final_juego(pygame.time.get_ticks())
+            estado = ESTADO_CREDITOS
+            nivel = 40
 
         eventos_visuales.actualizar_flashbacks_especiales(tiempo)
 
@@ -645,6 +671,38 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 int(posicion_raton[1] * HEIGHT / screen.get_height()),
             )
             menu.dibujar(lienzo, posicion_raton_logica)
+            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
+        elif estado == ESTADO_CREDITOS:
+            creditos_listos = eventos_visuales.creditos_listos(
+                pygame.time.get_ticks()
+            )
+            eventos_visuales.dibujar_final_juego(
+                lienzo,
+                pygame.time.get_ticks(),
+                font,
+                font_advertencia_titulo,
+                creditos_listos,
+                configuracion["idioma"],
+            )
+            if creditos_listos:
+                posicion_raton = pygame.mouse.get_pos()
+                posicion_raton_logica = (
+                    int(posicion_raton[0] * WIDTH / screen.get_width()),
+                    int(posicion_raton[1] * HEIGHT / screen.get_height()),
+                )
+                hover_creditos = boton_creditos_menu.collidepoint(
+                    posicion_raton_logica
+                )
+                rect_boton_creditos = menu._dibujar_boton_comic(
+                    lienzo, boton_creditos_menu, hover_creditos
+                )
+                menu._texto_centrado(
+                    lienzo,
+                    texto(configuracion["idioma"], "return_main_menu"),
+                    menu.font_prompt,
+                    rect_boton_creditos.center,
+                    (255, 255, 255),
+                )
             screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
         elif estado == ESTADO_PAUSA:
             posicion_raton = pygame.mouse.get_pos()

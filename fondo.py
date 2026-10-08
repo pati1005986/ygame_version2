@@ -522,7 +522,11 @@ def _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo
     if e["dim"] != (ancho, alto):
         e.update(dim=(ancho, alto), caras=[], gotas=_crear_gotas(ancho, alto), t=None)
 
-    objetivo = 0 if nivel < 1 else int(_CARAS_MIN + p * (_CARAS_MAX - _CARAS_MIN))
+    objetivo = (
+        0
+        if nivel < 1 or nivel >= 30
+        else int(_CARAS_MIN + p * (_CARAS_MAX - _CARAS_MIN))
+    )
     if objetivo == 0:
         e["caras"].clear()
         e["t"] = None
@@ -580,8 +584,8 @@ def _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo
 
 def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0):
     """Fondo psicodélico que, nivel a nivel, se va llenando de una lluvia de
-    caras pensativas que se deforman progresivamente. Nivel 0: solo psicodelia.
-    Nivel 10+: lluvia total y distorsión máxima."""
+    caras pensativas que se deforman progresivamente. La lluvia desaparece
+    desde el nivel 30."""
     p = max(0.0, min(1.0, (nivel - 1) / 9.0))  # progreso de la transformación
     # El vaivén de color se intensifica con el nivel (más "viaje").
     hue_base = (hue_fondo + math.sin(tiempo * 0.35) * (0.05 + 0.07 * p)) % 1.0

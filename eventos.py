@@ -292,7 +292,9 @@ def opacidad_nivel(nivel):
 
 
 def saturacion_nivel(nivel):
-    """Devuelve la pérdida de color acumulada por nivel."""
+    """Devuelve la pérdida de color; desde el nivel 30 conserva tonos apagados."""
+    if nivel >= 30:
+        return 0.55
     return min(1.0, nivel / 12)
 
 
@@ -378,6 +380,7 @@ class EventosVisuales:
             6: self._cargar_gif(carpeta_assets, "image6.gif"),
             10: self._cargar_gif(carpeta_assets, "image5.gif"),
             20: self._cargar_gif(carpeta_assets, "image14.gif"),
+            30: self._cargar_gif(carpeta_assets, "image18.gif"),
         }
         self.flashback_activo = False
         self.flashback_inicio = 0.0
@@ -411,6 +414,8 @@ class EventosVisuales:
         """Actualiza la programación de flashbacks de fondo aleatorios."""
         if 1 <= nivel <= 5:
             fotogramas_disponibles, duracion_disponible = self.flashbacks_por_nivel[1]
+        elif nivel >= 30:
+            fotogramas_disponibles, duracion_disponible = self.flashbacks_por_nivel[30]
         elif nivel >= 20:
             fotogramas_disponibles, duracion_disponible = self.flashbacks_por_nivel[20]
         elif nivel >= 10:
@@ -497,9 +502,7 @@ class EventosVisuales:
             >= self.duracion_animacion_final * 1000
         )
 
-    def dibujar_final_juego(
-        self, lienzo, tiempo_ms, fuente, fuente_titulo, creditos_listos, idioma
-    ):
+    def dibujar_final_juego(self, lienzo, tiempo_ms):
         if not self.final_juego_activo:
             return
 
@@ -526,37 +529,6 @@ class EventosVisuales:
         lienzo.blit(
             pygame.transform.scale(superficie, (self.ancho, self.alto)), (0, 0)
         )
-
-        if creditos_listos:
-            brillo = min(
-                1.0,
-                (tiempo_transcurrido - self.duracion_animacion_final) / 2.5,
-            )
-            texto_titulo = fuente_titulo.render("PATI", True, (255, 245, 245))
-            sombra = fuente_titulo.render("PATI", True, (22, 18, 18))
-            rect = texto_titulo.get_rect(center=(self.ancho // 2, self.alto // 2 - 22))
-            rect_sombra = rect.move(7, 8)
-            lienzo.blit(sombra, rect_sombra)
-            lienzo.blit(texto_titulo, rect)
-
-            from idioma import texto
-
-            texto_autor = fuente.render(
-                texto(idioma, "credits_author"), True, (220, 220, 220)
-            )
-            rect_autor = texto_autor.get_rect(center=(self.ancho // 2, self.alto // 2 + 40))
-            lienzo.blit(texto_autor, rect_autor)
-
-            texto_creditos = fuente.render(
-                texto(idioma, "thanks_for_playing"), True, (255, 220, 110)
-            )
-            rect_creditos = texto_creditos.get_rect(center=(self.ancho // 2, self.alto // 2 + 90))
-            lienzo.blit(texto_creditos, rect_creditos)
-
-            if brillo > 0:
-                v = pygame.Surface((self.ancho, self.alto), pygame.SRCALPHA)
-                v.fill((255, 255, 255, int(40 * brillo)))
-                lienzo.blit(v, (0, 0))
 
     def iniciar_game_over(self, nivel, inicio, seleccionar_por_nivel=True):
         self.indice_imagen_game_over = 0

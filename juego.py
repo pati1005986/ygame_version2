@@ -136,7 +136,7 @@ def generar_nivel(nivel):
         w = random.randint(50, 115) if nivel >= 10 else random.randint(65, 135)
         x = ultimo_x + random.randint(*distancia_x)
         y = max(70, min(HEIGHT - 50, plataforma_guia.top + random.randint(*desplazamiento_y)))
-        es_trampa = nivel >= 10 and random.random() < 0.28
+        es_trampa = nivel >= 10 and nivel < 30 and random.random() < 0.28
         plataforma_nueva = Plataforma(
             x, y, w, 20, random.random(), es_trampa, probabilidad_movimiento=prob_movil
         )
@@ -159,22 +159,26 @@ def generar_nivel(nivel):
                     ancho_opcional,
                     20,
                     random.random(),
-                    falso or random.random() < 0.20,
+                    nivel < 30 and (falso or random.random() < 0.20),
                     probabilidad_movimiento=prob_movil,
                 )
             )
 
     hue_fondo = random.random()
     hue_jugador = random.random()
-    entidades = generar_entidades(
-        nivel,
-        plataformas,
-        POS_SPAWN,
-        velocidad_patrulla=parametros["velocidad_enemigo_patrulla"],
-        velocidad_persecucion=parametros["velocidad_enemigo_persecucion"],
-        rango_deteccion=parametros["rango_deteccion_enemigo"],
-        ancho_pantalla=WIDTH,
-        alto_pantalla=HEIGHT,
+    entidades = (
+        generar_entidades(
+            nivel,
+            plataformas,
+            POS_SPAWN,
+            velocidad_patrulla=parametros["velocidad_enemigo_patrulla"],
+            velocidad_persecucion=parametros["velocidad_enemigo_persecucion"],
+            rango_deteccion=parametros["rango_deteccion_enemigo"],
+            ancho_pantalla=WIDTH,
+            alto_pantalla=HEIGHT,
+        )
+        if nivel < 30
+        else []
     )
     return plataformas, hue_fondo, hue_jugador, entidades
 
@@ -679,10 +683,6 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             eventos_visuales.dibujar_final_juego(
                 lienzo,
                 pygame.time.get_ticks(),
-                font,
-                font_advertencia_titulo,
-                creditos_listos,
-                configuracion["idioma"],
             )
             if creditos_listos:
                 posicion_raton = pygame.mouse.get_pos()
@@ -775,8 +775,8 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
                     jugador.dibujar(escena)
 
-                # Los colores se van perdiendo a medida que suben los niveles;
-                # durante la transición el cambio es gradual, al ritmo de la cámara.
+                # El color se atenúa al avanzar; desde el nivel 30 vuelve en
+                # tonos apagados. Durante la transición el cambio sigue a la cámara.
                 nivel_visual = nivel - 1 + transicion.progreso_camara() if estado == ESTADO_TRANSICION else nivel
                 escala_grises(escena, saturacion_nivel(nivel_visual))
                 if intensidad_shake > 0:

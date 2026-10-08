@@ -120,6 +120,7 @@ class PersonajeHumanoide:
         # --- Expresión según el nivel (ver actualizar_nivel) ---
         self.paranoico = False
         self.desesperado = False
+        self.cansado = False
 
         # --- Expresividad: parpadeo y mirada ociosa ---
         self.parpadeando = False
@@ -223,13 +224,14 @@ class PersonajeHumanoide:
     def actualizar_nivel(self, nivel):
         """Informa al personaje en qué nivel del juego está.
 
-        A partir del nivel 10 el personaje adopta una expresión paranoica
-        (ojos desorbitados y mirada nerviosa); a partir del 21, un estado
-        desesperado (agotado, ojeras, sudor y temblor) que tiene prioridad
-        visual. Llamar cada vez que cambie el nivel actual.
+        A partir del nivel 10 el personaje adopta una expresión paranoica,
+        que se vuelve desesperada desde el 21. Desde el nivel 30 queda
+        cansado, sin la mirada paranoica ni los rasgos de desesperación.
+        Llamar cada vez que cambie el nivel actual.
         """
-        self.paranoico = nivel > 9
-        self.desesperado = nivel >= 21
+        self.paranoico = 10 <= nivel < 30
+        self.desesperado = 21 <= nivel < 30
+        self.cansado = nivel >= 30
 
     # ------------------------------------------------------------------
     # Utilidades de color y dibujo
@@ -988,6 +990,8 @@ class PersonajeHumanoide:
         if self.desesperado:
             # Ojos entornados con ojeras marcadas; sin ánimo para nada más.
             tam_ojo = p
+        elif self.cansado:
+            tam_ojo = p * 2
         elif self.paranoico:
             # Ojos desorbitados con la mirada temblando de lado a lado.
             tam_ojo = p * 3
@@ -999,7 +1003,7 @@ class PersonajeHumanoide:
         pupila_dx = round((mirada + 1) / 2 * huecos) * p
         pupila_dy = round((mirada_y + 1) / 2 * huecos) * p
 
-        if self.parpadeando and not en_aire and not self.paranoico and not self.desesperado:
+        if self.parpadeando and not en_aire and not self.paranoico and not self.desesperado and not self.cansado:
             for lado in (-1, 1):
                 x = centro_x + lado * separacion_ojo
                 self._bloque(superficie, x - p, ojo_y + p, p * 2, p, color_trazo)
@@ -1012,6 +1016,8 @@ class PersonajeHumanoide:
                 self._bloque(superficie, ex + pupila_dx, ey + pupila_dy, p, p, color_trazo)
                 if self.desesperado:
                     self._bloque(superficie, x - tam_ojo, ojo_y + tam_ojo + p, tam_ojo * 2, p, color_trazo)
+                elif self.cansado:
+                    self._bloque(superficie, ex, ey, tam_ojo, p, color_trazo)
 
         if self.desesperado:
             # Gota de sudor cayendo por la sien (ciclo de ~0.9 s).
@@ -1031,6 +1037,9 @@ class PersonajeHumanoide:
         if self.desesperado:
             ancho_boca = p * 4
             self._bloque(superficie, centro_x - ancho_boca // 2, boca_y - p, ancho_boca, p * 2, color_trazo)
+        elif self.cansado:
+            ancho_boca = p * 3
+            self._bloque(superficie, centro_x - ancho_boca // 2, boca_y, ancho_boca, p, color_trazo)
         elif self.paranoico:
             ancho_boca = p * 3
             self._bloque(superficie, centro_x - ancho_boca // 2, boca_y, ancho_boca, p, color_trazo)

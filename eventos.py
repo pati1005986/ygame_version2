@@ -348,25 +348,27 @@ class EventosVisuales:
     def __init__(self, ancho, alto, carpeta_assets="assets"):
         self.ancho = ancho
         self.alto = alto
+        self.carpeta_assets = carpeta_assets
 
-        self.gifs_game_over = self._cargar_secuencia(
-            carpeta_assets,
-            (
-                "image1.gif",
-                "image2.gif",
-                "image3.gif",
-                "image4.gif",
-                "image12.gif",
-                "image13.gif",
-            ),
+        self.gifs_game_over = (
+            "image1.gif",
+            "image2.gif",
+            "image3.gif",
+            "image4.gif",
+            "image12.gif",
+            "image13.gif",
         )
-        self.secuencia_game_over = self._cargar_secuencia(
-            carpeta_assets, ("image7.gif", "image8.gif", "image9.gif")
+        self.secuencia_game_over = (
+            "image7.gif",
+            "image8.gif",
+            "image9.gif",
         )
         self.duracion_imagen_game_over = 3.0
         self.gif_game_over = []
+        self.gif_game_over_nombre = None
         self.duracion_fotograma_gif = 0.1
         self.indice_imagen_game_over = 0
+        self.indice_secuencia_game_over = None
         self.animacion_despertar = CarboncilloAnimado()
         self.game_over_nivel_alto_activo = False
         self.final_juego_activo = False
@@ -376,16 +378,17 @@ class EventosVisuales:
         self.final_juego_mouse = (0.0, 0.0)
 
         self.flashbacks_por_nivel = {
-            1: self._cargar_gif(carpeta_assets, "image15.gif"),
-            6: self._cargar_gif(carpeta_assets, "image6.gif"),
-            10: self._cargar_gif(carpeta_assets, "image5.gif"),
-            20: self._cargar_gif(carpeta_assets, "image14.gif"),
-            30: self._cargar_gif(carpeta_assets, "image18.gif"),
+            1: "image15.gif",
+            6: "image6.gif",
+            10: "image5.gif",
+            20: "image14.gif",
+            30: "image18.gif",
         }
         self.flashback_activo = False
         self.flashback_inicio = 0.0
         self.flashback_duracion_total = 0.0
         self.fotogramas_flashback = []
+        self.flashback_nombre = None
         self.duracion_flashback = 0.1
         self.proximo_flashback = 0.0
         self.flashbacks_habilitados = False
@@ -393,45 +396,75 @@ class EventosVisuales:
         self.flashback_nivel_10_activo = False
         self.inicio_flashback_nivel_10 = 0.0
         self.duracion_flashback_nivel_10 = 3.0
+        self.flashback_nivel_11_activo = False
+        self.inicio_flashback_nivel_11 = 0.0
+        self.duracion_flashback_nivel_11 = 3.0
+        self.flashback_nivel_14_activo = False
+        self.inicio_flashback_nivel_14 = 0.0
+        self.duracion_flashback_nivel_14 = 3.0
+        self.flashback_nivel_17_activo = False
+        self.inicio_flashback_nivel_17 = 0.0
+        self.duracion_flashback_nivel_17 = 3.0
         self.flashback_nivel_20_activo = False
         self.inicio_flashback_nivel_20 = 0.0
         self.duracion_flashback_nivel_20 = 2.5
 
-    def _cargar_gif(self, carpeta_assets, nombre):
+    def _cargar_gif(self, nombre):
         return cargar_gif(
-            os.path.join(carpeta_assets, nombre), (self.ancho, self.alto)
+            os.path.join(self.carpeta_assets, nombre), (self.ancho, self.alto)
         )
 
-    def _cargar_secuencia(self, carpeta_assets, nombres):
-        secuencia = []
-        for nombre in nombres:
-            fotogramas, duracion = self._cargar_gif(carpeta_assets, nombre)
-            if fotogramas:
-                secuencia.append((fotogramas, duracion))
-        return secuencia
+    def _establecer_gif_game_over(self, nombre):
+        self.gif_game_over, self.duracion_fotograma_gif = self._cargar_gif(
+            nombre
+        )
+        self.gif_game_over_nombre = nombre
 
     def actualizar_flashback(self, nivel, estado, tiempo, estado_jugando):
         """Actualiza la programación de flashbacks de fondo aleatorios."""
         if 1 <= nivel <= 5:
-            fotogramas_disponibles, duracion_disponible = self.flashbacks_por_nivel[1]
+            nombre_disponible = self.flashbacks_por_nivel[1]
         elif nivel >= 30:
-            fotogramas_disponibles, duracion_disponible = self.flashbacks_por_nivel[30]
+            nombre_disponible = self.flashbacks_por_nivel[30]
         elif nivel >= 20:
-            fotogramas_disponibles, duracion_disponible = self.flashbacks_por_nivel[20]
+            nombre_disponible = self.flashbacks_por_nivel[20]
         elif nivel >= 10:
-            fotogramas_disponibles, duracion_disponible = self.flashbacks_por_nivel[10]
+            nombre_disponible = self.flashbacks_por_nivel[10]
         elif nivel >= 6:
-            fotogramas_disponibles, duracion_disponible = self.flashbacks_por_nivel[6]
+            nombre_disponible = self.flashbacks_por_nivel[6]
         else:
-            fotogramas_disponibles, duracion_disponible = [], 0.1
+            nombre_disponible = None
 
-        if estado != estado_jugando or not fotogramas_disponibles:
+        if nombre_disponible is None:
+            self.flashback_activo = False
+            self.flashbacks_habilitados = False
+            self.fotogramas_flashback = []
+            self.flashback_nombre = None
+            return
+
+        if estado != estado_jugando:
+            self.flashback_activo = False
+            self.flashbacks_habilitados = False
+            if (
+                estado != ESTADO_TRANSICION
+                or self.flashback_nombre != nombre_disponible
+            ):
+                self.fotogramas_flashback = []
+                self.flashback_nombre = None
+            return
+
+        if self.flashback_nombre != nombre_disponible:
+            self.fotogramas_flashback, self.duracion_flashback = self._cargar_gif(
+                nombre_disponible
+            )
+            self.flashback_nombre = nombre_disponible
+
+        if not self.fotogramas_flashback:
             self.flashback_activo = False
             self.flashbacks_habilitados = False
         elif not self.flashbacks_habilitados:
             self.flashbacks_habilitados = True
-            self.fotogramas_flashback = fotogramas_disponibles
-            self.duracion_flashback = duracion_disponible
+            self.flashback_activo = False
             self.proximo_flashback = tiempo + random.uniform(3.0, 8.0)
         elif (
             not self.flashback_activo
@@ -450,12 +483,21 @@ class EventosVisuales:
 
     @property
     def evento_flashback_especial_activo(self):
-        return self.flashback_nivel_10_activo or self.flashback_nivel_20_activo
+        return self.flashback_nivel_10_activo or self.flashback_nivel_11_activo or self.flashback_nivel_14_activo or self.flashback_nivel_14_activo or self.flashback_nivel_17_activo or self.flashback_nivel_20_activo
 
     def entrar_nivel(self, nivel, tiempo):
         if nivel == 10:
             self.flashback_nivel_10_activo = True
             self.inicio_flashback_nivel_10 = tiempo
+        elif nivel == 11:
+            self.flashback_nivel_11_activo = True
+            self.inicio_flashback_nivel_11 = tiempo
+        elif nivel == 14:
+            self.flashback_nivel_14_activo = True
+            self.inicio_flashback_nivel_14 = tiempo
+        elif nivel == 17:
+            self.flashback_nivel_17_activo = True
+            self.inicio_flashback_nivel_17 = tiempo
         elif nivel == 20:
             self.flashback_nivel_20_activo = True
             self.inicio_flashback_nivel_20 = tiempo
@@ -467,6 +509,24 @@ class EventosVisuales:
             >= self.duracion_flashback_nivel_10
         ):
             self.flashback_nivel_10_activo = False
+        if (
+            self.flashback_nivel_11_activo
+            and tiempo - self.inicio_flashback_nivel_11
+            >= self.duracion_flashback_nivel_11
+        ):
+            self.flashback_nivel_11_activo = False
+        if (
+            self.flashback_nivel_14_activo
+            and tiempo - self.inicio_flashback_nivel_14
+            >= self.duracion_flashback_nivel_14
+        ):
+            self.flashback_nivel_14_activo = False
+        if (
+            self.flashback_nivel_17_activo
+            and tiempo - self.inicio_flashback_nivel_17
+            >= self.duracion_flashback_nivel_17
+        ):
+            self.flashback_nivel_17_activo = False
         if (
             self.flashback_nivel_20_activo
             and tiempo - self.inicio_flashback_nivel_20
@@ -534,20 +594,15 @@ class EventosVisuales:
         self.indice_imagen_game_over = 0
         self.inicio_game_over = inicio
         self.game_over_nivel_alto_activo = nivel >= 20
+        self.indice_secuencia_game_over = None
         if self.game_over_nivel_alto_activo:
             self.gif_game_over = []
-        elif seleccionar_por_nivel and nivel >= 20 and self.gif_game_over_nivel_alto:
-            self.gif_game_over, self.duracion_fotograma_gif = (
-                self.gif_game_over_nivel_alto[0]
-            )
+            self.gif_game_over_nombre = None
         elif seleccionar_por_nivel and nivel >= 10 and self.secuencia_game_over:
-            self.gif_game_over, self.duracion_fotograma_gif = (
-                self.secuencia_game_over[0]
-            )
+            self.indice_secuencia_game_over = 0
+            self._establecer_gif_game_over(self.secuencia_game_over[0])
         elif self.gifs_game_over:
-            self.gif_game_over, self.duracion_fotograma_gif = random.choice(
-                self.gifs_game_over
-            )
+            self._establecer_gif_game_over(random.choice(self.gifs_game_over))
 
     def dibujar_game_over(self, lienzo, nivel, tiempo_ms, tiempo):
         if self.game_over_nivel_alto_activo:
@@ -569,9 +624,9 @@ class EventosVisuales:
                 ),
                 len(self.secuencia_game_over) - 1,
             )
-            self.gif_game_over, self.duracion_fotograma_gif = (
-                self.secuencia_game_over[indice]
-            )
+            if indice != self.indice_secuencia_game_over:
+                self.indice_secuencia_game_over = indice
+                self._establecer_gif_game_over(self.secuencia_game_over[indice])
 
         if self.gif_game_over:
             indice = int(
@@ -592,6 +647,33 @@ class EventosVisuales:
             lienzo.fill((0, 0, 0))
             frase = fuente.render(
                 texto(idioma, "level_10_flashback"), True, (255, 255, 255)
+            )
+            desplazamiento = int(3 * np.sin(tiempo * 40.0))
+            rect = frase.get_rect(center=(self.ancho // 2, self.alto // 2))
+            rect.x += desplazamiento
+            lienzo.blit(frase, rect)
+        elif self.flashback_nivel_11_activo:
+            lienzo.fill((0, 0, 0))
+            frase = fuente.render(
+                texto(idioma, "level_11_flashback"), True, (255, 255, 255)
+            )
+            desplazamiento = int(3 * np.sin(tiempo * 40.0))
+            rect = frase.get_rect(center=(self.ancho // 2, self.alto // 2))
+            rect.x += desplazamiento
+            lienzo.blit(frase, rect)
+        elif self.flashback_nivel_14_activo:
+            lienzo.fill((0, 0, 0))
+            frase = fuente.render(
+                texto(idioma, "level_14_flashback"), True, (255, 255, 255)
+            )
+            desplazamiento = int(3 * np.sin(tiempo * 40.0))
+            rect = frase.get_rect(center=(self.ancho // 2, self.alto // 2))
+            rect.x += desplazamiento
+            lienzo.blit(frase, rect)
+        elif self.flashback_nivel_17_activo:
+            lienzo.fill((0, 0, 0))
+            frase = fuente.render(
+                texto(idioma, "level_17_flashback"), True, (255, 255, 255)
             )
             desplazamiento = int(3 * np.sin(tiempo * 40.0))
             rect = frase.get_rect(center=(self.ancho // 2, self.alto // 2))

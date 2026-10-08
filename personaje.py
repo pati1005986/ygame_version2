@@ -928,7 +928,11 @@ class PersonajeHumanoide:
         ancla_mundo = (centro_x_mundo, pie_y_mundo - (150 - ALTO_LIENZO // 2))
 
         # --- Rastro del dash: siluetas que se desvanecen detrás ---
-        if en_dash and not self.muriendo:
+        if (
+            en_dash
+            and not self.muriendo
+            and len(self.rastro) < self.RASTRO_FRAMES
+        ):
             silueta = pygame.mask.from_surface(lienzo).to_surface(
                 setcolor=claro + (255,), unsetcolor=(0, 0, 0, 0)
             )

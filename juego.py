@@ -253,6 +253,25 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     )
     screen = pygame.display.set_mode(resolucion, flags_pantalla)
     lienzo = pygame.Surface((WIDTH, HEIGHT))
+    superficie_escalada = None
+
+    def presentar_lienzo():
+        nonlocal superficie_escalada
+        tamano_pantalla = screen.get_size()
+        if tamano_pantalla == lienzo.get_size():
+            screen.blit(lienzo, (0, 0))
+            return
+
+        if (
+            superficie_escalada is None
+            or superficie_escalada.get_size() != tamano_pantalla
+        ):
+            superficie_escalada = pygame.Surface(tamano_pantalla).convert()
+        pygame.transform.smoothscale(
+            lienzo, tamano_pantalla, superficie_escalada
+        )
+        screen.blit(superficie_escalada, (0, 0))
+
     pygame.display.set_caption(
         texto(configuracion["idioma"], "window_title")
     )
@@ -667,7 +686,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     superficie_texto,
                     superficie_texto.get_rect(center=centro),
                 )
-            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
+            presentar_lienzo()
         elif estado == ESTADO_MENU:
             posicion_raton = pygame.mouse.get_pos()
             posicion_raton_logica = (
@@ -675,7 +694,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 int(posicion_raton[1] * HEIGHT / screen.get_height()),
             )
             menu.dibujar(lienzo, posicion_raton_logica)
-            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
+            presentar_lienzo()
         elif estado == ESTADO_CREDITOS:
             creditos_listos = eventos_visuales.creditos_listos(
                 pygame.time.get_ticks()
@@ -703,7 +722,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     rect_boton_creditos.center,
                     (255, 255, 255),
                 )
-            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
+            presentar_lienzo()
         elif estado == ESTADO_PAUSA:
             posicion_raton = pygame.mouse.get_pos()
             posicion_raton_logica = (
@@ -711,10 +730,10 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 int(posicion_raton[1] * HEIGHT / screen.get_height()),
             )
             pausa.dibujar(lienzo, posicion_raton_logica, dt)
-            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
+            presentar_lienzo()
         elif estado == ESTADO_OPCIONES:
             opciones.dibujar(lienzo, dt=dt)
-            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
+            presentar_lienzo()
         else:
             # La escena se dibuja aparte para poder desaturarla como un todo
             # antes de mezclarla con el resto de la interfaz.
@@ -930,7 +949,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 texto,
             )
 
-            screen.blit(pygame.transform.smoothscale(lienzo, screen.get_size()), (0, 0))
+            presentar_lienzo()
 
         pygame.display.flip()
 

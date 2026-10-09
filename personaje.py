@@ -55,6 +55,8 @@ class PersonajeHumanoide:
     FACTOR_SALTO_CORTO = 2.4     # gravedad extra si se suelta el salto subiendo
     VEL_CAIDA_MAX = 16.0         # velocidad terminal
     AJUSTE_ESQUINA = 10          # px de "perdón" al golpear una esquina con la cabeza
+    FUERZA_SALTO = -13
+    FACTOR_DOBLE_SALTO = 0.88
 
     # Dash
     DASH_FRAMES = 9
@@ -72,7 +74,7 @@ class PersonajeHumanoide:
         self.vel_y = 0
         self.velocidad = 6
         self.gravedad = 0.6
-        self.fuerza_salto = -13
+        self.fuerza_salto = self.FUERZA_SALTO
         self.en_suelo = False
         self.plataforma_actual = None  # última plataforma sobre la que aterrizó
 
@@ -704,6 +706,42 @@ class PersonajeHumanoide:
     # ------------------------------------------------------------------
     # Acciones
     # ------------------------------------------------------------------
+    @classmethod
+    def altura_maxima_salto(cls, gravedad):
+        """Devuelve la altura máxima del salto completo con doble salto."""
+        altura_maxima = 0.0
+        posicion = 0.0
+        velocidad = cls.FUERZA_SALTO
+
+        for _ in range(120):
+            posicion_doble = posicion
+            velocidad_doble = cls.FUERZA_SALTO * cls.FACTOR_DOBLE_SALTO
+            altura_doble = posicion_doble
+            for _ in range(120):
+                gravedad_doble = (
+                    gravedad * cls.FACTOR_CAIDA
+                    if velocidad_doble > 0
+                    else gravedad
+                )
+                velocidad_doble = min(
+                    velocidad_doble + gravedad_doble, cls.VEL_CAIDA_MAX
+                )
+                posicion_doble += velocidad_doble
+                altura_doble = min(altura_doble, posicion_doble)
+                if posicion_doble >= 0 and velocidad_doble > 0:
+                    break
+
+            altura_maxima = max(altura_maxima, -altura_doble)
+            gravedad_actual = (
+                gravedad * cls.FACTOR_CAIDA if velocidad > 0 else gravedad
+            )
+            velocidad = min(velocidad + gravedad_actual, cls.VEL_CAIDA_MAX)
+            posicion += velocidad
+            if posicion >= 0 and velocidad > 0:
+                break
+
+        return math.floor(altura_maxima)
+
     def saltar(self):
         """Inicia un salto desde el suelo (o dentro del coyote time) o un
         doble salto con giro si ya está en el aire y le queda uno."""
@@ -720,7 +758,7 @@ class PersonajeHumanoide:
                 self.sonido_salto.play()
         elif self.saltos_restantes > 0:
             self.saltos_restantes -= 1
-            self.vel_y = self.fuerza_salto * 0.88  # un poco más débil que el primero
+            self.vel_y = self.fuerza_salto * self.FACTOR_DOBLE_SALTO
             self.escala_y = 1.15
             self.girando = True
             self.angulo_giro = 0.0

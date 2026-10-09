@@ -47,6 +47,7 @@ from transicion import TransicionCaricaturesca
 # --------------------------------------------------------------------------
 WIDTH, HEIGHT = 800, 600
 FPS = 60
+MARGEN_SALTO_SEGURO = 20
 
 POS_SPAWN = pygame.Vector2(120, 235)  # centro del punto de aparición del jugador
 
@@ -132,10 +133,25 @@ def generar_nivel(nivel):
         distancia_x = (25, 70)
         desplazamiento_y = (-85, 75)
 
+    altura_maxima_salto = PersonajeHumanoide.altura_maxima_salto(
+        parametros["gravedad_jugador"]
+    )
+    altura_alcanzable = max(
+        0, altura_maxima_salto - MARGEN_SALTO_SEGURO
+    )
     for indice in range(cantidad_plataformas):
         w = random.randint(50, 115) if nivel >= 10 else random.randint(65, 135)
         x = ultimo_x + random.randint(*distancia_x)
-        y = max(70, min(HEIGHT - 50, plataforma_guia.top + random.randint(*desplazamiento_y)))
+        while True:
+            y = max(
+                70,
+                min(
+                    HEIGHT - 50,
+                    plataforma_guia.top + random.randint(*desplazamiento_y),
+                ),
+            )
+            if plataforma_guia.top - y <= altura_alcanzable:
+                break
         es_trampa = nivel >= 10 and nivel < 30 and random.random() < 0.28
         plataforma_nueva = Plataforma(
             x, y, w, 20, random.random(), es_trampa, probabilidad_movimiento=prob_movil

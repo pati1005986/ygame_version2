@@ -48,6 +48,7 @@ class Plataforma:
     COLOR_PELIGRO = (235, 60, 55)
     COLOR_HUECO = (22, 13, 35)
     COLOR_HUECO_PROFUNDO = (6, 4, 10)
+    TIEMPO_AVISO_TRAMPA = 0.65
 
     # Probabilidad de que una plataforma normal (no trampa) se vuelva móvil
     # por su cuenta, para que un nivel no se sienta hecho de bloques muertos.
@@ -73,6 +74,7 @@ class Plataforma:
         self.fase = random.uniform(0, math.tau)
         self.trampa_activada = False
         self.progreso_trampa = 0.0
+        self.tiempo_desde_activacion = 0.0
 
         # ---------------- movimiento ----------------
         # Si no se especifica un patrón, una fracción de las plataformas
@@ -199,9 +201,16 @@ class Plataforma:
         self._capa_textura = capa
 
     def activar_trampa(self):
-        """Abre la trampa y comienza a hundir al personaje."""
-        if self.es_trampa:
+        """Inicia el aviso visible antes de que la trampa se abra por completo."""
+        if self.es_trampa and not self.trampa_activada:
             self.trampa_activada = True
+
+    @property
+    def lista_para_caer(self):
+        return (
+            self.trampa_activada
+            and self.tiempo_desde_activacion >= self.TIEMPO_AVISO_TRAMPA
+        )
 
     def notificar_aterrizaje(self, intensidad=1.0):
         """Debe llamarse desde el código de colisiones del jugador cuando
@@ -283,6 +292,7 @@ class Plataforma:
         factor_fotograma = dt * 60
 
         if self.trampa_activada:
+            self.tiempo_desde_activacion += dt
             self.progreso_trampa = min(
                 1.0, self.progreso_trampa + 0.045 * factor_fotograma
             )
@@ -329,8 +339,20 @@ class Plataforma:
         color_acento2 = color_desde_hue((hue - 0.14) % 1.0, 0.55, 0.85)
 
         vibracion = 0
-        if self.es_trampa and not self.trampa_activada:
-            vibracion = int(math.sin(tiempo * 26 + self.fase) * 3)
+        if self.es_trampa:
+            if self.trampa_activada:
+                aviso = max(
+                    0.0,
+                    1.0
+                    - self.tiempo_desde_activacion
+                    / self.TIEMPO_AVISO_TRAMPA,
+                )
+                vibracion = int(
+                    math.sin(tiempo * (18 + 34 * aviso) + self.fase)
+                    * (1 + 5 * aviso)
+                )
+            else:
+                vibracion = int(math.sin(tiempo * 26 + self.fase) * 3)
 
         rect_base = self.rect.move(vibracion, 0)
         rect = self._rect_con_squash(rect_base)
@@ -527,6 +549,12 @@ class Plataforma:
             pulso = 0.5 + 0.5 * math.sin(tiempo * 6 + self.fase)
             color_raya = _mezclar(color_base, self.COLOR_PELIGRO, 0.3 + 0.3 * pulso)
             self._dibujar_rayas_peligro(superficie, rect, color_raya)
+            self._dibujar_grietas(
+                superficie,
+                rect,
+                abertura.inflate(-abertura.width * 0.35, 0),
+                0.28 + pulso * 0.12,
+            )
 
             boca_cerrada = abertura.inflate(-abertura.width * 0.5, -abertura.height * 0.3)
             pygame.draw.ellipse(superficie, self.COLOR_HUECO, boca_cerrada)
@@ -604,7 +632,7 @@ class Plataforma:
                 hueco.centery + math.sin(angulo) * (hueco.height / 2 + largo),
             )
             pygame.draw.lines(
-                superficie, (25, 12, 12), False, [origen, quiebre, fin], 2
+                superficie, (80, 16, 24), False, [origen, quiebre, fin], 2
             )
 
     def _dibujar_goteo(self, superficie, hueco, tiempo, progreso):

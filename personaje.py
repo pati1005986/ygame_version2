@@ -117,7 +117,10 @@ class PersonajeHumanoide:
         self.escala_y = 1.0
         self.escala_y_objetivo = 1.0
         self.aterrizaje_ts = None
+        self.despegue_ts = None
         self._compresion_aterrizaje = 0.76
+        self._contador_particulas_caida = 0
+        self._halo_personaje = None
 
         # --- Expresión según el nivel (ver actualizar_nivel) ---
         self.paranoico = False
@@ -606,6 +609,20 @@ class PersonajeHumanoide:
             if self.sonido_aterrizaje:
                 self.sonido_aterrizaje.play()
 
+        if not self.en_suelo and not en_dash and self.vel_y > 7:
+            self._contador_particulas_caida += 1
+            if self._contador_particulas_caida >= 4:
+                self._emitir_particulas(
+                    2,
+                    self.rect.centerx - self.direccion * 10,
+                    self.rect.bottom - 4,
+                    dispersion=5,
+                    sesgo_x=-self.direccion * 1.2,
+                )
+                self._contador_particulas_caida = 0
+        else:
+            self._contador_particulas_caida = 0
+
         if self.aterrizaje_ts is not None:
             transcurrido = ahora - self.aterrizaje_ts
             if transcurrido < 80:
@@ -617,6 +634,15 @@ class PersonajeHumanoide:
             else:
                 self.escala_y_objetivo = 1.0
                 self.aterrizaje_ts = None
+        elif self.despegue_ts is not None and not self.en_suelo:
+            transcurrido = ahora - self.despegue_ts
+            if transcurrido < 65:
+                self.escala_y_objetivo = 0.82
+            elif transcurrido < 155:
+                self.escala_y_objetivo = 1.12
+            else:
+                self.despegue_ts = None
+                self.escala_y_objetivo = 1.08 if self.vel_y < 0 else 1.04
         elif not self.en_suelo:
             self.escala_y_objetivo = 1.08 if self.vel_y < 0 else 1.04
         else:
@@ -750,6 +776,8 @@ class PersonajeHumanoide:
             self.vel_y = self.fuerza_salto
             self.saltos_restantes = self.saltos_maximos - 1
             self.coyote_restante = 0
+            self.despegue_ts = pygame.time.get_ticks()
+            self.aterrizaje_ts = None
             self._salto_ejecutado_este_frame = True
             self._salto_sostenido = True
             self._resto_y = 0.0
@@ -759,6 +787,7 @@ class PersonajeHumanoide:
         elif self.saltos_restantes > 0:
             self.saltos_restantes -= 1
             self.vel_y = self.fuerza_salto * self.FACTOR_DOBLE_SALTO
+            self.despegue_ts = pygame.time.get_ticks()
             self.escala_y = 1.15
             self.girando = True
             self.angulo_giro = 0.0
@@ -978,6 +1007,24 @@ class PersonajeHumanoide:
         for silueta, ancla, vida in self.rastro:
             silueta.set_alpha(int(120 * vida / self.RASTRO_FRAMES))
             superficie.blit(silueta, silueta.get_rect(center=ancla))
+
+        if self._halo_personaje is None:
+            self._halo_personaje = pygame.Surface((112, 142), pygame.SRCALPHA)
+            pygame.draw.ellipse(
+                self._halo_personaje, (*claro, 15), (6, 5, 100, 132), 12
+            )
+            pygame.draw.ellipse(
+                self._halo_personaje, (*claro, 25), (15, 14, 82, 114), 7
+            )
+            pygame.draw.ellipse(
+                self._halo_personaje, (*brillo, 28), (24, 24, 64, 96), 4
+            )
+        pulso_halo = 0.78 + 0.22 * math.sin(self.tiempo_animacion * 1.5)
+        self._halo_personaje.set_alpha(int(190 * pulso_halo))
+        superficie.blit(
+            self._halo_personaje,
+            self._halo_personaje.get_rect(center=ancla_mundo),
+        )
 
         if self.desesperado:
             # Temblor leve: al límite de sus fuerzas.

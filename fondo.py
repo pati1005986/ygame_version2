@@ -119,6 +119,60 @@ def _fondo_degradado(superficie, ancho, alto, hue_base, tiempo):
         pygame.draw.rect(superficie, color, (0, int(t * alto), ancho, alto_franja))
 
 
+def _dibujar_capas_parallax(superficie, ancho, alto, hue_base, tiempo):
+    capas = (
+        (0.025, 0.12, 0.20, 0.10),
+        (0.055, 0.22, 0.30, 0.14),
+        (0.10, 0.34, 0.42, 0.18),
+    )
+    for indice, (velocidad, radio_base, saturacion, valor) in enumerate(capas):
+        capa = _obtener_superficie(("parallax", indice), (ancho, alto))
+        tono = (hue_base + indice * 0.19 + 0.5) % 1.0
+        color = color_desde_hue(tono, saturacion, valor)
+        acento = color_desde_hue(
+            (tono + 0.12) % 1.0, saturacion, min(1.0, valor + 0.12)
+        )
+        for forma in range(4):
+            radio = int(ancho * radio_base * (0.72 + (forma % 3) * 0.22))
+            paso = ancho + radio * 2
+            x = int(
+                (forma * ancho / 2 - tiempo * ancho * velocidad) % paso
+                - radio
+            )
+            y = int(alto * (0.18 + (forma * 0.29 + indice * 0.17) % 0.68))
+            for centro_x in (x - paso, x, x + paso):
+                centro = (centro_x, y)
+                puntos = [
+                    _punto_organico(
+                        centro,
+                        radio,
+                        angulo,
+                        tiempo * (0.25 + velocidad),
+                        indice * 2.4 + forma,
+                        amplitud=0.26,
+                        asimetria=0.12,
+                    )
+                    for angulo in (i * math.tau / 18 for i in range(18))
+                ]
+                pygame.draw.polygon(
+                    capa,
+                    (*color, 255),
+                    [(int(px), int(py)) for px, py in puntos],
+                )
+                pygame.draw.ellipse(
+                    capa,
+                    (*acento, 180),
+                    (
+                        centro_x - radio // 3,
+                        y - radio // 2,
+                        radio,
+                        max(6, radio // 4),
+                    ),
+                )
+        capa.set_alpha(int(62 + indice * 17))
+        superficie.blit(capa, (0, 0))
+
+
 class ParticulaAbstracta:
     """Mancha de color translúcida, con contorno orgánico, que flota por el fondo."""
 
@@ -593,6 +647,7 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0
     brazos = 6 + 2 * int(p * 3.99)  # el caleidoscopio gana brazos: 6, 8, 10, 12
 
     _fondo_degradado(superficie, ancho, alto, hue_base, tiempo)
+    _dibujar_capas_parallax(superficie, ancho, alto, hue_base, tiempo)
 
     capa_abstracta = pygame.Surface((ancho, alto), pygame.SRCALPHA)
     _dibujar_caleidoscopio(

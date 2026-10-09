@@ -643,42 +643,66 @@ class EventosVisuales:
     def dibujar_flashback_especial(
         self, lienzo, tiempo, idioma, fuente, fuente_titulo, texto
     ):
+        def dibujar_frase(
+            clave,
+            inicio,
+            duracion,
+            fuente_frase=fuente,
+            jitter=3,
+            mayusculas=False,
+        ):
+            frase = texto(idioma, clave)
+            if mayusculas:
+                frase = frase.upper()
+            edad = max(0.0, tiempo - inicio)
+            tiempo_escritura = min(1.25, duracion * 0.55)
+            cantidad = min(
+                len(frase),
+                int(len(frase) * min(1.0, edad / tiempo_escritura)),
+            )
+            caracteres = list(frase[:cantidad])
+            if cantidad and edad >= tiempo_escritura:
+                intervalo = int(edad * 13)
+                indice = (intervalo * 7 + 3) % cantidad
+                if caracteres[indice] != " ":
+                    caracteres[indice] = "▓" if intervalo % 2 else "▒"
+            imagen = fuente_frase.render(
+                "".join(caracteres), True, (255, 255, 255)
+            )
+            rect = imagen.get_rect(
+                center=(self.ancho // 2, self.alto // 2)
+            )
+            rect.x += int(jitter * np.sin(tiempo * 40.0))
+            lienzo.blit(imagen, rect)
+
         if self.flashback_nivel_10_activo:
             lienzo.fill((0, 0, 0))
-            frase = fuente.render(
-                texto(idioma, "level_10_flashback"), True, (255, 255, 255)
+            dibujar_frase(
+                "level_10_flashback",
+                self.inicio_flashback_nivel_10,
+                self.duracion_flashback_nivel_10,
             )
-            desplazamiento = int(3 * np.sin(tiempo * 40.0))
-            rect = frase.get_rect(center=(self.ancho // 2, self.alto // 2))
-            rect.x += desplazamiento
-            lienzo.blit(frase, rect)
         elif self.flashback_nivel_11_activo:
             lienzo.fill((0, 0, 0))
-            frase = fuente.render(
-                texto(idioma, "level_11_flashback"), True, (255, 255, 255)
+            dibujar_frase(
+                "level_11_flashback",
+                self.inicio_flashback_nivel_11,
+                self.duracion_flashback_nivel_11,
             )
-            desplazamiento = int(3 * np.sin(tiempo * 40.0))
-            rect = frase.get_rect(center=(self.ancho // 2, self.alto // 2))
-            rect.x += desplazamiento
-            lienzo.blit(frase, rect)
         elif self.flashback_nivel_14_activo:
             lienzo.fill((0, 0, 0))
-            frase = fuente.render(
-                texto(idioma, "level_14_flashback"), True, (255, 255, 255)
+            dibujar_frase(
+                "level_14_flashback",
+                self.inicio_flashback_nivel_14,
+                self.duracion_flashback_nivel_14,
             )
-            desplazamiento = int(3 * np.sin(tiempo * 40.0))
-            rect = frase.get_rect(center=(self.ancho // 2, self.alto // 2))
-            rect.x += desplazamiento
-            lienzo.blit(frase, rect)
         elif self.flashback_nivel_17_activo:
             lienzo.fill((0, 0, 0))
-            frase = fuente.render(
-                texto(idioma, "level_17_flashback"), True, (255, 255, 255)
+            dibujar_frase(
+                "level_17_flashback",
+                self.inicio_flashback_nivel_17,
+                self.duracion_flashback_nivel_17,
             )
-            desplazamiento = int(3 * np.sin(tiempo * 40.0))
-            rect = frase.get_rect(center=(self.ancho // 2, self.alto // 2))
-            rect.x += desplazamiento
-            lienzo.blit(frase, rect)
         elif self.flashback_nivel_20_activo:
             lienzo.fill((0, 0, 0))
             veladura = pygame.Surface((self.ancho, self.alto), pygame.SRCALPHA)
@@ -711,14 +735,18 @@ class EventosVisuales:
                 )
 
             frase = texto(idioma, "level_20_flashback").upper()
-            titulo = fuente_titulo.render(frase, True, (255, 245, 245))
             sombra = fuente_titulo.render(frase, True, (18, 18, 18))
-            rect = titulo.get_rect(center=(self.ancho // 2, self.alto // 2))
             desplazamiento_x = int(12 * np.sin(tiempo * 45.0))
             desplazamiento_y = int(9 * np.cos(tiempo * 38.0))
-            rect_sombra = rect.copy().move(
-                6 + desplazamiento_x, 7 + desplazamiento_y
-            )
-            rect_temblor = rect.move(desplazamiento_x, desplazamiento_y)
+            rect_sombra = sombra.get_rect(
+                center=(self.ancho // 2, self.alto // 2)
+            ).move(6 + desplazamiento_x, 7 + desplazamiento_y)
             lienzo.blit(sombra, rect_sombra)
-            lienzo.blit(titulo, rect_temblor)
+            dibujar_frase(
+                "level_20_flashback",
+                self.inicio_flashback_nivel_20,
+                self.duracion_flashback_nivel_20,
+                fuente_titulo,
+                jitter=12,
+                mayusculas=True,
+            )

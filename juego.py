@@ -442,12 +442,15 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 and plataforma_pisada.es_trampa
             ):
                 plataforma_pisada.activar_trampa()
-                jugador.iniciar_engullido(plataforma_pisada)
-                intensidad_shake = 9.0
-                eventos_visuales.iniciar_game_over(
-                    nivel, pygame.time.get_ticks()
-                )
-                estado = ESTADO_GAME_OVER
+                if plataforma_pisada.lista_para_caer:
+                    jugador.iniciar_engullido(plataforma_pisada)
+                    intensidad_shake = 9.0
+                    eventos_visuales.iniciar_game_over(
+                        nivel, pygame.time.get_ticks()
+                    )
+                    estado = ESTADO_GAME_OVER
+                else:
+                    intensidad_shake = max(intensidad_shake, 2.0)
 
             if estado == ESTADO_JUGANDO and not dash_activo and any(
                 entidad.rect.colliderect(jugador.rect) for entidad in entidades

@@ -363,12 +363,22 @@ class EventosVisuales:
             "image8.gif",
             "image9.gif",
         )
+        self.secuencia_game_over_final = (
+            "image20.gif",
+            "image21.gif",
+            "image22.gif",
+            "image23.gif",
+            "image24.gif",
+            "image25.gif",
+            "image26.gif",
+        )
         self.duracion_imagen_game_over = 3.0
         self.gif_game_over = []
         self.gif_game_over_nombre = None
         self.duracion_fotograma_gif = 0.1
         self.indice_imagen_game_over = 0
         self.indice_secuencia_game_over = None
+        self.secuencia_game_over_final_activa = False
         self.animacion_despertar = CarboncilloAnimado()
         self.game_over_nivel_alto_activo = False
         self.final_juego_activo = False
@@ -594,10 +604,16 @@ class EventosVisuales:
         self.indice_imagen_game_over = 0
         self.inicio_game_over = inicio
         self.game_over_nivel_alto_activo = nivel >= 20
+        self.secuencia_game_over_final_activa = 30 <= nivel <= 40
         self.indice_secuencia_game_over = None
         if self.game_over_nivel_alto_activo:
             self.gif_game_over = []
             self.gif_game_over_nombre = None
+            if self.secuencia_game_over_final_activa:
+                self.indice_secuencia_game_over = 0
+                self._establecer_gif_game_over(
+                    self.secuencia_game_over_final[0]
+                )
         elif seleccionar_por_nivel and nivel >= 10 and self.secuencia_game_over:
             self.indice_secuencia_game_over = 0
             self._establecer_gif_game_over(self.secuencia_game_over[0])
@@ -605,13 +621,30 @@ class EventosVisuales:
             self._establecer_gif_game_over(random.choice(self.gifs_game_over))
 
     def dibujar_game_over(self, lienzo, nivel, tiempo_ms, tiempo):
-        if self.game_over_nivel_alto_activo:
+        if (
+            self.game_over_nivel_alto_activo
+            and not self.secuencia_game_over_final_activa
+        ):
             self.animacion_despertar.dibujar(
                 lienzo, max(0.0, (tiempo_ms - self.inicio_game_over) / 1000)
             )
             return
 
-        if nivel >= 20 and self.gif_game_over_nivel_alto:
+        if self.secuencia_game_over_final_activa:
+            indice = min(
+                int(
+                    (tiempo_ms - self.inicio_game_over)
+                    / 1000
+                    / self.duracion_imagen_game_over
+                ),
+                len(self.secuencia_game_over_final) - 1,
+            )
+            if indice != self.indice_secuencia_game_over:
+                self.indice_secuencia_game_over = indice
+                self._establecer_gif_game_over(
+                    self.secuencia_game_over_final[indice]
+                )
+        elif nivel >= 20 and self.gif_game_over_nivel_alto:
             self.gif_game_over, self.duracion_fotograma_gif = (
                 self.gif_game_over_nivel_alto[0]
             )

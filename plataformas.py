@@ -3,12 +3,20 @@
 import colorsys
 import math
 import random
+from functools import lru_cache
 
 import pygame
 
 
+@lru_cache(maxsize=4096)
 def color_desde_hue(hue, saturacion=0.65, valor=0.95):
-    """Convierte un matiz HSV en un color RGB vivo."""
+    """Convierte un matiz HSV en un color RGB vivo.
+
+    El resultado se cachea: muchos llamadores repiten los mismos matices
+    (especialmente saturación y valor fijos), así que evita repetir la
+    conversión ``colorsys.hsv_to_rgb`` que se invoca cientos de veces por
+    fotograma entre plataformas, fondo y partículas.
+    """
     r, g, b = colorsys.hsv_to_rgb(hue % 1.0, saturacion, valor)
     return int(r * 255), int(g * 255), int(b * 255)
 
@@ -17,6 +25,27 @@ def _mezclar(color_a, color_b, factor):
     """Interpola linealmente entre dos colores RGB (factor entre 0 y 1)."""
     factor = max(0.0, min(1.0, factor))
     return tuple(int(a + (b - a) * factor) for a, b in zip(color_a, color_b))
+
+
+# Caché de superficies SRCALPHA reutilizadas. Crear una Surface nueva en cada
+# fotograma (como hacían el halo y la sombra) es caro; aquí se guardan por
+# tamaño y solo se limpian con fill() antes de reutilizarlas.
+_CACHE_SUPERFICIES = {}
+
+
+def _obtener_superficie(tamano):
+    """Devuelve una Surface SRCALPHA del tamaño pedido, reutilizada del caché.
+
+    La superficie se limpia (fill transparente) antes de devolverla para que
+    el llamador pueda pintar encima sin restos del uso anterior.
+    """
+    capa = _CACHE_SUPERFICIES.get(tamano)
+    if capa is None:
+        capa = pygame.Surface(tamano, pygame.SRCALPHA)
+        _CACHE_SUPERFICIES[tamano] = capa
+    else:
+        capa.fill((0, 0, 0, 0))
+    return capa
 
 
 class Plataforma:
@@ -437,7 +466,7 @@ class Plataforma:
                 continue
             radio = max(1.0, p["radio"] * proporcion)
             tam = int(radio * 2 + 2)
-            capa = pygame.Surface((tam, tam), pygame.SRCALPHA)
+            capa = _obtener_superficie((tam, tam))
             pygame.draw.circle(capa, (*p["color"], alpha), (tam / 2, tam / 2), radio)
             superficie.blit(capa, (p["x"] - tam / 2, p["y"] - tam / 2))
 
@@ -505,20 +534,22 @@ class Plataforma:
         profundidad; se tiñe de rojo y pulsa cuando la trampa ya está
         activa."""
         radio = rect.height * 1.4
-        capa = pygame.Surface((radio * 2, radio * 2), pygame.SRCALPHA)
-        pygame.draw.circle(capa, (*color, 30), (radio, radio), radio)
-        pygame.draw.circle(capa, (*color, 55), (radio, radio), radio * 0.62)
+        tamano = (int(radio * 2), int(radio * 2))
+        capa = _obtener_superficie(tamano)
+        pygame.draw.circle(capa, (*color, 30), (radio, radio), int(radio))
+        pygame.draw.circle(capa, (*color, 55), (radio, radio), int(radio * 0.62))
         superficie.blit(capa, (rect.centerx - radio, rect.top - radio * 0.6))
 
         if self.es_trampa and self.trampa_activada:
             pulso = 0.5 + 0.5 * math.sin(tiempo * 8)
             radio_anillo = rect.height * (1.1 + 0.4 * pulso)
-            capa_anillo = pygame.Surface((radio_anillo * 2, radio_anillo * 2), pygame.SRCALPHA)
+            tamano_anillo = (int(radio_anillo * 2), int(radio_anillo * 2))
+            capa_anillo = _obtener_superficie(tamano_anillo)
             pygame.draw.circle(
                 capa_anillo,
                 (*self.COLOR_PELIGRO, int(90 * (1 - pulso))),
                 (radio_anillo, radio_anillo),
-                radio_anillo,
+                int(radio_anillo),
                 3,
             )
             superficie.blit(
@@ -532,7 +563,7 @@ class Plataforma:
         ancho = int(rect.width * 0.92)
         if ancho <= 0:
             return
-        sombra = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+        sombra = _obtener_superficie((ancho, alto))
         pygame.draw.ellipse(sombra, (10, 6, 18, 70), sombra.get_rect())
         superficie.blit(sombra, (rect.centerx - ancho // 2, rect.bottom - alto // 3))
 

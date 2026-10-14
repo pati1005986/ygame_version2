@@ -46,7 +46,7 @@ def _punto_organico(centro, radio, angulo, tiempo, fase, amplitud=0.42, asimetri
     )
 
 
-def _mancha_organica(capa, centro, radio, color, alpha, tiempo, fase, puntos=26, asimetria=0.12):
+def _mancha_organica(capa, centro, radio, color, alpha, tiempo, fase, puntos=18, asimetria=0.12):
     """Mancha con contorno ondulado: la unidad básica de 'pincelada' del fondo."""
     pts = [
         _punto_organico(centro, radio, (i / puntos) * math.tau, tiempo, fase, asimetria=asimetria)
@@ -58,8 +58,8 @@ def _mancha_organica(capa, centro, radio, color, alpha, tiempo, fase, puntos=26,
 def _trazo_contorno(capa, centro, radio, color, alpha, tiempo, fase, grosor=3):
     """Línea de contorno tipo tinta, exagerando el borde de la mancha (caricatura)."""
     pts = [
-        _punto_organico(centro, radio * 1.05, (i / 30) * math.tau, tiempo, fase, 0.5, asimetria=0.15)
-        for i in range(30)
+        _punto_organico(centro, radio * 1.05, (i / 20) * math.tau, tiempo, fase, 0.5, asimetria=0.15)
+        for i in range(20)
     ]
     pygame.draw.polygon(capa, (*color, alpha), pts, grosor)
 
@@ -185,7 +185,7 @@ class ParticulaAbstracta:
         self.vel = pygame.Vector2(random.uniform(-0.25, 0.25), random.uniform(-0.15, 0.15))
         self.fase = random.uniform(0, math.tau)
         self.fase2 = random.uniform(0, math.tau)
-        self.secciones = random.randint(8, 15)
+        self.secciones = random.randint(6, 10)
         self.giro = random.uniform(0.7, 1.6)
 
         # Rendimiento: dibujar esta mancha implica crear una Surface nueva
@@ -205,7 +205,7 @@ class ParticulaAbstracta:
 
     def dibujar(self, superficie, tiempo):
         self._contador_regen += 1
-        if self._capa_cache is not None and self._contador_regen % 4 != 0:
+        if self._capa_cache is not None and self._contador_regen % 6 != 0:
             superficie.blit(self._capa_cache, self.pos - self._centro_cache)
             return
 

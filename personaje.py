@@ -168,6 +168,11 @@ class PersonajeHumanoide:
         self.dash_direccion = 1
         self.dash_ejecutado_este_frame = False
         self.rastro = []  # [silueta, ancla, vida]
+        # La silueta del dash se calcula una sola vez por color de personaje
+        # (cambia por nivel). Antes se recreaba con ``mask.from_surface`` en
+        # cada fotograma del dash, que es una operación muy cara.
+        self._silueta_cache = None
+        self._silueta_color = None
         self.sonido_dash = self._crear_sonido(900, 0.12, 1.0, 260, ruido=0.45)
 
         self.ajustar_volumen_efectos(self.volumen_efectos)
@@ -1000,10 +1005,17 @@ class PersonajeHumanoide:
             and not self.muriendo
             and len(self.rastro) < self.RASTRO_FRAMES
         ):
-            silueta = pygame.mask.from_surface(lienzo).to_surface(
-                setcolor=claro + (255,), unsetcolor=(0, 0, 0, 0)
+            # La silueta base se cachea por color: solo se reconstruye cuando
+            # cambia el color del personaje (al cambiar de nivel).
+            if self._silueta_color != claro:
+                self._silueta_color = claro
+                self._silueta_cache = pygame.mask.from_surface(lienzo).to_surface(
+                    setcolor=claro + (255,), unsetcolor=(0, 0, 0, 0)
+                )
+            # Cada rastro necesita su propia copia porque el alpha varía.
+            self.rastro.append(
+                [self._silueta_cache.copy(), ancla_mundo, self.RASTRO_FRAMES]
             )
-            self.rastro.append([silueta, ancla_mundo, self.RASTRO_FRAMES])
         for silueta, ancla, vida in self.rastro:
             silueta.set_alpha(int(120 * vida / self.RASTRO_FRAMES))
             superficie.blit(silueta, silueta.get_rect(center=ancla))

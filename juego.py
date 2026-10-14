@@ -283,7 +283,10 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             or superficie_escalada.get_size() != tamano_pantalla
         ):
             superficie_escalada = pygame.Surface(tamano_pantalla).convert()
-        pygame.transform.smoothscale(
+        # ``scale`` es notablemente más rápido que ``smoothscale`` y para el
+        # estilo pixel-art/caricaturesco del juego la diferencia visual es
+        # mínima. Esta operación corre 60 veces por segundo.
+        pygame.transform.scale(
             lienzo, tamano_pantalla, superficie_escalada
         )
         screen.blit(superficie_escalada, (0, 0))

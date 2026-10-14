@@ -623,7 +623,6 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
         if estado_antes_eventos == ESTADO_CREDITOS and estado == ESTADO_MENU:
             eventos_visuales.final_juego_activo = False
-            eventos_visuales.final_juego_dibujo = None
             nivel = 1
             plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
             jugador = PersonajeHumanoide(
@@ -721,6 +720,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             eventos_visuales.dibujar_final_juego(
                 lienzo,
                 pygame.time.get_ticks(),
+                jugador,
             )
             if creditos_listos:
                 posicion_raton = pygame.mouse.get_pos()

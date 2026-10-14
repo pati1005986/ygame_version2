@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import pygame
 
+from alfin import DURACION_ANIMACION, dibujar as dibujar_animacion_final
 from despertar import CarboncilloAnimado
 
 
@@ -383,9 +384,7 @@ class EventosVisuales:
         self.game_over_nivel_alto_activo = False
         self.final_juego_activo = False
         self.inicio_final_juego = 0.0
-        self.duracion_animacion_final = 5.0
-        self.final_juego_dibujo = None
-        self.final_juego_mouse = (0.0, 0.0)
+        self.duracion_animacion_final = DURACION_ANIMACION
 
         self.flashbacks_por_nivel = {
             1: "image15.gif",
@@ -554,16 +553,6 @@ class EventosVisuales:
     def iniciar_final_juego(self, inicio):
         self.final_juego_activo = True
         self.inicio_final_juego = inicio
-        self.final_juego_mouse = (self.ancho // 2, self.alto // 2)
-        from alfin import Dibujo, PIXEL_SIZES
-
-        ruta_imagen = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "assets", "dibujo.png"
-        )
-        if not os.path.isfile(ruta_imagen):
-            raise FileNotFoundError(f"No se encontró la imagen final: {ruta_imagen}")
-        self.final_juego_dibujo = Dibujo(ruta_imagen, self.ancho, self.alto)
-        self.final_juego_dibujo.build(PIXEL_SIZES[2])
 
     def creditos_listos(self, tiempo_ms):
         return (
@@ -572,33 +561,12 @@ class EventosVisuales:
             >= self.duracion_animacion_final * 1000
         )
 
-    def dibujar_final_juego(self, lienzo, tiempo_ms):
+    def dibujar_final_juego(self, lienzo, tiempo_ms, personaje):
         if not self.final_juego_activo:
             return
 
         tiempo_transcurrido = max(0.0, (tiempo_ms - self.inicio_final_juego) / 1000.0)
-
-        from alfin import render
-
-        intro = min(1.0, tiempo_transcurrido / 3.5)
-        mouse = (
-            self.final_juego_mouse[0] / max(1, self.final_juego_dibujo.px),
-            self.final_juego_mouse[1] / max(1, self.final_juego_dibujo.px),
-        )
-        gris = render(
-            self.final_juego_dibujo,
-            tiempo_transcurrido,
-            mouse,
-            levels=6,
-            grain_on=True,
-            dither_on=True,
-            intro=intro,
-        )
-        rgb = np.repeat(gris.T[:, :, None], 3, axis=2)
-        superficie = pygame.surfarray.make_surface(rgb)
-        lienzo.blit(
-            pygame.transform.scale(superficie, (self.ancho, self.alto)), (0, 0)
-        )
+        dibujar_animacion_final(lienzo, personaje, tiempo_transcurrido)
 
     def iniciar_game_over(self, nivel, inicio, seleccionar_por_nivel=True):
         self.indice_imagen_game_over = 0

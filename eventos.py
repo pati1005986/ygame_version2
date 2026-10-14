@@ -5,11 +5,11 @@ import os
 import random
 from typing import Any
 
-import cv2
 import numpy as np
 import pygame
 
 from alfin import DURACION_ANIMACION, dibujar as dibujar_animacion_final
+from creditos import CreditosFinales, cargar_gif
 from despertar import CarboncilloAnimado
 
 
@@ -319,30 +319,6 @@ def escala_grises(superficie, factor):
     return superficie
 
 
-def cargar_gif(ruta, tamano):
-    """Carga los fotogramas de un GIF para animarlo en Pygame."""
-    captura = cv2.VideoCapture(ruta)
-    if not captura.isOpened():
-        return [], 0.1
-
-    fps = captura.get(cv2.CAP_PROP_FPS) or 10.0
-    fotogramas = []
-    while True:
-        ok, fotograma = captura.read()
-        if not ok:
-            break
-        fotograma = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
-        fotograma = cv2.resize(fotograma, tamano, interpolation=cv2.INTER_NEAREST)
-        superficie = pygame.image.frombuffer(fotograma.tobytes(), tamano, "RGB")
-        fotogramas.append(
-            superficie.convert()
-            if pygame.display.get_surface()
-            else superficie.copy()
-        )
-    captura.release()
-    return fotogramas, 1.0 / fps
-
-
 class EventosVisuales:
     """Administra flashbacks, animaciones de game over y efectos por nivel."""
 
@@ -393,6 +369,18 @@ class EventosVisuales:
             20: "image14.gif",
             30: "image18.gif",
         }
+        self.creditos = CreditosFinales(
+            ancho,
+            alto,
+            carpeta_assets,
+            (
+                "image.gif",
+                *self.gifs_game_over,
+                *self.secuencia_game_over,
+                *self.secuencia_game_over_final,
+                *self.flashbacks_por_nivel.values(),
+            ),
+        )
         self.flashback_activo = False
         self.flashback_inicio = 0.0
         self.flashback_duracion_total = 0.0
@@ -557,8 +545,10 @@ class EventosVisuales:
     def creditos_listos(self, tiempo_ms):
         return (
             self.final_juego_activo
-            and tiempo_ms - self.inicio_final_juego
-            >= self.duracion_animacion_final * 1000
+            and self.creditos.listos(
+                tiempo_ms - self.inicio_final_juego,
+                self.duracion_animacion_final,
+            )
         )
 
     def dibujar_final_juego(self, lienzo, tiempo_ms, personaje):
@@ -566,7 +556,14 @@ class EventosVisuales:
             return
 
         tiempo_transcurrido = max(0.0, (tiempo_ms - self.inicio_final_juego) / 1000.0)
-        dibujar_animacion_final(lienzo, personaje, tiempo_transcurrido)
+        if tiempo_transcurrido < self.duracion_animacion_final:
+            dibujar_animacion_final(lienzo, personaje, tiempo_transcurrido)
+            return
+
+        self.creditos.dibujar(
+            lienzo,
+            tiempo_transcurrido - self.duracion_animacion_final,
+        )
 
     def iniciar_game_over(self, nivel, inicio, seleccionar_por_nivel=True):
         self.indice_imagen_game_over = 0

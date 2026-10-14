@@ -35,8 +35,8 @@ class Plataforma:
       actualiza ``self.rect`` de verdad, así que la colisión existente en
       el resto del juego lo sigue automáticamente sin cambios. Cada
       fotograma queda disponible en ``desplazamiento_reciente`` (un
-      ``pygame.Vector2``) por si el código del jugador quiere "montarlo"
-      sumando ese valor a su posición mientras está de pie encima.
+      ``pygame.Vector2``) para que las entidades puedan acompañarla mientras
+      están de pie encima.
     - **Reacción al aterrizaje**: llamando a ``notificar_aterrizaje()``
       desde el código de colisiones del jugador (cuando aterriza desde
       arriba sobre esta plataforma) se dispara un remezón elástico tipo

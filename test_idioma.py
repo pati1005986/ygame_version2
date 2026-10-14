@@ -159,13 +159,14 @@ def test_jugador_se_mueve_con_plataforma_vertical():
         velocidad_movimiento=0.0,
     )
     plataforma.rect.y = 250
-    plataforma.desplazamiento_reciente = pygame.Vector2(0, 12)
 
     jugador = PersonajeHumanoide(60, 160, (255, 255, 255))
     jugador.rect.bottom = plataforma.rect.top
     jugador.en_suelo = True
     jugador.plataforma_actual = plataforma
     y_antes = jugador.rect.y
+    plataforma.rect.y += 12
+    plataforma.desplazamiento_reciente = pygame.Vector2(0, 12)
 
     jugador.mover(
         [plataforma],

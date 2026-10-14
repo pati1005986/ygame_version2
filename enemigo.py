@@ -454,6 +454,16 @@ class EntidadGris:
         if self.en_suelo and abs(self.vel_x) > 0.05:
             self.fase_paso += abs(self.vel_x) * 0.17
 
+        if self.en_suelo and self.plataforma_actual is not None:
+            desplazamiento = getattr(
+                self.plataforma_actual,
+                "desplazamiento_reciente",
+                pygame.Vector2(0, 0),
+            )
+            if desplazamiento.length_squared() > 0:
+                self.rect.x += desplazamiento.x
+                self.rect.y += desplazamiento.y
+
         # 6. física
         self.vel_y += 0.6
         dy_mov = self.vel_y
@@ -491,6 +501,17 @@ class EntidadGris:
                 elif dy_mov < 0:
                     self.rect.top = hitbox.bottom
                     self.vel_y = 0
+
+        if not self.en_suelo and self.vel_y >= 0:
+            sonda = self.rect.move(0, 1)
+            for plataforma in plataformas:
+                hitbox = self._hitbox(plataforma)
+                if sonda.colliderect(hitbox):
+                    self.rect.bottom = hitbox.top
+                    self.vel_y = 0
+                    self.en_suelo = True
+                    self.plataforma_actual = plataforma
+                    break
 
         if self.en_suelo and not estaba_en_suelo:
             self.cuadros_aterrizaje = self.aterrizaje_total
@@ -769,13 +790,14 @@ def generar_entidades(
         x_max = min(ancho_pantalla - ancho_entidad, plataforma.rect.right - ancho_entidad)
         x = max(x_min, min(plataforma.rect.centerx - ancho_entidad // 2, x_max))
         y = plataforma.rect.top - alto_entidad
-        entidades.append(
-            EntidadGris(
-                x,
-                y,
-                velocidad_patrulla=velocidad_patrulla,
-                velocidad_persecucion=velocidad_persecucion,
-                rango_deteccion=rango_deteccion,
-            )
+        entidad = EntidadGris(
+            x,
+            y,
+            velocidad_patrulla=velocidad_patrulla,
+            velocidad_persecucion=velocidad_persecucion,
+            rango_deteccion=rango_deteccion,
         )
+        entidad.en_suelo = True
+        entidad.plataforma_actual = plataforma
+        entidades.append(entidad)
     return entidades

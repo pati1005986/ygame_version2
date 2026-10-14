@@ -533,6 +533,12 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             for fuerza_impacto in transicion.recoger_impactos():
                 intensidad_shake = max(intensidad_shake, fuerza_impacto)
             if transicion_terminada:
+                plataforma_spawn = plataformas[0]
+                jugador.rect.bottom = plataforma_spawn.rect_colision().top
+                jugador.en_suelo = True
+                jugador.plataforma_actual = plataforma_spawn
+                jugador.vel_y = 0
+                jugador._resto_y = 0.0
                 aplicar_volumen_audio(configuracion, jugador)
                 estado = ESTADO_JUGANDO
 

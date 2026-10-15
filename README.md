@@ -57,13 +57,26 @@ python juego.py --idioma [código]
 
 ---
 
+---
+
 ## 🎬 Sistema de Créditos y Final del Juego
 
 Al completar el **Nivel 40**, se activa automáticamente la escena final, seguida de los créditos cinematográficos de *Mr Pati*. 
 
 Esta secuencia incluye un carrusel animado con todo el material gráfico empleado en el juego. Toda la lógica de esta pantalla está implementada dentro del módulo `creditos.py`.
 
----
+### 🔍 Visualización de Animaciones Independientes
+Si deseas probar, revisar o auditar el detalle de las animaciones de manera aislada sin necesidad de completar todo el juego, puedes ejecutar los módulos correspondientes de forma independiente:
+
+- **Animación Catarsis:**
+  ```bash
+  python catarsis.py
+- **Animación Final:**
+  ```bash
+  python alfin.py
+- **Animacion despertar:**
+  ```bash
+  python despertar.py
 
 ## 📊 Pruebas de Rendimiento
 

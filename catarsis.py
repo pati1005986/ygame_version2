@@ -1,23 +1,27 @@
 """
-LAS VOCES  -  el despertar
---------------------------
-Todo está dibujado por código (no usa ninguna imagen): el chico de ojos
-enormes, el pelo erizado, el suéter a rayas, la bata y las voces que lo rodean.
+LAS VOCES  -  catarsis
+----------------------
+Todo está dibujado por código (no usa ninguna imagen).
 
-La escena ya no es una crisis: empieza con el chico DORMIDO, rodeado de las
-voces que murmuran (ojos que lo vigilan, bocas cosidas que se abren, cintas de
-susurro). Poco a poco su cuerpo se mueve, los párpados aletean, abre los ojos,
-las voces se quedan dormidas y se deshacen en burbujas, el cielo pasa de noche
-a amanecer, bosteza y sonríe.
+La escena tiene dos tiempos:
+  1. DESESPERACIÓN (0 - 7 s): todo bajo una capa de opacidad gris. Las voces rodean
+     al chico, que tiembla, suda, tiene los ojos desorbitados y grita; hasta la
+     cámara tiembla.
+  2. CALMA (de 7 s en adelante): las voces se deshacen en burbujas, el gris se
+     disipa y el fondo se vuelve azul (20, 114, 222). Suspira y se queda cansado:
+     párpados pesados, ojeras, hombros caídos, el pelo se baja y cabecea de sueño.
+
+El personaje está hecho en PIXEL ART: se dibuja en un lienzo pequeño con formas
+rectas y esquinas cortadas a 45° (sin curvas) y se amplía sin suavizar. Pierde
+detalle a propósito. Cambia PX para hacer los píxeles más grandes o más pequeños.
 
 Además lleva grano de película animado, polvo y rayones, una capa de pixelado y
-un tramado (dither) de sombras y luces que le da volumen a las formas planas.
-Los contornos usan curvas (splines / Bézier) en vez de polígonos rectos.
+un tramado (dither) de sombras y luces.
 
 Requisitos:  pip install pygame
 
 Controles:
-  ESPACIO  -> adelantar el despertar
+  ESPACIO  -> saltar a la calma
   G        -> activar / quitar el grano
   P        -> activar / quitar el pixelado
   R        -> reiniciar
@@ -38,8 +42,8 @@ import pygame
 # ------------------------------------------------------------------ config
 W, H = 640, 900
 FPS = 60
-T_DESPIERTA = 5.0          # segundo en que empieza a abrir los ojos
-T_REINICIO = 28.0          # segundo en que la escena se reinicia (en main)
+T_CALMA = 7.0              # segundo en que la desesperación se suelta y llega la calma
+T_REINICIO = 30.0          # segundo en que la escena se reinicia (en main)
 PIXEL = 2                  # tamaño del pixelado (1 = sin pixelar, 2-4 = más retro)
 CELDA = 2                  # tamaño de cada punto del tramado de sombras
 TAU = math.tau
@@ -47,8 +51,8 @@ TAU = math.tau
 INK = (14, 14, 20)
 PAPEL = (246, 242, 236)
 PIEL = (253, 251, 248)
-AZUL = (30, 168, 226)
-NOCHE = (18, 50, 128)
+AZUL_CALMA = (20, 114, 222)   # color de la calma
+GRIS_CRISIS = (66, 68, 76)    # fondo durante la desesperación
 ROSA = (236, 120, 136)
 CALIDO = (255, 243, 214)
 
@@ -176,21 +180,18 @@ def blob_points(cx, cy, rx, ry, rot, seed, t, wob):
 
 # ------------------------------------------------------------------ línea de tiempo
 class Estado:
-    """Todo lo que cambia con el despertar, derivado del tiempo."""
-    __slots__ = ("sueno", "ojos", "alba", "bostezo", "sonrisa", "enfoque", "voces")
+    """Todo lo que cambia entre la desesperación y la calma, derivado del tiempo."""
+    __slots__ = ("panico", "calma", "gris", "cansancio", "suspiro", "voces")
 
 
 def estado(t):
     e = Estado()
-    e.sueno = 1.0 - smooth(4.6, 11.0, t)                 # 1 dormido  ->  0 despierto
-    aleteo = 0.16 * bump(t, 2.4, 3.3) + 0.26 * bump(t, 3.7, 4.8)
-    ojos = max(smooth(5.0, 7.6, t), aleteo)               # apertura de los párpados
-    e.ojos = ojos * (1.0 - 0.9 * bump(t, 8.2, 8.8))       # primer parpadeo lento
-    e.alba = smooth(5.2, 13.0, t)                         # noche -> amanecer
-    e.bostezo = bump(t, 9.8, 12.4)
-    e.sonrisa = smooth(12.4, 16.0, t)
-    e.enfoque = smooth(5.8, 9.5, t)                       # las pupilas se enfocan
-    e.voces = smooth(0.0, 3.0, t) * (1.0 - smooth(5.2, 10.5, t))
+    e.panico = 1.0 - smooth(6.6, 9.6, t)                  # 1 desesperado  ->  0
+    e.calma = smooth(7.0, 12.0, t)                        # fondo: gris -> azul
+    e.gris = 1.0 - smooth(7.0, 13.0, t)                   # capa de opacidad gris que se disipa
+    e.cansancio = smooth(8.6, 13.5, t)                    # párpados pesados, ojeras, hombros caídos
+    e.suspiro = bump(t, 7.4, 10.4)                        # exhalación larga al soltar la tensión
+    e.voces = smooth(0.0, 1.5, t) * (1.0 - smooth(6.4, 11.0, t))
     return e
 
 
@@ -231,7 +232,7 @@ def crear_sol():
         for x in range(n):
             d = math.hypot(x - c, y - c) / c
             a = clamp01(1 - d) ** 2
-            v.set_at((x, y), (255, 236, 190, int(255 * a)))
+            v.set_at((x, y), (150, 200, 255, int(255 * a)))
     return pygame.transform.smoothscale(v, (820, 820))
 
 
@@ -240,7 +241,7 @@ def crear_haces():
     s = pygame.Surface((W, H), pygame.SRCALPHA)
     for x0, ancho, a in ((330, 70, 50), (470, 120, 36), (600, 60, 56), (200, 40, 30), (80, 30, 22)):
         pts = [(x0, -20), (x0 + ancho, -20), (x0 + ancho - 560, H + 20), (x0 - 560, H + 20)]
-        pygame.draw.polygon(s, (255, 240, 200, a), pts)
+        pygame.draw.polygon(s, (190, 222, 255, a * 2 // 3), pts)
     return s
 
 
@@ -498,7 +499,7 @@ class Ente:
         px = self.x + 6 * math.sin(t * 0.7 + self.seed)
         py = self.y + 7 * math.sin(t * 0.55 + self.seed * 1.7) - 46 * sale * sale
         rx, ry = self.rx * k, self.ry * k
-        fuerza = e.sueno
+        fuerza = e.panico
         largo, corto = max(rx, ry), min(rx, ry)
 
         # al quedarse dormida, la voz se deshace en burbujas
@@ -557,18 +558,18 @@ class Ente:
 
 # llega / se_va: segundos en que aparece y en que se deshace al despertar el chico
 ENTES = [
-    Ente(85, 85, 48, 32, 0.1, ["ojo"], 0.0, 8.6, 1),
-    Ente(80, 330, 55, 135, 0.15, ["ojo", "boca", "onda"], 0.0, 6.4, 2),
-    Ente(210, 140, 38, 75, -0.2, ["onda", "boca"], 0.0, 7.4, 3),
-    Ente(415, 135, 140, 60, 0.08, ["boca", "ojo", "onda"], 0.0, 5.8, 4),
-    Ente(575, 55, 80, 38, 0.3, ["ojo", "ojo"], 0.8, 8.0, 5),
-    Ente(585, 480, 52, 150, -0.1, ["boca", "onda", "ojo"], 0.0, 7.0, 6),
-    Ente(90, 700, 70, 130, -0.25, ["onda", "boca", "ojo"], 1.2, 9.2, 7),
-    Ente(45, 560, 30, 38, 0.0, ["ojo"], 2.0, 8.8, 8),
-    Ente(560, 810, 85, 70, 0.4, ["boca", "onda"], 1.6, 9.6, 9),
-    Ente(500, 300, 45, 62, 0.3, ["ojo", "boca"], 2.4, 7.8, 10),
-    Ente(140, 440, 40, 56, -0.3, ["boca"], 2.8, 6.9, 11),
-    Ente(300, 80, 50, 40, 0.0, ["ojo"], 3.2, 8.2, 12),
+    Ente(85, 85, 48, 32, 0.1, ["ojo"], 0.0, 10.6, 1),
+    Ente(80, 330, 55, 135, 0.15, ["ojo", "boca", "onda"], 0.0, 8.4, 2),
+    Ente(210, 140, 38, 75, -0.2, ["onda", "boca"], 0.0, 9.4, 3),
+    Ente(415, 135, 140, 60, 0.08, ["boca", "ojo", "onda"], 0.0, 7.8, 4),
+    Ente(575, 55, 80, 38, 0.3, ["ojo", "ojo"], 0.8, 10.0, 5),
+    Ente(585, 480, 52, 150, -0.1, ["boca", "onda", "ojo"], 0.0, 9.0, 6),
+    Ente(90, 700, 70, 130, -0.25, ["onda", "boca", "ojo"], 1.2, 11.2, 7),
+    Ente(45, 560, 30, 38, 0.0, ["ojo"], 2.0, 10.8, 8),
+    Ente(560, 810, 85, 70, 0.4, ["boca", "onda"], 1.6, 11.6, 9),
+    Ente(500, 300, 45, 62, 0.3, ["ojo", "boca"], 2.4, 9.8, 10),
+    Ente(140, 440, 40, 56, -0.3, ["boca"], 2.8, 8.9, 11),
+    Ente(300, 80, 50, 40, 0.0, ["ojo"], 3.2, 10.2, 12),
 ]
 
 
@@ -603,283 +604,298 @@ class Mota:
             if r > 4:
                 arco(s, (255, 255, 255), x, y, r * 0.6, r * 0.6, 1.9, 2.9, 2)
         else:
-            pygame.draw.circle(s, (255, 246, 214), (x, y), int(r))
+            pygame.draw.circle(s, (205, 228, 255), (x, y), int(r))
             if r > 2.4:
-                tline(s, (255, 246, 214), (x - r * 2, y), (x + r * 2, y), 1)
-                tline(s, (255, 246, 214), (x, y - r * 2), (x, y + r * 2), 1)
+                tline(s, (205, 228, 255), (x - r * 2, y), (x + r * 2, y), 1)
+                tline(s, (205, 228, 255), (x, y - r * 2), (x, y + r * 2), 1)
 
 
-# ------------------------------------------------------------------ personaje
-RX, RY = 148, 170
+# ------------------------------------------------------------------ personaje (pixel art)
+# El personaje se dibuja en un lienzo pequeño (LW x LH) usando solo rectángulos, rectas y
+# esquinas cortadas a 45° (nada de curvas ni antialias) y después se amplía SIN suavizar:
+# cada "píxel" del personaje mide PX x PX píxeles de pantalla. Pierde detalle a propósito.
+PX = 4
+LW, LH = W // PX, H // PX                  # 160 x 225
+CLAVE = (255, 0, 255)                      # color transparente del sprite
+
+P_PIEL = (250, 246, 242)
+P_PIEL_S = (212, 206, 216)                 # sombra de la piel
+P_OJERA = (118, 126, 178)                  # ojeras azuladas
+P_SUDOR = (190, 224, 255)
+P_SUETER = (168, 168, 174)
+P_SUETER_S = (112, 112, 122)
+P_SUETER_O = (84, 84, 96)
+P_BATA = (240, 238, 234)
+BLANCO = (255, 255, 255)
+
+
+def rr(s, col, x, y, w, h):
+    """Rectángulo en la rejilla del sprite."""
+    if w > 0 and h > 0:
+        s.fill(col, (int(x), int(y), int(w), int(h)))
+
+
+def tri(s, col, a, b, c):
+    pygame.draw.polygon(s, col, [(int(a[0]), int(a[1])), (int(b[0]), int(b[1])), (int(c[0]), int(c[1]))])
+
+
+def octogono(hw, alto, corte):
+    """Semi-ancho de cada fila de un rectángulo con las esquinas cortadas a 45°."""
+    return [hw - max(0, corte - min(i, alto - 1 - i)) for i in range(alto)]
+
+
+def filas_cabeza(a, sup, inf):
+    """Cabeza cuadrada: esquinas superiores cortadas y mandíbula que se estrecha por escalones."""
+    out = []
+    n = sup + inf
+    for i in range(n):
+        if i < sup:
+            w = a - max(0, 10 - i)
+        else:
+            w = a - ((i - sup) * 11) // inf - max(0, 3 - (n - 1 - i))
+        out.append(w)
+    return out
+
+
+def silueta(s, filas, cx, y0, relleno, borde=INK):
+    """Forma definida por semi-anchos por fila, con contorno de 1 píxel."""
+    n = len(filas)
+    for i, w in enumerate(filas):
+        rr(s, borde, cx - w, y0 + i, 2 * w + 1, 1)
+    for i in range(1, n - 1):
+        w = min(filas[i] - 1, filas[i - 1], filas[i + 1])
+        if w >= 0:
+            rr(s, relleno, cx - w, y0 + i, 2 * w + 1, 1)
+
+
+def gota(s, x, y):
+    """Gota de sudor."""
+    for i, w in enumerate((0, 1, 1, 2, 2, 2, 1)):
+        rr(s, P_SUDOR, x - w, y + i, 2 * w + 1, 1)
+    rr(s, BLANCO, x - 1, y + 3, 1, 2)
 
 
 class Personaje:
     def __init__(self):
         rnd = random.Random(11)
-        self.pinchos = [(i / 79, rnd.uniform(28, 70), rnd.uniform(-0.35, 0.35),
-                         rnd.uniform(0, TAU), rnd.uniform(8, 15)) for i in range(80)]
-        self.flequillo = [rnd.uniform(14, 36) for _ in range(11)]
+        self.pinchos = [(i / 21, rnd.uniform(11, 21), rnd.uniform(-0.3, 0.3),
+                         rnd.uniform(0, TAU), rnd.uniform(3.0, 4.6)) for i in range(22)]
+        self.flequillo = [rnd.randint(3, 8) for _ in range(9)]
         self.mirada = [0.0, 0.0]
         self.destino = [0.0, 0.0]
         self.t_mirada = 0.0
-        self.sig_parp = 1.5
-        self.parp_t = -1.0
+        self.spr = None
+
+    @staticmethod
+    def cabeceo(t, cans):
+        """0 -> 1: la cabeza se va cayendo de sueño y se levanta de golpe."""
+        if cans < 0.5:
+            return 0.0
+        ph = (t - 12.0) % 7.0
+        return cans * smooth(0.4, 3.2, ph) * (1.0 - smooth(3.2, 3.45, ph))
 
     # ---- cuerpo, bata y suéter
     def cuerpo(self, s, cx, top):
-        pygame.draw.polygon(s, (168, 168, 174), redondear(
-            [(cx - 100, top - 15), (cx + 100, top - 15), (cx + 140, H + 80), (cx - 140, H + 80)], 30))
-        y = top + 14
-        while y < H:
-            w = 100 + (y - top) * 0.2
-            pygame.draw.line(s, (112, 112, 122), (cx - w, y), (cx + w, y), 4)
-            y += 15
-        # sombra a la izquierda (como en el dibujo)
-        pygame.draw.polygon(s, INK, redondear(
-            [(cx - 100, top - 15), (cx - 30, top - 15), (cx - 55, H + 80), (cx - 140, H + 80)], 26))
-        for yy in range(int(top) + 6, H, 11):
-            pygame.draw.line(s, (80, 80, 92), (cx - 28, yy), (cx - 6, yy - 10), 4)
-        for side in (-1, 1):
-            pts = [(cx + side * 100, top - 15), (cx + side * 235, top + 45),
-                   (cx + side * 320, H + 80), (cx + side * 140, H + 80)]
-            poli(s, (240, 238, 234), pts, 6, "redondo", 40)
-            tline(s, INK, (cx + side * 100, top - 15), (cx + side * 84, top + 80), 5)
-            tline(s, INK, (cx + side * 170, top + 20), (cx + side * 200, top + 160), 4)
+        for lado in (-1, 1):                                        # solapas de la bata
+            pts = [(cx + lado * 24, top - 5), (cx + lado * 60, top + 10),
+                   (cx + lado * 82, LH + 2), (cx + lado * 30, LH + 2)]
+            pygame.draw.polygon(s, P_BATA, pts)
+            pygame.draw.polygon(s, INK, pts, 1)
+            pygame.draw.line(s, INK, (cx + lado * 42, top + 8), (cx + lado * 50, top + 34), 1)
+        pts = [(cx - 26, top - 5), (cx + 26, top - 5), (cx + 34, LH + 2), (cx - 34, LH + 2)]
+        pygame.draw.polygon(s, P_SUETER, pts)
+        for y in range(top + 3, LH, 4):                             # rayas del suéter
+            w = 25 + (y - top) // 10
+            rr(s, P_SUETER_S, cx - w, y, 2 * w + 1, 1)
+        for y in range(top - 4, LH):                                # sombra tramada a la izquierda
+            for x in range(cx - 25 - (y - top) // 10, cx - 8):
+                if (x + y) & 1:
+                    s.set_at((x, y), P_SUETER_O)
+        pygame.draw.polygon(s, INK, pts, 1)
 
-    def cuello(self, s, cx, hy, top, jaw):
-        pts = [(cx - 52, hy + 100), (cx + 52, hy + 100), (cx + 58, top), (cx - 58, top)]
-        poli(s, PIEL, pts, 6, "redondo", 16)
-        # hachurado bajo la barbilla
-        pygame.draw.polygon(s, INK, redondear([(cx - 56, hy + 120), (cx + 56, hy + 120),
-                                               (cx + 40, hy + 175 + jaw), (cx - 40, hy + 175 + jaw)], 14))
-        for i in range(-5, 6):
-            x = cx + i * 9
-            tline(s, PIEL, (x, hy + 178 + jaw), (x + 12, hy + 215 + jaw), 4)
-        for i in range(-5, 0):
-            x = cx + i * 9
-            tline(s, INK, (x, top - 60), (x + 14, top - 15), 4)
-        # cuello del suéter
-        r = pygame.Rect(cx - 84, int(top) - 34, 168, 46)
-        pygame.draw.ellipse(s, (160, 160, 166), r)
-        pygame.draw.ellipse(s, INK, r, 6)
-        for i in range(-7, 8):
-            x = cx + i * 11
-            tline(s, (100, 100, 110), (x, top - 28), (x, top + 4), 2)
+    def cuello(self, s, cx, hx, top, barbilla):
+        rr(s, INK, hx - 14, barbilla - 8, 29, top - barbilla + 6)
+        rr(s, P_PIEL, hx - 13, barbilla - 8, 27, top - barbilla + 6)
+        for i in range(9):                                          # sombra tramada bajo la barbilla
+            for x in range(hx - 13, hx + 14):
+                if i < 4:
+                    col = INK
+                elif i < 7:
+                    col = INK if (x + i) & 1 else P_PIEL_S
+                else:
+                    col = P_PIEL_S if (x + i) & 1 else P_PIEL
+                s.set_at((x, barbilla + i), col)
+        silueta(s, octogono(21, 12, 3), cx, top - 12, P_SUETER_S)   # cuello del suéter
+        for x in range(cx - 18, cx + 19, 4):
+            rr(s, INK, x, top - 10, 1, 8)
 
     # ---- pelo
-    def pelo_atras(self, s, cx, hy, t, dh):
-        hc = (cx, hy - 62)
-        tb = int(t * 10)
-        pygame.draw.ellipse(s, INK, (hc[0] - 172, hc[1] - 185, 344, 340))
-        for side in (-1, 1):
-            pygame.draw.polygon(s, INK, redondear([(cx + side * (RX - 4), hy - 60), (cx + side * (RX + 24), hy - 40),
-                                                   (cx + side * (RX + 26), hy + 70), (cx + side * (RX - 8), hy + 100)], 18))
+    def pelo_atras(self, s, hx, hy, t, pan):
+        for i, w in enumerate(octogono(43, 66, 14)):                # masa de pelo
+            rr(s, INK, hx - w, hy - 55 + i, 2 * w + 1, 1)
+        for lado in (-1, 1):                                        # patillas
+            rr(s, INK, hx + lado * 40 - 4, hy - 12, 9, 38)
+        tb = int(t * 12)
+        k = 0.62 + 0.55 * pan                                       # erizado en pánico, caído en calma
+        hcy = hy - 16
         for idx, (fr, L0, ao, ph, wd) in enumerate(self.pinchos):
-            a = math.pi * 0.88 + fr * math.pi * 1.24
-            bx = hc[0] + 168 * math.cos(a) - math.cos(a) * 12
-            by = hc[1] + 175 * math.sin(a) - math.sin(a) * 12
-            ang = a + ao * (1 + dh) + math.sin(t * 1.3 + ph) * 0.05
-            L = L0 * (1 + 0.07 * math.sin(t * 2.0 + ph))
-            tip = (bx + math.cos(ang) * L + ruido(idx, tb) * 1.4,
-                   by + math.sin(ang) * L + ruido(idx + 99, tb) * 1.4)
+            a = math.pi * 0.9 + fr * math.pi * 1.2
+            bx, by = hx + 40 * math.cos(a), hcy + 40 * math.sin(a)
+            ang = a + ao + ruido(idx + 99, tb) * 0.12 * pan + math.sin(t * 1.3 + ph) * 0.03
+            L = L0 * (k + 0.05 * math.sin(t * 2.0 + ph)) + ruido(idx, tb) * 2.5 * pan
             nx, ny = -math.sin(ang), math.cos(ang)
-            rizo = wd * 0.9 * math.sin(ph)                      # cada mechón se curva a un lado
-            mx, my_ = (bx + tip[0]) / 2, (by + tip[1]) / 2
-            izq = bez((bx + nx * wd, by + ny * wd), (mx + nx * (wd * 0.55 + rizo), my_ + ny * (wd * 0.55 + rizo)), tip, 5)
-            der = bez(tip, (mx - nx * (wd * 0.55 - rizo), my_ - ny * (wd * 0.55 - rizo)), (bx - nx * wd, by - ny * wd), 5)
-            pygame.draw.polygon(s, INK, izq + der[1:])
+            tri(s, INK, (bx + nx * wd, by + ny * wd),
+                (bx + math.cos(ang) * L, by + math.sin(ang) * L),
+                (bx - nx * wd, by - ny * wd))
 
-    def flequillo_dibujar(self, s, cx, hy, t):
-        y0 = hy - 132
-        left = cx - RX - 8
-        wdt = 2 * RX + 16
-        n = len(self.flequillo)
-        step = wdt / n
-        pygame.draw.polygon(s, INK, [(left, hy - 185), (left + wdt, hy - 185), (left + wdt, y0 + 2), (left, y0 + 2)])
-        for i in range(n):
-            xa, xb = left + i * step, left + (i + 1) * step
-            xt = left + (i + 0.5) * step + math.sin(t * 1.2 + i) * 1.2 + (i % 3 - 1) * 4
-            L = self.flequillo[i] + math.sin(t * 1.7 + i) * 1.5
-            yt = y0 + L + ruido(i, int(t * 10)) * 1.2
-            curva = 5 * math.sin(i * 1.7)                           # mechones curvados, no triángulos
-            izq = bez((xa - 1, y0), (xa + step * 0.12 + curva, y0 + L * 0.7), (xt, yt), 5)
-            der = bez((xt, yt), (xb - step * 0.12 + curva, y0 + L * 0.55), (xb + 1, y0), 5)
-            pygame.draw.polygon(s, INK, izq + der[1:])
+    def flequillo_dibujar(self, s, hx, hy, t, pan):
+        y0 = hy - 36
+        rr(s, INK, hx - 41, hy - 48, 83, y0 - (hy - 48) + 1)
+        tb = int(t * 12)
+        for i, L in enumerate(self.flequillo):
+            x = hx - 41 + i * 9
+            L += int(round(ruido(i, tb) * 1.2 * pan))
+            tri(s, INK, (x, y0), (x + 9, y0), (x + 4 + (i % 3 - 1), y0 + L))
 
-    # ---- ojo grande del dibujo (abierto, entornado o cerrado)
-    def ojo(self, s, ex, ey, R, op, lx, ly, pr):
-        ex, ey = int(ex), int(ey)
-        pygame.draw.circle(s, PIEL, (ex, ey), R)
+    # ---- boca
+    def boca(self, s, hx, my, w, h, esq):
+        if h < 3:                                                   # cerrada, comisuras caídas
+            rr(s, INK, hx - w // 2, my, w, 2)
+            rr(s, INK, hx - w // 2, my + 2, 2, esq)
+            rr(s, INK, hx + w // 2 - 2, my + 2, 2, esq)
+            return
+        silueta(s, octogono(w // 2, h, min(4, h // 3)), hx, my, INK)
+        if h >= 8:
+            rr(s, BLANCO, hx - w // 2 + 3, my + 1, w - 5, 2)        # dientes
+        if h >= 11:
+            rr(s, ROSA, hx - w // 4, my + h - 5, w // 2, 3)         # lengua
 
-        def cerrada(u):
-            return R * 0.22 * (1 - u * u)
-
-        us = [i / 18 * 2 - 1 for i in range(19)]
-        sup = [(u * R, lerp(cerrada(u), -R * math.sqrt(max(0.0, 1 - u * u)), op)) for u in us]
-        inf = [(u * R, lerp(cerrada(u), R * math.sqrt(max(0.0, 1 - u * u)), op)) for u in us]
-        if op > 0.03:
-            size = 2 * R + 12
-            off = size // 2
-            g = pygame.Surface((size, size), pygame.SRCALPHA)
-            pygame.draw.circle(g, (255, 255, 255, 255), (off, off), R)
-            pygame.draw.circle(g, INK + (255,), (off + int(lx), off + int(ly)), int(pr))
-            pygame.draw.circle(g, (255, 255, 255, 255),
-                               (off + int(lx - pr * 0.35), off + int(ly - pr * 0.35)), max(2, int(pr * 0.22)))
-            m = pygame.Surface((size, size), pygame.SRCALPHA)
-            pygame.draw.polygon(m, (255, 255, 255, 255), [(off + x, off + y) for x, y in sup + inf[::-1]])
-            g.blit(m, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-            s.blit(g, (ex - off, ey - off))
-            tpoly(s, INK, [(ex + x, ey + y) for x, y in inf], 5)
-        tpoly(s, INK, [(ex + x, ey + y) for x, y in sup], 7 + (1 - op) * 3)
-        if op < 0.6:                                              # pestañas del ojo dormido
-            m_ = 1 - op / 0.6
-            for i in range(5):
-                u = -0.7 + i * 0.35
-                x0 = ex + u * R
-                y0 = ey + lerp(cerrada(u), -R * math.sqrt(1 - u * u), op)
-                tline(s, INK, (x0, y0), (x0 + u * 6, y0 + 5 + 9 * m_), 4)
-        pygame.draw.circle(s, INK, (ex, ey), R, int(4 + 3 * op))
+    # ---- ojo grande (octógono): párpado que baja, pupila cuadrada, ojera
+    def ojo(self, s, ex, ey, op, lx, ly, pw, bolsa):
+        hw, alto = 12, 25
+        y0 = ey - alto // 2
+        filas = octogono(hw, alto, 5)
+        silueta(s, filas, ex, y0, BLANCO)
+        if op > 0.06:
+            px, py = ex + lx - pw // 2, ey + ly - pw // 2
+            rr(s, INK, px, py, pw, pw)
+            if pw >= 5:
+                rr(s, BLANCO, px + 1, py + 1, 1, 1)
+        cubre = int(round((1 - op) * 15))                           # filas tapadas por el párpado
+        if cubre > 0:
+            for i in range(1, cubre):
+                w = filas[i] - 1
+                rr(s, P_PIEL, ex - w, y0 + i, 2 * w + 1, 1)
+            if op < 0.06:                                           # cerrado del todo
+                for i in range(cubre + 1, alto - 1):
+                    w = filas[i] - 1
+                    rr(s, P_PIEL, ex - w, y0 + i, 2 * w + 1, 1)
+            yl = y0 + cubre
+            rr(s, INK, ex - filas[cubre], yl, 2 * filas[cubre] + 1, 1)
+            if op < 0.75:                                           # párpado pesado: línea doble
+                rr(s, INK, ex - filas[cubre + 1] + 1, yl + 1, 2 * filas[cubre + 1] - 1, 1)
+            if op < 0.08:
+                for dx in (-8, 0, 8):
+                    rr(s, INK, ex + dx, yl + 2, 1, 2)
+        if bolsa > 0.15:                                            # ojeras
+            rr(s, P_OJERA, ex - 9, ey + 14, 19, 2)
+            if bolsa > 0.5:
+                rr(s, P_OJERA, ex - 7, ey + 16, 15, 2)
+                rr(s, INK, ex - 8, ey + 18, 17, 1)
 
     # ---- dibujo completo
-    def dibujar(self, s, t, e, dt, mundo):
-        sd = e.sueno
-        br = math.sin(t * (1.0 + 0.5 * (1 - sd)))                  # respiración lenta
-        by = br * (2.0 + 2.5 * sd)
-        cx = W // 2
-        hcx = cx + int(11 * sd + 2 * math.sin(t * 0.6))             # cabeza ladeada al dormir
-        jolt = 12 * bump(t, 4.9, 6.3)                               # sobresalto al despertar
-        hy = 470 + 20 * sd + by * 0.6 - jolt - 6 * e.bostezo - mundo.pulso * sd * 2
-        top = 700 + by + 8 * sd
+    def dibujar(self, canvas, t, e, dt, mundo):
+        if self.spr is None:
+            self.spr = pygame.Surface((LW, LH))
+            self.spr.set_colorkey(CLAVE)
+        s = self.spr
+        s.fill(CLAVE)
+        pan, cans, sus = e.panico, e.cansancio, e.suspiro
+        tb = int(t * 14)                                            # el temblor avanza a saltos
+        nod = self.cabeceo(t, cans)
 
-        # boca: entreabierta al dormir, bostezo al despertar
-        o = max(sd * (0.13 + 0.05 * br), e.bostezo * 0.95)
-        jaw = 0.25 * o
-        dh = 0.12 * sd
+        # respiración: corta y rápida en pánico, lenta y profunda en calma
+        resp = int(round(math.sin(t * lerp(2.2, 11.0, pan)) * (1.0 + cans)))
+        sx = int(round(ruido(1, tb) * 2.4 * pan))
+        sy = int(round(ruido(2, tb) * 1.8 * pan))
+        golpe = int(mundo.pulso * pan * 2)
+
+        cx = LW // 2
+        top = 175 - int(5 * pan) + resp + int(4 * cans) + int(3 * sus)    # hombros: tensos -> caídos
+        hx = cx + sx + int(2 * cans)
+        hy = 117 + sy - int(3 * pan) - golpe + int(5 * cans) + int(2 * sus) + int(7 * nod) + resp // 2
+
+        # boca: grito en pánico, exhalación al soltar, línea caída cuando está cansado
+        grito = pan * (0.55 + 0.45 * abs(math.sin(t * 8.5 + 0.7 * math.sin(t * 3.1))))
+        o = max(grito, sus * 0.30)
+        jaw = int(round(o * 10))
+        mh = int(round(o * 22))
+        mw = int(round(lerp(14, 32, pan)))
 
         self.cuerpo(s, cx, top)
-        self.pelo_atras(s, hcx, hy, t, dh)
-        self.cuello(s, hcx, hy, top, int(jaw * RY))
+        self.pelo_atras(s, hx, hy, t, pan)
+        self.cuello(s, cx, hx, top, hy + 42 + jaw)
+        for lado in (-1, 1):                                        # orejas
+            ox = hx + lado * 40
+            silueta(s, octogono(4, 15, 2), ox, hy - 2, P_PIEL)
+            rr(s, P_PIEL_S, ox - 1, hy + 2, 3, 6)
+        silueta(s, filas_cabeza(37, 42, 42 + jaw), hx, hy - 42, P_PIEL)
 
-        # cabeza
-        tb = int(t * 10)
-        pts = []
-        for i in range(64):
-            a = i / 64 * TAU
-            x = math.cos(a) * RX
-            y = math.sin(a) * RY
-            if y > 0:
-                x *= 1 - 0.22 * (y / RY) ** 2
-                y *= 1 + jaw
-            pts.append((hcx + x + ruido(i, tb) * 0.9, hy + y + ruido(i + 70, tb) * 0.9))
-        for side in (-1, 1):                                        # orejas
-            r = pygame.Rect(0, 0, 40, 64)
-            r.center = (hcx + side * (RX + 2), hy + 22)
-            pygame.draw.ellipse(s, PIEL, r)
-            pygame.draw.ellipse(s, INK, r, 6)
-            arco(s, INK, r.x + 17, r.y + 29, 9, 15, 0.5, 4.5, 4)
-        poli(s, PIEL, pts, 8, "spline")
+        # arrugas de las mejillas y nariz
+        for lado in (-1, 1):
+            for k in range(2):
+                rr(s, INK, hx + lado * (20 + k * 5), hy + 14 + k * 2, 1, 9)
+        rr(s, INK, hx + 2, hy + 6, 1, 8)
+        rr(s, INK, hx, hy + 13, 3, 1)
 
-        # arrugas de las mejillas (líneas del dibujo)
-        for side in (-1, 1):
-            for k in range(2 + int(sd * 2)):
-                x0 = hcx + side * (66 + k * 15)
-                y0 = hy + 18 + k * 4
-                ln = 70 + k * 8
-                trazo = []
-                for q in range(8):
-                    u = q / 7
-                    trazo.append((x0 + side * (6 * math.sin(u * 3 + k) + u * 6), y0 + u * ln))
-                tpoly(s, INK, trazo, 4)
-
-        # nariz
-        tpoly(s, INK, [(hcx + 3, hy + 28), (hcx + 10, hy + 52), (hcx + 1, hy + 57)], 6)
-
-        # ---- ojos
-        R = 50
-        ey = hy - 18
+        # ---- mirada: saltona en pánico, lenta y hacia abajo cuando está cansado
         self.t_mirada -= dt
         if self.t_mirada <= 0:
-            self.t_mirada = random.uniform(0.9, 2.6)
-            rg = 3 + 16 * (1 - e.enfoque)
-            if e.enfoque > 0.95 and random.random() < 0.5:
-                rg = 2
-            self.destino = [random.uniform(-rg, rg), random.uniform(-rg * 0.6, rg * 0.6)]
-        k = min(1.0, dt * 3.0)
+            self.t_mirada = lerp(random.uniform(1.4, 3.0), random.uniform(0.10, 0.30), pan)
+            rg = lerp(2.0, 6.0, pan)
+            self.destino = [random.uniform(-rg, rg),
+                            random.uniform(-rg * 0.5, rg * 0.5) + 3.0 * cans * (1 - pan)]
+        k = min(1.0, dt * lerp(2.5, 22.0, pan))
         self.mirada[0] += (self.destino[0] - self.mirada[0]) * k
         self.mirada[1] += (self.destino[1] - self.mirada[1]) * k
-        pr = lerp(41, 30, e.enfoque) + mundo.pulso * 0.6
+        pw = int(round(lerp(6, 3, pan)))                            # pupila diminuta en pánico
+        mx = 12 - pw // 2 - 4
+        lx = int(max(-mx, min(mx, self.mirada[0])))
+        ly = int(max(-mx, min(mx, self.mirada[1])))
 
-        op = e.ojos * (1 - 0.55 * e.bostezo)
-        if self.parp_t < 0:                                          # parpadeos ya despierto
-            if e.ojos > 0.98 and t > 10.0:
-                self.sig_parp -= dt
-                if self.sig_parp <= 0:
-                    self.parp_t = 0.0
-        else:
-            self.parp_t += dt / 0.22
-            if self.parp_t >= 1:
-                self.parp_t = -1.0
-                self.sig_parp = random.uniform(2.0, 5.0)
-        if self.parp_t >= 0:
-            op *= 1 - math.sin(math.pi * self.parp_t)
+        # ---- párpados: desorbitados -> pesados, se cierran al suspirar y al cabecear
+        op = lerp(1.0, 0.5 - 0.1 * math.sin(t * 0.9), cans)
+        op *= 1.0 - 0.9 * nod
+        op *= 1.0 - 0.97 * sus
+        for lado in (-1, 1):
+            self.ojo(s, hx + lado * 17, hy - 4, clamp01(op), lx, ly, pw, cans)
 
-        for side in (-1, 1):
-            ex = hcx + side * 68
-            mx = max(0.0, R - pr - 5)
-            lx = max(-mx, min(mx, self.mirada[0]))
-            ly = max(-mx, min(mx, self.mirada[1]))
-            self.ojo(s, ex, ey, R, clamp01(op), lx, ly, pr)
-            # ojeras (más marcadas mientras duerme)
-            for q in range(1 + int(sd * 2)):
-                arco(s, INK, ex, ey + R * (0.55 + q * 0.18) + R * 0.45, R * 0.9, R * 0.45,
-                     math.pi * 1.15, math.pi * 1.85, 4)
-            # cejas: preocupadas al dormir, se levantan al despertar y se relajan
-            by0 = ey - R - 28 - 10 * bump(t, 5.2, 8.5)
-            inner = (ex - side * R * 0.5, by0 - 14 * sd)
-            outer = (ex + side * R * 1.0, by0 + 8 * sd)
-            mid = ((inner[0] + outer[0]) / 2, min(inner[1], outer[1]) - 8)
-            tpoly(s, INK, [inner, mid, outer], 9)
-            if sd > 0.3:                                              # ceño de pesadilla
-                tline(s, INK, (hcx + side * 7, by0 - 4), (hcx + side * 9, by0 + 8 + 10 * sd), 4)
+        self.flequillo_dibujar(s, hx, hy, t, pan)
 
-        # rubor al sonreír
-        if e.sonrisa > 0.05:
-            for side in (-1, 1):
+        # ---- cejas: arqueadas de angustia -> bajas y planas
+        by = hy - 21 - int(5 * pan) + int(3 * cans)
+        for lado in (-1, 1):
+            yi = by - int(8 * pan) - int(cans)
+            yo = by + int(pan) + int(2 * cans)
+            pygame.draw.line(s, INK, (hx + lado * 6, yi), (hx + lado * 30, yo), 3)
+
+        self.boca(s, hx, hy + 20, mw, mh, 1 + int(2 * cans))
+
+        # ---- sudor y marcas de temblor (solo en pánico)
+        if pan > 0.25:
+            for lado in (-1, 1):
                 for i in range(3):
-                    x = hcx + side * (84 + i * 11)
-                    tline(s, ROSA, (x, hy + 38), (x - side * 5, hy + 38 + 16 * e.sonrisa), 3)
+                    p = (t * 0.9 + i * 0.34 + (0.17 if lado > 0 else 0.0)) % 1.0
+                    gota(s, hx + lado * (46 + 6 * i), hy - 32 + int(p * 52))
+        if pan > 0.3 and tb % 2 == 0:
+            for lado in (-1, 1):
+                for j in range(3):
+                    rr(s, P_BATA, hx + lado * (70 + 4 * j), hy - 12 + 5 * j, 1, 9)
 
-        # ---- flequillo (encima de la frente)
-        self.flequillo_dibujar(s, hcx, hy, t)
-
-        # ---- boca
-        my = hy + 85
-        w = 42 + 50 * e.bostezo + 14 * e.sonrisa
-        if o < 0.06:
-            a = lerp(-4, 10, e.sonrisa)
-            trazo = []
-            for q in range(9):
-                u = q / 8 * 2 - 1
-                trazo.append((hcx + u * w / 2, my + 8 + a * (1 - u * u) - 5 * e.sonrisa * u * u))
-            tpoly(s, INK, trazo, 8)
-        else:
-            h = 110 * o
-            sup, inf = [], []
-            for q in range(15):
-                u = q / 14 * 2 - 1
-                sup.append((hcx + u * w / 2, my - 6 * (1 - u * u)))
-                inf.append((hcx + u * w / 2, my + h * (1 - u * u) ** 0.7))
-            poly = sup + inf[::-1]
-            pygame.draw.polygon(s, INK, poly)
-            if h > 18:
-                for q in range(-2, 3):
-                    pygame.draw.rect(s, PAPEL, (int(hcx + q * w * 0.15 - 7), int(my - 6 * (1 - (q * 0.3) ** 2)),
-                                                14, int(min(20, h * 0.28))))
-            if h > 55:
-                lg = pygame.Rect(0, 0, int(w * 0.45), int(h * 0.26))
-                lg.center = (int(hcx), int(my + h * 0.7))
-                pygame.draw.ellipse(s, (196, 70, 84), lg)
-            tpoly(s, INK, poly + [poly[0]], 8)
+        # ampliación sin suavizar: cada píxel del sprite pasa a ser PX x PX
+        grande = pygame.transform.scale(s, (W, H))
+        grande.set_colorkey(CLAVE)
+        canvas.blit(grande, (0, 0))
 
 
 # ------------------------------------------------------------------ sonido
@@ -904,14 +920,14 @@ def crear_sonidos():
         mur.append(int(max(-1, min(1, v * 5 * mod)) * 9000))
     # campanita del amanecer: arpegio do-mi-sol
     cam = array("h")
-    dur = 2.6
+    dur = 3.4
     for i in range(int(rate * dur)):
         tt = i / rate
         v = 0.0
-        for k, f in enumerate((523.25, 659.25, 783.99, 1046.5)):
-            t0 = tt - k * 0.2
+        for k, f in enumerate((392.0, 329.63, 261.63, 196.0)):
+            t0 = tt - k * 0.35
             if t0 > 0:
-                v += (math.sin(TAU * f * t0) + 0.3 * math.sin(TAU * f * 2.01 * t0)) * math.exp(-t0 * 2.6)
+                v += (math.sin(TAU * f * t0) + 0.3 * math.sin(TAU * f * 2.01 * t0)) * math.exp(-t0 * 1.7)
         cam.append(int(max(-1, min(1, v * 0.32)) * 14000))
     return (pygame.mixer.Sound(buffer=lat.tobytes()),
             pygame.mixer.Sound(buffer=mur.tobytes()),
@@ -949,13 +965,13 @@ class Mundo:
         latido = False
         self.latido_t -= dt
         if self.latido_t <= 0:
-            self.latido_t = 60.0 / (56 + 12 * (1 - e.sueno))
+            self.latido_t = 60.0 / lerp(54, 130, e.panico)   # taquicardia -> pulso lento
             self.pulso = 1.0
             latido = True
         self.pulso = max(0.0, self.pulso - dt * 3.5)
         # chispas de luz una vez que amanece
-        if e.alba > 0.35:
-            self.acum_luz += dt * 4 * e.alba
+        if e.calma > 0.35:
+            self.acum_luz += dt * 2.5 * e.calma
             while self.acum_luz >= 1:
                 self.acum_luz -= 1
                 if len(self.motas) < 170:
@@ -976,19 +992,18 @@ class Mundo:
 def componer(canvas, e, dt, mundo, pers):
     t = mundo.t
     canvas.fill(PAPEL)
-    bg = mix(NOCHE, AZUL, e.alba ** 0.85)
-    bg = mix(bg, (120, 206, 240), 0.35 * smooth(10.0, 16.0, t))
-    bg = mix(bg, (255, 255, 255), mundo.pulso * 0.04 * e.sueno)
-    pygame.draw.rect(canvas, bg, (14, 34, W - 28, H - 48), border_radius=10)
+    bg = mix(GRIS_CRISIS, AZUL_CALMA, e.calma)
+    bg = mix(bg, (255, 255, 255), mundo.pulso * 0.05 * e.panico)
+    pygame.draw.rect(canvas, bg, (14, 34, W - 28, H - 48))
     canvas.blit(TRAZOS, (0, 0))
-    if e.alba > 0.01:
-        SOL.set_alpha(int(210 * e.alba))
+    if e.calma > 0.01:
+        SOL.set_alpha(int(110 * e.calma))
         canvas.blit(SOL, (W - 560, -300))
     for en in ENTES:
         en.dibujar(canvas, t, e, dt, mundo, bg)
     mundo.dibujar_motas(canvas, "burbuja")
-    if e.alba > 0.01:
-        HACES.set_alpha(int(255 * smooth(0.05, 0.8, e.alba)))
+    if e.calma > 0.01:
+        HACES.set_alpha(int(255 * smooth(0.05, 0.8, e.calma)))
         canvas.blit(HACES, (0, 0))
     pers.dibujar(canvas, t, e, dt, mundo)
     mundo.dibujar_motas(canvas, "luz")
@@ -996,33 +1011,28 @@ def componer(canvas, e, dt, mundo, pers):
 
 
 def postproceso(canvas, e, mundo, destino, con_grano=True, pixel=PIXEL):
-    t = mundo.t
-    zoom = 1.0 + 0.04 * (1 - smooth(4.5, 12.0, t)) + 0.006 * math.sin(t * 0.5) + 0.01 * mundo.pulso * e.sueno
-    zw, zh = int(W * zoom), int(H * zoom)
-    jit = 1.2 * (0.3 + 0.7 * e.sueno)                      # leve temblor de proyector
-    ox = (W - zw) // 2 + int(random.uniform(-jit, jit))
-    oy = (H - zh) // 2 + int(random.uniform(-jit, jit))
-    destino.fill((10, 10, 12))
-    if zoom > 1.002:
-        destino.blit(pygame.transform.smoothscale(canvas, (zw, zh)), (ox, oy))
-    else:
-        destino.blit(canvas, (ox, oy))
+    # Sin zoom suave: ampliar con suavizado deformaría la rejilla de píxeles del personaje.
+    # El temblor de cámara usa desplazamientos enteros y solo existe mientras hay pánico.
+    jit = int(round(3.5 * e.panico ** 1.5))
+    ox = random.randint(-jit, jit) if jit else 0
+    oy = random.randint(-jit, jit) if jit else 0
+    destino.fill(PAPEL)
+    destino.blit(canvas, (ox, oy))
 
     # capa de pixelado + tramado: rompe lo plano y da volumen con puntos de sombra y luz
     pixelar(destino, pixel)
     if pixel > 1 or CELDA > 1:
-        sombra, luz = tramado(int(t * 6))
+        sombra, luz = tramado(int(mundo.t * 6))
         destino.blit(sombra, (0, 0), special_flags=pygame.BLEND_RGB_MULT)
         destino.blit(luz, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
 
-    velo(destino, (6, 10, 40), 58 * e.sueno)                 # penumbra del sueño
-    velo(destino, (255, 206, 140), 30 * e.alba)               # luz cálida de la mañana
-    velo(destino, (255, 255, 255), 70 * bump(t, 5.6, 7.8))    # destello al abrir los ojos
-    VINETA.set_alpha(int(50 + 120 * e.sueno))
+    velo(destino, (8, 8, 14), 48 * e.panico)                  # penumbra de la crisis
+    velo(destino, (120, 120, 128), 130 * e.gris)              # opacidad gris del principio
+    VINETA.set_alpha(int(50 + 130 * e.panico))
     destino.blit(VINETA, (0, 0))
 
     if con_grano:
-        grano().aplicar(destino, lerp(46, 34, e.alba), lerp(26, 16, e.alba))
+        grano().aplicar(destino, lerp(30, 54, e.panico), lerp(14, 30, e.panico))
         polvo(destino)
 
 
@@ -1059,7 +1069,7 @@ class AnimacionCatarsis:
         componer(self.canvas, e, dt, self.mundo, self.personaje)
         postproceso(self.canvas, e, self.mundo, self.frame)
 
-        imagen = pygame.transform.smoothscale(self.frame, (self.ancho, self.alto))
+        imagen = pygame.transform.scale(self.frame, (self.ancho, self.alto))   # sin suavizar: conserva el pixel art
         destino.blit(imagen, (0, 0))
 
         # entrada: fundido desde negro
@@ -1170,7 +1180,7 @@ def main():
         screen = pygame.display.set_mode((W, H), pygame.SCALED | pygame.RESIZABLE)
     except Exception:
         screen = pygame.display.set_mode((W, H))
-    pygame.display.set_caption("Las voces - el despertar")
+    pygame.display.set_caption("Las voces - catarsis")
     precalentar()
     clock = pygame.time.Clock()
     mundo = Mundo()
@@ -1205,8 +1215,8 @@ def main():
                     con_grano = not con_grano
                 if ev.key == pygame.K_p:
                     pixelado = 1 if pixelado > 1 else PIXEL
-                if ev.key == pygame.K_SPACE and mundo.t < T_DESPIERTA - 0.5:
-                    mundo.t = T_DESPIERTA - 0.5
+                if ev.key == pygame.K_SPACE and mundo.t < T_CALMA - 0.5:
+                    mundo.t = T_CALMA - 0.5
                 if ev.key == pygame.K_m and latido:
                     sonido = not sonido
                     if not sonido:
@@ -1216,12 +1226,12 @@ def main():
 
         if latido and sonido:
             if hubo_latido:
-                latido.set_volume(0.30 - 0.14 * (1 - e.sueno))
+                latido.set_volume(0.16 + 0.16 * e.panico)
                 latido.play()
             murmullo.set_volume(0.03 + 0.5 * e.voces)
-            if not mundo.campana and mundo.t >= T_DESPIERTA + 0.4:
+            if not mundo.campana and mundo.t >= T_CALMA + 0.6:
                 mundo.campana = True
-                campana.set_volume(0.6)
+                campana.set_volume(0.45)
                 campana.play()
 
         componer(canvas, e, dt, mundo, pers)

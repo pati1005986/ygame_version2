@@ -731,6 +731,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 lienzo,
                 pygame.time.get_ticks(),
                 jugador,
+                configuracion["idioma"],
             )
             if creditos_listos:
                 posicion_raton = pygame.mouse.get_pos()

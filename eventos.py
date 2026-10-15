@@ -554,7 +554,7 @@ class EventosVisuales:
             )
         )
 
-    def dibujar_final_juego(self, lienzo, tiempo_ms, personaje):
+    def dibujar_final_juego(self, lienzo, tiempo_ms, personaje, idioma="es"):
         if not self.final_juego_activo:
             return
 
@@ -566,6 +566,7 @@ class EventosVisuales:
         self.creditos.dibujar(
             lienzo,
             tiempo_transcurrido - self.duracion_animacion_final,
+            idioma,
         )
 
     def iniciar_game_over(self, nivel, inicio, seleccionar_por_nivel=True):

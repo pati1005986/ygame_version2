@@ -8,6 +8,54 @@ import numpy as np
 import pygame
 
 
+TEXTOS_CREDITOS = {
+    "en": {
+        "production": "AN INDEPENDENT PRODUCTION",
+        "design": "DESIGN & PROGRAMMING",
+        "art": "ART & ANIMATION",
+        "story": "STORY & CONCEPT",
+        "levels": "LEVEL DESIGN",
+        "made_with": "MADE WITH",
+        "thanks": "THANKS FOR PLAYING",
+        "thanks_subtitle": "Thanks for making it to the end",
+        "memory": "MEMORY",
+    },
+    "es": {
+        "production": "UNA PRODUCCIÓN INDEPENDIENTE",
+        "design": "DISEÑO Y PROGRAMACIÓN",
+        "art": "ARTE Y ANIMACIÓN",
+        "story": "HISTORIA Y CONCEPTO",
+        "levels": "DISEÑO DE NIVELES",
+        "made_with": "HECHO CON",
+        "thanks": "GRACIAS POR JUGAR",
+        "thanks_subtitle": "Gracias por llegar hasta el final",
+        "memory": "RECUERDO",
+    },
+    "pt": {
+        "production": "UMA PRODUÇÃO INDEPENDENTE",
+        "design": "DESIGN E PROGRAMAÇÃO",
+        "art": "ARTE E ANIMAÇÃO",
+        "story": "HISTÓRIA E CONCEITO",
+        "levels": "DESIGN DE NÍVEIS",
+        "made_with": "FEITO COM",
+        "thanks": "OBRIGADO POR JOGAR",
+        "thanks_subtitle": "Obrigado por chegar até o final",
+        "memory": "LEMBRANÇA",
+    },
+    "ru": {
+        "production": "НЕЗАВИСИМОЕ ПРОИЗВОДСТВО",
+        "design": "ДИЗАЙН И ПРОГРАММИРОВАНИЕ",
+        "art": "ИСКУССТВО И АНИМАЦИЯ",
+        "story": "ИСТОРИЯ И КОНЦЕПЦИЯ",
+        "levels": "ДИЗАЙН УРОВНЕЙ",
+        "made_with": "СОЗДАНО С ПОМОЩЬЮ",
+        "thanks": "СПАСИБО ЗА ИГРУ",
+        "thanks_subtitle": "Спасибо, что дошли до конца",
+        "memory": "ВОСПОМИНАНИЕ",
+    },
+}
+
+
 def cargar_gif(ruta, tamano, ajustar_aspecto=False):
     """Carga los fotogramas de un GIF para animarlo en Pygame."""
     captura = cv2.VideoCapture(ruta)
@@ -75,14 +123,6 @@ class CreditosFinales:
         self.fuente_nombre = pygame.font.SysFont(familias, 14, bold=True)
         self.fuente_pie = pygame.font.SysFont(familias, 9, bold=True)
 
-        self.tarjetas = (
-            ("DISEÑO Y PROGRAMACIÓN", "MR PATI"),
-            ("ARTE Y ANIMACIÓN", "MR PATI"),
-            ("HISTORIA Y CONCEPTO", "MR PATI"),
-            ("DISEÑO DE NIVELES", "MR PATI"),
-            ("HECHO CON", "Python · Pygame · OpenCV · NumPy"),
-            ("GRACIAS POR JUGAR", "Gracias por llegar hasta el final"),
-        )
         self.duracion_fundido = 0.45
         self.duracion_entrada = 1.6
         self.alto_barra_cine = 28
@@ -106,7 +146,8 @@ class CreditosFinales:
         return tiempo_transcurrido_ms >= duracion_animacion * 1000
 
     # ------------------------------------------------------------------
-    def dibujar(self, lienzo, tiempo_creditos):
+    def dibujar(self, lienzo, tiempo_creditos, idioma="es"):
+        textos = TEXTOS_CREDITOS.get(idioma, TEXTOS_CREDITOS["en"])
         px = self.PX
         duracion = self.duracion_gif
         indice = int(tiempo_creditos / duracion) % len(self.gifs)
@@ -122,7 +163,7 @@ class CreditosFinales:
         # Encabezado
         sobrelinea = self._texto(
             self.fuente_sobrelinea,
-            "UNA PRODUCCIÓN INDEPENDIENTE",
+            textos["production"],
             self.COLOR_ORO_SUAVE,
             2,
         )
@@ -188,14 +229,22 @@ class CreditosFinales:
             )
         pie = self._texto(
             self.fuente_pie,
-            f"RECUERDO {indice + 1:02d} / {total:02d}",
+            f"{textos['memory']} {indice + 1:02d} / {total:02d}",
             self.COLOR_ORO_SUAVE,
             2,
         )
         lienzo.blit(pie, pie.get_rect(center=(centro_x, y_barra + 2 * px + 14)))
 
         # Tarjeta de créditos
-        rol, nombre = self.tarjetas[int(tiempo_creditos / duracion) % len(self.tarjetas)]
+        tarjetas = (
+            (textos["design"], "MR PATI"),
+            (textos["art"], "MR PATI"),
+            (textos["story"], "MR PATI"),
+            (textos["levels"], "MR PATI"),
+            (textos["made_with"], "Python · Pygame · OpenCV · NumPy"),
+            (textos["thanks"], textos["thanks_subtitle"]),
+        )
+        rol, nombre = tarjetas[int(tiempo_creditos / duracion) % len(tarjetas)]
         ancho_maximo = self.ancho - 120
         texto_rol = self._texto(self.fuente_rol, rol, self.COLOR_ORO, 2, ancho_maximo)
         texto_nombre = self._texto(

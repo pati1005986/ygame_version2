@@ -636,10 +636,111 @@ def _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo
         superficie.blit(img, img.get_rect(center=(int(x), int(cara["y"]))))
 
 
+# ---------------------------------------------------------------------------
+# Modo azul (nivel 30 en adelante)
+# Formas enormes y lentas en tonos de azul, y una
+# viñeta que late muy suavemente. A primera vista es calma; el estrés viene
+# de detalles casi imperceptibles: el latido de la viñeta, formas que respiran
+# a ritmos distintos (nunca sincronizadas) y un parpadeo mínimo de luz.
+# ---------------------------------------------------------------------------
+
+_NIVEL_AZUL = 30
+_NIVELES_TENSION_AZUL = 20   # niveles hasta alcanzar la tensión máxima
+_CACHE_AZUL = {"dim": None, "base": None, "vineta": None, "velo": None}
+_AZUL_FONDO = (20, 114, 222)
+
+
+def _tono_azul(factor):
+    return tuple(int(min(255, canal * factor)) for canal in _AZUL_FONDO)
+
+
+def _preparar_fondo_azul(ancho, alto):
+    """Crea (una sola vez por tamaño) un degradado azul, viñeta y velo oscuro."""
+    c = _CACHE_AZUL
+    if c["dim"] == (ancho, alto):
+        return c
+
+    base = pygame.Surface((ancho, alto))
+    franjas = 40
+    alto_franja = math.ceil(alto / franjas) + 1
+    for i in range(franjas):
+        t = i / (franjas - 1)
+        pygame.draw.rect(base, _tono_azul(1 - 0.42 * t), (0, int(t * alto), ancho, alto_franja))
+
+    pw, ph = 48, 27
+    pequena = pygame.Surface((pw, ph), pygame.SRCALPHA)
+    for yy in range(ph):
+        for xx in range(pw):
+            d = math.hypot((xx / (pw - 1) - 0.5) * 2, (yy / (ph - 1) - 0.5) * 2) / 1.41
+            a = max(0.0, min(1.0, (d - 0.30) / 0.70)) ** 1.5
+            pequena.set_at((xx, yy), (2, 12, 30, int(255 * a)))
+    vineta = pygame.transform.smoothscale(pequena, (ancho, alto))
+
+    velo = pygame.Surface((ancho, alto))
+    velo.fill((1, 8, 24))
+
+    c.update(dim=(ancho, alto), base=base, vineta=vineta, velo=velo)
+    return c
+
+
+def _dibujar_fondo_azul(superficie, tiempo, ancho, alto, nivel):
+    c = _preparar_fondo_azul(ancho, alto)
+    # 0 en el nivel 30 -> 1 al cabo de _NIVELES_TENSION_AZUL niveles.
+    tension = max(0.0, min(1.0, (nivel - _NIVEL_AZUL) / _NIVELES_TENSION_AZUL))
+
+    superficie.blit(c["base"], (0, 0))
+
+    # Formas enormes, planas y lentas. Se alternan tonos claros y oscuros de azul.
+    deriva = 1.0 + 0.6 * tension
+    for i in range(6):
+        t_forma = tiempo * deriva
+        # Cada forma respira con su propio periodo: nunca laten a la vez.
+        radio = alto * (0.28 + 0.06 * (i % 3)) * (1 + 0.05 * math.sin(tiempo * (0.33 + i * 0.07) + i * 1.9))
+        cx = ancho * (0.12 + 0.76 * ((i * 0.37) % 1.0)) + math.sin(t_forma * 0.07 + i * 2.3) * ancho * 0.04
+        cy = alto * (0.15 + 0.70 * ((i * 0.53 + 0.1) % 1.0)) + math.cos(t_forma * 0.05 + i * 1.7) * alto * 0.04
+
+        margen = 20
+        lado = int(radio * 2 + margen * 2)
+        capa = _obtener_superficie(("azul", i), (lado, lado))
+        centro_local = (lado / 2, lado / 2)
+        puntos = [
+            _punto_organico(centro_local, radio, (k / 28) * math.tau, tiempo * 0.3, i * 1.7,
+                            amplitud=0.12, asimetria=0.06)
+            for k in range(28)
+        ]
+        if i % 2 == 0:
+            color = (*_tono_azul(1.35), 20)
+        else:
+            color = (*_tono_azul(0.22), 36)
+        pygame.draw.polygon(capa, color, [(int(px), int(py)) for px, py in puntos])
+        superficie.blit(capa, (int(cx - lado / 2), int(cy - lado / 2)))
+
+    # Luz que respira lentamente, con un parpadeo casi imperceptible
+    # (suma de frecuencias que no coinciden, para que se sienta irregular).
+    respiracion = 14 + 12 * math.sin(tiempo * 0.35)
+    parpadeo = (1.0 + 3.0 * tension) * math.sin(tiempo * 7.3) * math.sin(tiempo * 2.9)
+    c["velo"].set_alpha(int(max(0, min(60, respiracion + parpadeo))))
+    superficie.blit(c["velo"], (0, 0))
+
+    # Viñeta con latido (lub-dub) muy lento; se cierra un poco más con el nivel.
+    fase = (tiempo * 1.5) % math.tau
+    latido = max(0.0, math.sin(fase)) ** 16 + 0.55 * max(0.0, math.sin(fase - 1.1)) ** 16
+    alpha = 150 + 70 * tension + (28 + 30 * tension) * latido
+    c["vineta"].set_alpha(int(max(0, min(255, alpha))))
+    superficie.blit(c["vineta"], (0, 0))
+
+
 def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0):
     """Fondo psicodélico que, nivel a nivel, se va llenando de una lluvia de
-    caras pensativas que se deforman progresivamente. La lluvia desaparece
-    desde el nivel 30."""
+    caras pensativas que se deforman progresivamente. Desde el nivel 30 la
+    lluvia desaparece: queda un fondo azul, opaco y quieto, que se siente
+    tranquilo pero con una tensión sutil."""
+    if nivel >= _NIVEL_AZUL:
+        # Con nivel >= 30 esta llamada solo limpia el estado de la lluvia.
+        _dibujar_lluvia_de_caras(superficie, ancho, alto, 0.0, nivel, 1.0, tiempo)
+        _dibujar_fondo_azul(superficie, tiempo, ancho, alto, nivel)
+        return
+
     p = max(0.0, min(1.0, (nivel - 1) / 9.0))  # progreso de la transformación
     # El vaivén de color se intensifica con el nivel (más "viaje").
     hue_base = (hue_fondo + math.sin(tiempo * 0.35) * (0.05 + 0.07 * p)) % 1.0

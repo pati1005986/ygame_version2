@@ -12,9 +12,18 @@ Línea de tiempo:
   4. La silueta despierta: respira, intenta incorporarse, se deja caer, y al
      final se sienta, se frota la cara y abre los ojos. Sale un resplandor
      de amanecer a su espalda.
+
+Sonido: todos los efectos se sintetizan con numpy al arrancar (no hacen falta
+archivos de audio) y se disparan desde `dibujar` según el tiempo de la escena:
+zumbido del vacío, pasos y jadeo, polvo al desintegrarse, polvo al formarse,
+latido, respiración, esfuerzo, caída, roce de ropa, frotarse la cara y un
+acorde de amanecer con un destello al abrir los ojos. Sin numpy la escena
+queda muda. Ver SONIDO_ACTIVO, VOLUMEN_SONIDO, precargar_sonidos() y
+detener_sonidos().
 """
 
 import math
+import random
 
 import pygame
 
@@ -37,6 +46,11 @@ FRENADO_INICIO = 3.0        # el mundo empieza a frenarse
 FRENADO_DURACION = 3.2
 FRENADO_FUERZA = 0.85       # 0 = no frena, 1 = se detiene del todo
 VIDA_PARTICULA = 1.2        # segundos que vive cada mota de polvo
+
+# --- Sonido ----------------------------------------------------------------
+SONIDO_ACTIVO = True       # False = escena muda
+VOLUMEN_SONIDO = 0.8       # volumen general de los efectos (0-1)
+VOLUMEN_AMBIENTE = 0.32    # volumen del zumbido continuo del vacío (0-1)
 
 # --- Estilo pixel art ----------------------------------------------------
 PIXEL = 4                  # tamaño de cada píxel (más alto = más grueso)
@@ -321,9 +335,14 @@ def _dibujar_particulas(pantalla, particulas, origen):
 # ----------------------------------------------------------------------
 # Personaje
 # ----------------------------------------------------------------------
-def _preparar_personaje(personaje, tiempo, fatiga):
+def _fase_paso(tiempo):
+    """Fase de la zancada. Cada múltiplo de pi es un pie tocando el suelo."""
     # Ritmo irregular: arrastra los pies y casi se detiene a ratos
-    fase = tiempo * VELOCIDAD_PASO + 0.9 * math.sin(tiempo * 1.1)
+    return tiempo * VELOCIDAD_PASO + 0.9 * math.sin(tiempo * 1.1)
+
+
+def _preparar_personaje(personaje, tiempo, fatiga):
+    fase = _fase_paso(tiempo)
 
     personaje.rect.height = personaje.altura_normal
     personaje._plataformas = ()
@@ -666,6 +685,465 @@ def _escena_silueta(pantalla, tiempo, t_cuadro, tiempo_mundo, pie_y):
 
 
 # ----------------------------------------------------------------------
+# Sonido (se sintetiza con numpy: no hace falta ningún archivo de audio)
+# ----------------------------------------------------------------------
+def _suave_np(x):
+    """smoothstep sobre arrays."""
+    x = np.clip(x, 0.0, 1.0)
+    return x * x * (3 - 2 * x)
+
+
+def _env(t, puntos, potencia=1.0):
+    """Envolvente lineal por tramos [(segundo, nivel), ...] elevada a `potencia`."""
+    xs, ys = zip(*puntos)
+    return np.interp(t, xs, ys) ** potencia
+
+
+def _norm(x, pico=1.0):
+    maximo = np.max(np.abs(x))
+    return x * (pico / maximo) if maximo > 1e-9 else x
+
+
+def _filtrar(x, sr, pasa_bajos=None, pasa_altos=None, orden=2):
+    """Filtro por FFT: deja pasar por debajo de `pasa_bajos` y/o por encima de `pasa_altos` (Hz)."""
+    f = np.maximum(np.fft.rfftfreq(len(x), 1.0 / sr), 1e-3)
+    respuesta = np.ones_like(f)
+    if pasa_bajos:
+        respuesta = respuesta / np.sqrt(1.0 + (f / pasa_bajos) ** (2 * orden))
+    if pasa_altos:
+        respuesta = respuesta / np.sqrt(1.0 + (pasa_altos / f) ** (2 * orden))
+    return np.fft.irfft(np.fft.rfft(x) * respuesta, len(x))
+
+
+def _ruido(sr, duracion, rng, pasa_altos=None, pasa_bajos=None):
+    """Ruido blanco filtrado y normalizado."""
+    base = rng.standard_normal(int(sr * duracion))
+    return _norm(_filtrar(base, sr, pasa_bajos=pasa_bajos, pasa_altos=pasa_altos))
+
+
+def _modulacion(n, sr, rng, tasa, minimo=0.2):
+    """Amplitud irregular entre `minimo` y 1 que cambia unas `tasa` veces por segundo."""
+    m = _filtrar(rng.standard_normal(n), sr, pasa_bajos=tasa)
+    m = m / (np.max(np.abs(m)) + 1e-9)
+    return minimo + (1.0 - minimo) * (0.5 + 0.5 * m)
+
+
+def _fase_barrido(t, sr, f0, f1, duracion):
+    """Fase de un seno que va de f0 a f1 Hz (exponencial) en `duracion` s."""
+    f = f0 * (f1 / f0) ** np.clip(t / duracion, 0.0, 1.0)
+    return 2 * np.pi * np.cumsum(f) / sr
+
+
+def _golpe(t, sr, f0, f1, caida_frec, caida_amp):
+    """Golpe sordo: seno grave cuya frecuencia cae de f0 a f1 mientras se apaga."""
+    f = f1 + (f0 - f1) * np.exp(-t * caida_frec)
+    return np.sin(2 * np.pi * np.cumsum(f) / sr) * np.exp(-t * caida_amp)
+
+
+def _poner(x, onda, inicio, sr, ganancia=1.0):
+    """Suma `onda` sobre `x` a partir del segundo `inicio`."""
+    i = int(inicio * sr)
+    m = min(len(onda), len(x) - i)
+    if i >= 0 and m > 0:
+        x[i:i + m] += onda[:m] * ganancia
+
+
+def _granos(n, sr, rng, puntos):
+    """Motas de polvo: chasquidos diminutos. `puntos` = [(segundo, granos por segundo)]."""
+    xs, ys = zip(*puntos)
+    maximo = max(ys)
+    candidatos = rng.uniform(0.0, n / sr, int(maximo * n / sr) + 1)
+    acepta = rng.uniform(0.0, maximo, candidatos.size) < np.interp(candidatos, xs, ys)
+    plantillas = []
+    for _ in range(12):
+        tg = np.arange(int(sr * rng.uniform(0.008, 0.026))) / sr
+        plantillas.append(
+            np.sin(2 * np.pi * rng.uniform(1400, 6500) * tg)
+            * np.exp(-tg * rng.uniform(180, 420))
+        )
+    x = np.zeros(n)
+    for inicio in candidatos[acepta]:
+        _poner(x, plantillas[rng.randint(len(plantillas))], inicio, sr,
+               rng.uniform(0.25, 1.0))
+    return _norm(x)
+
+
+def _sintetizar(sr):
+    """Crea todos los efectos a la frecuencia `sr`: {nombre: array float -1..1}.
+
+    Los arrays son mono (n,) o estéreo (n, 2).
+    """
+    def T(d):
+        return np.arange(int(sr * d)) / sr
+
+    S = {}
+
+    # Zumbido grave del vacío: bucle de 8 s sin costuras (todo da vueltas enteras)
+    def ambiente(semilla):
+        r = np.random.RandomState(semilla)
+        d = 8.0
+        t = T(d)
+
+        def entero(hz):
+            return round(hz * d) / d
+
+        x = np.zeros_like(t)
+        voces = ((55.0, 1.0), (82.4, 0.55), (110.0, 0.4), (164.8, 0.18))
+        for i, (hz, a) in enumerate(voces):
+            temblor = 0.8 + 0.2 * np.sin(
+                2 * np.pi * entero(0.125 * (i + 1)) * t + r.uniform(0, 6.28))
+            x += a * temblor * np.sin(2 * np.pi * entero(hz) * t + r.uniform(0, 6.28))
+        rumor = _norm(_filtrar(r.standard_normal(len(t)), sr, pasa_bajos=260)) * 0.5
+        aire = _norm(_filtrar(r.standard_normal(len(t)), sr,
+                              pasa_bajos=5000, pasa_altos=1800))
+        aire = aire * (0.04 + 0.04 * np.sin(2 * np.pi * entero(0.25) * t
+                                            + r.uniform(0, 6.28)))
+        return _norm(_norm(x) * 0.8 + rumor + aire, 0.8)
+
+    S["ambiente"] = np.column_stack((ambiente(1), ambiente(2)))
+
+    # Pasos cansados: golpe sordo + polvo + arrastre del pie (3 variantes)
+    for i, (semilla, f0) in enumerate(((21, 78.0), (22, 66.0), (23, 72.0))):
+        r = np.random.RandomState(semilla)
+        t = T(0.55)
+        golpe = _golpe(t, sr, f0, 38.0, 30.0, 22.0)
+        polvo = _ruido(sr, 0.55, r, pasa_altos=120, pasa_bajos=1300) * np.exp(-t * 32)
+        arrastre = (
+            _ruido(sr, 0.55, r, pasa_altos=500, pasa_bajos=3000)
+            * _env(t, ((0, 0), (0.05, 0), (0.10, 1), (0.50, 0)), 2)
+            * _modulacion(len(t), sr, r, 25, 0.4)
+        )
+        S["paso%d" % i] = _norm(0.9 * golpe + 0.5 * polvo + 0.25 * arrastre, 0.9)
+
+    # Jadeo: inspiración corta y espiración larga
+    r = np.random.RandomState(31)
+    t = T(1.0)
+    inspira = _env(t, ((0, 0), (0.22, 1), (0.30, 0)), 1.3)
+    espira = _env(t, ((0, 0), (0.33, 0), (0.42, 1), (1.0, 0)), 1.6)
+    S["jadeo"] = _norm(
+        _ruido(sr, 1.0, r, pasa_altos=500, pasa_bajos=3200) * (0.45 * inspira + espira),
+        0.8)
+
+    # El personaje se deshace: soplo de ceniza, granos, tono que se apaga
+    r = np.random.RandomState(11)
+    d = DURACION_DESINTEGRA + VIDA_PARTICULA + 0.5
+    t = T(d)
+    soplo = _ruido(sr, d, r, pasa_altos=250, pasa_bajos=2200) * _env(
+        t, ((0, 0), (0.4, 0.5), (1.6, 1), (DURACION_DESINTEGRA, 0.5), (d, 0)), 1.4)
+    granos = _granos(len(t), sr, r, (
+        (0, 0), (0.3, 150), (1.2, 320), (2.4, 280), (DURACION_DESINTEGRA, 120),
+        (DURACION_DESINTEGRA + VIDA_PARTICULA, 15), (d, 0)))
+    fase = _fase_barrido(t, sr, 330.0, 110.0, d)
+    tono = (np.sin(fase) + 0.3 * np.sin(2 * fase)) * _env(
+        t, ((0, 0), (0.5, 1), (d, 0)), 1.3)
+    tic = _golpe(t, sr, 90.0, 45.0, 18.0, 7.0) * (t < 0.7)
+    S["desintegrar"] = _norm(0.5 * soplo + 0.6 * granos + 0.22 * tono + 0.45 * tic, 0.9)
+
+    # El polvo se reúne: lo contrario, todo crece hasta que la silueta se completa
+    r = np.random.RandomState(12)
+    llega = DURACION_SILUETA + VIDA_PARTICULA
+    d = llega + 0.4
+    t = T(d)
+    soplo = _ruido(sr, d, r, pasa_altos=300, pasa_bajos=3000) * _env(
+        t, ((0, 0), (2.0, 0.3), (llega - 0.1, 1), (llega + 0.05, 0.4), (d, 0)), 1.5)
+    granos = _granos(len(t), sr, r, (
+        (0, 0), (1.0, 40), (2.2, 160), (llega - 0.4, 330), (llega, 60), (d, 0)))
+    fase = _fase_barrido(t, sr, 110.0, 440.0, llega)
+    tono = (np.sin(fase) + 0.25 * np.sin(2 * fase) + 0.1 * np.sin(3 * fase)) * _env(
+        t, ((0, 0), (2.5, 0.4), (llega - 0.05, 1), (d, 0)), 1.5)
+    S["materializar"] = _norm(0.5 * soplo + 0.6 * granos + 0.25 * tono, 0.9)
+
+    # Primer latido (lub-dub) cuando la silueta cobra vida, y otro más débil
+    r = np.random.RandomState(13)
+    d = 2.6
+    t = T(d)
+    x = np.zeros(len(t))
+    for inicio, fuerza in ((0.0, 1.0), (0.30, 0.75), (1.35, 0.7), (1.65, 0.5)):
+        _poner(x, _golpe(T(0.5), sr, 80.0, 42.0, 24.0, 14.0), inicio, sr, fuerza)
+    flor = _ruido(sr, d, r, pasa_bajos=700) * _env(t, ((0, 0), (0.12, 1), (d, 0)), 1.8)
+    zumbido = np.sin(2 * np.pi * 110.0 * t) * _env(t, ((0, 0), (0.3, 1), (d, 0)), 2)
+    S["latido"] = _norm(x + 0.3 * flor + 0.25 * zumbido, 0.9)
+
+    # Respiración del que duerme (2,7 s: inspira, pausa, espira)
+    r = np.random.RandomState(14)
+    t = T(2.7)
+    inspira = _env(t, ((0, 0), (0.45, 0.6), (1.15, 1), (1.28, 0)), 1.4)
+    espira = _env(t, ((0, 0), (1.30, 0), (1.50, 0.8), (2.0, 0.55), (2.7, 0)), 1.4)
+    aire = _ruido(sr, 2.7, r, pasa_altos=200, pasa_bajos=1500)
+    voz = _ruido(sr, 2.7, r, pasa_altos=650, pasa_bajos=1100)
+    S["respiracion"] = _norm((0.7 * aire + 0.45 * voz) * (inspira + 0.9 * espira), 0.7)
+
+    # Suspiro al dejarse caer
+    r = np.random.RandomState(15)
+    t = T(1.7)
+    S["suspiro"] = _norm(
+        _ruido(sr, 1.7, r, pasa_altos=180, pasa_bajos=1600)
+        * _env(t, ((0, 0), (0.10, 1), (0.5, 0.7), (1.7, 0)), 1.5), 0.7)
+
+    # Primer intento de incorporarse: roce de tela y aliento con esfuerzo
+    r = np.random.RandomState(16)
+    t = T(1.0)
+    tela = (_ruido(sr, 1.0, r, pasa_altos=1500, pasa_bajos=5500)
+            * _modulacion(len(t), sr, r, 14, 0.15)
+            * _env(t, ((0, 0), (0.12, 1), (0.5, 0.8), (1.0, 0)), 1.2))
+    aliento = _ruido(sr, 1.0, r, pasa_altos=250, pasa_bajos=1500) * _env(
+        t, ((0, 0), (0.05, 0), (0.30, 1), (0.75, 0)), 1.5)
+    S["esfuerzo"] = _norm(0.6 * tela + 0.8 * aliento, 0.7)
+
+    # Se deja caer: golpe de cuerpo sobre el suelo invisible
+    r = np.random.RandomState(17)
+    t = T(0.8)
+    cuerpo = _golpe(t, sr, 95.0, 36.0, 14.0, 10.0)
+    tela = _ruido(sr, 0.8, r, pasa_altos=900, pasa_bajos=4500) * _env(
+        t, ((0, 0), (0.02, 1), (0.35, 0)), 1.5)
+    polvo = _ruido(sr, 0.8, r, pasa_altos=100, pasa_bajos=700) * np.exp(-t * 14)
+    S["caida"] = _norm(cuerpo + 0.35 * tela + 0.5 * polvo, 0.9)
+
+    # Se incorpora de verdad: ropa, roces y manos que se apoyan (dura lo que el tramo)
+    r = np.random.RandomState(18)
+    d = 0.54 * DURACION_DESPERTAR
+    t = T(d)
+    velocidad = np.clip(6 * (t / d) * (1 - t / d), 0.0, 1.5) ** 0.8
+    tela = (_ruido(sr, d, r, pasa_altos=1200, pasa_bajos=5200)
+            * _modulacion(len(t), sr, r, 9, 0.25) * velocidad)
+    roce = (_ruido(sr, d, r, pasa_altos=90, pasa_bajos=450)
+            * _modulacion(len(t), sr, r, 5, 0.2) * velocidad)
+    x = 0.6 * tela + 0.7 * roce
+    for donde, fuerza in ((0.06, 0.5), (0.28, 0.45), (0.96, 0.35)):
+        _poner(x, _golpe(T(0.3), sr, 130.0, 55.0, 40.0, 20.0), donde * d, sr, fuerza)
+    S["incorporarse"] = _norm(x, 0.8)
+
+    # Se frota la cara: raspa al ritmo de la mano (la mano oscila con sin(14 t))
+    r = np.random.RandomState(19)
+    t = T(1.5)
+    trazo = np.abs(np.cos(14.0 * t)) ** 0.7
+    forma = _env(t, ((0, 0), (0.25, 1), (1.1, 1), (1.5, 0)), 1.2)
+    raspa = _ruido(sr, 1.5, r, pasa_altos=2000, pasa_bajos=7000) * (0.4 + 0.6 * trazo)
+    sordo = _ruido(sr, 1.5, r, pasa_altos=300, pasa_bajos=1200) * trazo * 0.3
+    S["frotar"] = _norm((raspa + sordo) * forma, 0.6)
+
+    # Abre los ojos: destello de campanilla
+    r = np.random.RandomState(20)
+    t = T(3.2)
+    x = np.zeros(len(t))
+    for hz, a, caida in ((880.0, 1.0, 1.7), (1318.5, 0.6, 2.4),
+                         (1760.0, 0.35, 3.2), (2637.0, 0.15, 4.5)):
+        x += a * np.sin(2 * np.pi * hz * t) * np.exp(-caida * t) * np.clip(t / 0.006, 0, 1)
+    brillo = _ruido(sr, 3.2, r, pasa_altos=4500, pasa_bajos=9500) * _env(
+        t, ((0, 0), (0.25, 1), (3.2, 0)), 2)
+    S["ojos"] = _norm(x + 0.12 * brillo, 0.6)
+
+    # Amanecer: acorde cálido que crece durante 3,5 s (como el resplandor), se
+    # mantiene un momento y se apaga
+    def acorde(semilla):
+        r = np.random.RandomState(semilla)
+        t = T(6.4)
+        x = np.zeros_like(t)
+        notas = ((146.83, 1.0), (220.0, 0.9), (293.66, 0.8),
+                 (369.99, 0.5), (440.0, 0.5), (659.26, 0.25))
+        for hz, a in notas:
+            hz = hz * (1 + 0.0025 * r.uniform(-1, 1))   # desafinación: da anchura
+            fase = r.uniform(0, 6.28)
+            voz = (np.sin(2 * np.pi * hz * t + fase)
+                   + 0.3 * np.sin(4 * np.pi * hz * t + fase)
+                   + 0.1 * np.sin(6 * np.pi * hz * t + fase))
+            x += a * voz * (0.85 + 0.15 * np.sin(
+                2 * np.pi * r.uniform(0.15, 0.4) * t + r.uniform(0, 6.28)))
+        sube = np.where(t < 4.0, _suave_np(t / 3.5), 1.0 - _suave_np((t - 4.0) / 2.4))
+        return x * sube
+
+    S["alba"] = _norm(np.column_stack((acorde(1), acorde(2))), 0.8)
+    return S
+
+
+def _a_sonido(x, canales, frecuencia, bucle):
+    """Convierte un array float (mono o estéreo) en un pygame.mixer.Sound."""
+    x = np.clip(x, -1.0, 1.0)
+    if not bucle:                      # fundidos de 6 ms: sin clics al empezar/acabar
+        n = int(0.006 * frecuencia)
+        rampa = np.linspace(0.0, 1.0, n)
+        if x.ndim == 2:
+            rampa = rampa[:, None]
+        x = x.copy()
+        x[:n] *= rampa
+        x[-n:] *= rampa[::-1]
+    if canales == 1:
+        x = x.mean(axis=1) if x.ndim == 2 else x
+    elif x.ndim == 1:
+        x = np.column_stack((x, x))
+    datos = np.ascontiguousarray(x * 32767 * 0.92, dtype=np.int16)
+    return pygame.sndarray.make_sound(datos)
+
+
+def _iniciar_mezclador():
+    """Devuelve (frecuencia, canales) del mezclador, iniciándolo si hace falta."""
+    try:
+        if pygame.mixer.get_init() is None:
+            pygame.mixer.init(44100, -16, 2, 512)
+        frecuencia, formato, canales = pygame.mixer.get_init()
+        if formato != -16 or canales not in (1, 2):
+            return None
+        if pygame.mixer.get_num_channels() < 16:
+            pygame.mixer.set_num_channels(16)
+        return frecuencia, canales
+    except pygame.error:
+        return None
+
+
+def _momento(fraccion):
+    """Segundo de la escena en que el despertar llega a esa fracción (0-1)."""
+    return INICIO_DESPERTAR + fraccion * DURACION_DESPERTAR
+
+
+def _primer_cruce_respiracion(desde):
+    """Primer instante >= `desde` en que empieza una inspiración de la silueta.
+
+    La silueta respira con sin(2,4 * t) (ver _silueta); inspira al subir por cero.
+    """
+    return math.ceil(desde * 2.4 / math.tau) * math.tau / 2.4
+
+
+# (segundo, efecto, volumen, balance -1..1): puntos fijos de la línea de tiempo
+_EVENTOS = (
+    (INICIO_DESINTEGRA, "desintegrar", 0.85, 0.0),
+    (INICIO_SILUETA - VIDA_PARTICULA, "materializar", 0.85, 0.0),
+    (_primer_cruce_respiracion(INICIO_SILUETA + 0.5 * DURACION_SILUETA),
+     "respiracion", 0.55, 0.15),
+    (INICIO_DESPERTAR, "latido", 0.95, 0.0),
+    (_momento(0.16), "esfuerzo", 0.60, 0.10),   # primer intento de incorporarse
+    (_momento(0.30), "alba", 0.55, 0.0),        # empieza el resplandor
+    (_momento(0.34), "caida", 0.90, 0.0),       # se deja caer
+    (_momento(0.34), "suspiro", 0.55, 0.10),
+    (_momento(0.46), "incorporarse", 0.70, 0.10),
+    (_momento(0.74), "frotar", 0.50, 0.10),
+    (_momento(0.91), "ojos", 0.50, 0.0),        # abre los ojos
+)
+
+
+def _volumen_ambiente(tiempo):
+    """El zumbido baja cuando el mundo se frena y se apaga con el amanecer."""
+    frenado = _suave((tiempo - FRENADO_INICIO) / FRENADO_DURACION)
+    desde = INICIO_DESPERTAR + 1.0
+    salida = _suave((tiempo - desde) / (DURACION_ANIMACION + 1.0 - desde))
+    return (1.0 - 0.5 * frenado) * (1.0 - salida)
+
+
+class _SonidoFinal:
+    """Dispara los efectos según el tiempo de la escena (se llama en cada cuadro)."""
+
+    def __init__(self):
+        self.estado = None        # None: sin intentar, True: listo, False: no hay sonido
+        self.sonidos = {}
+        self.azar = random.Random(5)
+        self._reiniciar()
+
+    def _reiniciar(self):
+        self.ultimo = None        # último `tiempo` visto
+        self.paso = None          # índice de la última pisada
+        self.jadeo = None         # índice del último jadeo
+        self.canal_ambiente = None
+
+    def _preparar(self):
+        if self.estado is not None:
+            return self.estado
+        self.estado = False
+        info = _iniciar_mezclador()
+        if info is None:
+            return False
+        frecuencia, canales = info
+        try:
+            efectos = _sintetizar(frecuencia)
+            self.sonidos = {
+                nombre: _a_sonido(x, canales, frecuencia, nombre == "ambiente")
+                for nombre, x in efectos.items()
+            }
+        except (pygame.error, ValueError, TypeError):
+            return False          # el sonido nunca debe romper la animación
+        self.estado = True
+        return True
+
+    def _tocar(self, nombre, volumen=1.0, balance=0.0):
+        sonido = self.sonidos.get(nombre)
+        if sonido is None:
+            return
+        sonido.set_volume(max(0.0, min(1.0, volumen * VOLUMEN_SONIDO)))
+        canal = sonido.play()
+        if canal is not None:
+            canal.set_volume(1.0 - max(0.0, balance), 1.0 + min(0.0, balance))
+
+    def detener(self, fundido_ms=0):
+        for sonido in self.sonidos.values():
+            if fundido_ms > 0:
+                sonido.fadeout(fundido_ms)
+            else:
+                sonido.stop()
+        self._reiniciar()
+
+    def actualizar(self, tiempo, t_personaje):
+        if not SONIDO_ACTIVO or np is None or not self._preparar():
+            return
+        if self.ultimo is not None and tiempo < self.ultimo - 0.05:
+            self.detener()        # la animación vuelve a empezar
+        if self.ultimo is None:
+            # Si se entra a mitad de la escena no suena lo que ya pasó
+            previo = -1.0 if tiempo < 0.5 else tiempo
+        else:
+            previo = self.ultimo
+        self.ultimo = tiempo
+
+        for inicio, nombre, volumen, balance in _EVENTOS:
+            if previo < inicio <= tiempo:
+                self._tocar(nombre, volumen, balance)
+
+        fatiga = min(1.0, tiempo / INICIO_DESINTEGRA)
+        vivo = 1.0 - _suave((tiempo - INICIO_DESINTEGRA) / (DURACION_DESINTEGRA + 0.5))
+
+        # Pasos: uno por cada pie que toca el suelo (misma fase que el dibujo), más
+        # lentos y suaves según el mundo se frena y el personaje se apaga
+        if tiempo < INICIO_DESINTEGRA + DURACION_DESINTEGRA:
+            indice = int(_fase_paso(t_personaje) // math.pi)
+            if self.paso is not None and indice > self.paso and vivo > 0.12:
+                variante = self.azar.randrange(3)
+                volumen = 0.95 * (1 - 0.35 * fatiga) * vivo * self.azar.uniform(0.9, 1.1)
+                self._tocar("paso%d" % variante, volumen, 0.2 if indice % 2 else -0.2)
+            self.paso = indice
+
+        # Jadeo: una vez por ciclo, mientras se ve el vaho
+        if tiempo < INICIO_DESINTEGRA:
+            indice = int(t_personaje * 0.7)
+            if self.jadeo is not None and indice > self.jadeo:
+                self._tocar("jadeo", 0.30 + 0.25 * fatiga, 0.1)
+            self.jadeo = indice
+
+        # Zumbido continuo del vacío
+        if tiempo < DURACION_ANIMACION + 1.0:
+            canal = self.canal_ambiente
+            if canal is None or not canal.get_busy():
+                ambiente = self.sonidos["ambiente"]
+                ambiente.set_volume(VOLUMEN_AMBIENTE * VOLUMEN_SONIDO)
+                canal = self.canal_ambiente = ambiente.play(loops=-1, fade_ms=800)
+            if canal is not None:
+                canal.set_volume(_volumen_ambiente(tiempo))
+        elif self.canal_ambiente is not None:
+            self.canal_ambiente.stop()
+            self.canal_ambiente = None
+
+
+_sonido_final = _SonidoFinal()
+
+
+def precargar_sonidos():
+    """Sintetiza los efectos ya (si no, se hace en el primer cuadro de la escena)."""
+    if SONIDO_ACTIVO and np is not None:
+        _sonido_final._preparar()
+
+
+def detener_sonidos(fundido_ms=0):
+    """Corta (o desvanece) los sonidos de la escena, p. ej. al salir de ella."""
+    _sonido_final.detener(fundido_ms)
+
+
+# ----------------------------------------------------------------------
 # Escena completa
 # ----------------------------------------------------------------------
 def dibujar(superficie, personaje, tiempo):
@@ -682,6 +1160,8 @@ def dibujar(superficie, personaje, tiempo):
     t_personaje = math.floor(tiempo_mundo * FPS_PERSONAJE) / FPS_PERSONAJE
     t_cuadro = math.floor(tiempo * FPS_PERSONAJE) / FPS_PERSONAJE
     t_giro = math.floor(tiempo * FPS_GIRO) / FPS_GIRO
+
+    _sonido_final.actualizar(tiempo, t_personaje)
 
     suelo_y = int(alto * 0.74)
     pie_y = suelo_y + int(alto * 0.07)

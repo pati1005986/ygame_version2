@@ -310,7 +310,8 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         fuente_boton = pygame.font.Font(None, tamano_fuente)
         fuente_boton.set_bold(True)
     superficie_texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
-    boton_creditos_menu = pygame.Rect(WIDTH // 2 - 165, HEIGHT - 82, 330, 54)
+    boton_creditos_menu = pygame.Rect(20, 62, 245, 38)
+    fuente_boton_creditos = pygame.font.SysFont("comicsansms", 14, bold=True)
     idioma_advertencia_mostrado = None
     textos_advertencia = None
     escena = pygame.Surface((WIDTH, HEIGHT))
@@ -746,7 +747,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                 menu._texto_centrado(
                     lienzo,
                     texto(configuracion["idioma"], "return_main_menu"),
-                    menu.font_prompt,
+                    fuente_boton_creditos,
                     rect_boton_creditos.center,
                     (255, 255, 255),
                 )

@@ -173,6 +173,9 @@ class TransicionCaricaturesca:
     # de progresión del juego.
     NIVEL_INICIO_TRISTEZA = 10
     NIVEL_TRISTEZA_MAXIMA = 18
+    # A partir de este nivel la cara ya no está triste: está agotada.
+    # Párpados caídos, ojeras, cejas bajas, boca plana y colores opacos.
+    NIVEL_CANSANCIO = 30
 
     def __init__(
         self,
@@ -214,22 +217,33 @@ class TransicionCaricaturesca:
         self._pos_cara = None
         self._ms_previo = 0
 
-        # A medida que sube el nivel, la cara se pone más triste/decaída:
+        # A medida que sube el nivel, la cara se pone más triste/decaída
+        # (y, desde el nivel NIVEL_CANSANCIO, cansada y de color opaco):
         # cejas preocupadas, mirada caída, boca hacia abajo, colores
         # apagados y menos "chispa" en la animación.
         # 0.0 = expresión feliz/sorprendida normal, 1.0 = muy triste.
         self.nivel = nivel
-        if nivel < self.NIVEL_INICIO_TRISTEZA:
+        # Desde el nivel 30 la tristeza desaparece y la reemplaza el
+        # cansancio (0.0 = nada, 1.0 = agotada).
+        if nivel >= self.NIVEL_CANSANCIO:
             self.tristeza = 0.0
+            self.cansancio = 1.0
+        elif nivel < self.NIVEL_INICIO_TRISTEZA:
+            self.tristeza = 0.0
+            self.cansancio = 0.0
         else:
             rango = max(1, self.NIVEL_TRISTEZA_MAXIMA - self.NIVEL_INICIO_TRISTEZA)
             self.tristeza = _limitar((nivel - self.NIVEL_INICIO_TRISTEZA) / rango)
+            self.cansancio = 0.0
+        # Falta de energía en la animación (rebotes, sonido, temblor): la
+        # tristeza y el cansancio comparten el mismo "volumen bajo".
+        self._apatia = max(self.tristeza, self.cansancio * 0.7)
 
         # Un matiz aleatorio distinto en cada transición; toda la cara
         # se deriva de él (solo cambian saturación y brillo, y además se
         # apagan un poco según la tristeza).
         self.tono = random.random()
-        self.paleta = self._generar_paleta(self.tono, self.tristeza)
+        self.paleta = self._generar_paleta(self.tono, self.tristeza, self.cansancio)
 
         # Todo lo aleatorio se decide una sola vez para que no titile de
         # un fotograma a otro.
@@ -250,7 +264,7 @@ class TransicionCaricaturesca:
         self._pos_jugador = pygame.Vector2(posicion_origen)
         self._mirada = pygame.Vector2(0, 0)
 
-        self.sonido_sorpresa = self._crear_sonido_sorpresa(self.tristeza)
+        self.sonido_sorpresa = self._crear_sonido_sorpresa(self._apatia)
         # El reloj arranca al final: crear el sonido y el estallido tarda
         # unos milisegundos y no queremos "comernos" el inicio de la animación.
         self.inicio = pygame.time.get_ticks()
@@ -353,7 +367,7 @@ class TransicionCaricaturesca:
         return tuple(int(a + (b - a) * t) for a, b in zip(color_a[:3], color_b[:3]))
 
     @staticmethod
-    def _generar_paleta(tono, tristeza=0.0):
+    def _generar_paleta(tono, tristeza=0.0, cansancio=0.0):
         """Deriva toda la paleta de un único matiz (hue) para lograr el
         look monocromático: solo varían la saturación y el brillo.
 
@@ -362,15 +376,18 @@ class TransicionCaricaturesca:
         (todo más oscuro/apagado). El rubor de las mejillas además se
         desvanece directamente, porque un personaje decaído no tiene
         las mejillas sonrosadas.
+
+        ``cansancio`` (0 a 1) da un acabado opaco y mate: casi sin
+        saturación y sin los tonos más claros, como un color desteñido.
         """
 
         def color(saturacion, valor, alpha=255):
-            saturacion *= 1.0 - tristeza * 0.6
-            valor *= 1.0 - tristeza * 0.35
+            saturacion *= (1.0 - tristeza * 0.6) * (1.0 - cansancio * 0.72)
+            valor *= (1.0 - tristeza * 0.35) * (1.0 - cansancio * 0.24)
             r, g, b = colorsys.hsv_to_rgb(tono, saturacion, valor)
             return (int(r * 255), int(g * 255), int(b * 255), alpha)
 
-        alpha_rubor = int(175 * (1.0 - tristeza * 0.85))
+        alpha_rubor = int(175 * (1.0 - tristeza * 0.85) * (1.0 - cansancio * 0.9))
         return {
             "tinta": color(0.62, 0.16),        # contorno grueso, casi negro
             "sombra": color(0.55, 0.42, 150),  # sombreado bajo la cara
@@ -415,7 +432,7 @@ class TransicionCaricaturesca:
         * ``iris``: 1 = abierto (nivel visible), 0 = cerrado del todo.
         * ``temblor``: intensidad del temblor de susto (0 a 1).
         """
-        tri = self.tristeza
+        tri = self._apatia
         if ms < self.DURACION_SALIDA:
             u = ms / self.DURACION_SALIDA
             return {
@@ -512,7 +529,7 @@ class TransicionCaricaturesca:
             fraccion, fuerza = self._IMPACTOS[self._impactos_vistos]
             if t < self.T_VUELO + (self.CAMARA_FIN - self.T_VUELO) * fraccion:
                 break
-            self._impactos_pendientes.append(fuerza * (1.0 - self.tristeza * 0.4))
+            self._impactos_pendientes.append(fuerza * (1.0 - self._apatia * 0.4))
             self._impactos_vistos += 1
 
     def recoger_impactos(self):
@@ -590,7 +607,7 @@ class TransicionCaricaturesca:
         if abs(estado["inclinacion"]) > 0.25:
             cara = pygame.transform.rotozoom(cara, estado["inclinacion"], 1.0)
 
-        tri = self.tristeza
+        tri = self._apatia
         # Temblor de susto (pequeño, rápido y que se apaga).
         intensidad = estado["temblor"] * (1.0 - tri * 0.5)
         tx = math.sin(ms * 0.11) * 3.0 * intensidad
@@ -681,7 +698,7 @@ class TransicionCaricaturesca:
         Con tristeza tiene menos puntas: un sobresalto sin alegría.
         """
         paleta = self.paleta
-        puntas = max(6, round(self.NUM_PUNTAS * (1.0 - self.tristeza * 0.45)))
+        puntas = max(6, round(self.NUM_PUNTAS * (1.0 - self._apatia * 0.45)))
         n = puntas * 2
         radios = [random.uniform(0.86, 1.0) if i % 2 == 0 else random.uniform(0.56, 0.68) for i in range(n)]
         giro = random.uniform(0, math.tau)
@@ -704,7 +721,7 @@ class TransicionCaricaturesca:
         return lienzo.reducir((tamano, tamano))
 
     def _dibujar_estallido(self, superficie, centro, estado, ms):
-        tri = self.tristeza
+        tri = self._apatia
         fuerza = self._suave(estado["gesto"] * 1.25)
         if fuerza <= 0.02:
             return
@@ -785,9 +802,9 @@ class TransicionCaricaturesca:
         largos = (0.16, 0.24, 0.14)
         for i, (desplazo, largo) in enumerate(zip(posiciones, largos)):
             bx = c.x + _ANCHO * desplazo
-            aleteo = math.sin(ms * 0.028 + i * 1.9) * _ANCHO * 0.022
+            aleteo = math.sin(ms * 0.028 + i * 1.9) * _ANCHO * 0.022 * (1.0 - self.cansancio * 0.7)
             punta_x = bx + _ANCHO * desplazo * 0.45 + aleteo
-            punta_y = base_y - _ALTO * largo * (1.0 - 0.25 * abs(arrastre)) + arrastre * _ALTO * 0.10
+            punta_y = base_y - _ALTO * largo * (1.0 - 0.25 * abs(arrastre)) * (1.0 - self.cansancio * 0.4) + arrastre * _ALTO * 0.10
             curva = _ANCHO * 0.035 * (1 if i % 2 == 0 else -1)
             control = (bx + (punta_x - bx) * 0.2 + curva, base_y + (punta_y - base_y) * 0.55)
             puntos = self._bezier_cuadratica((bx, base_y), control, (punta_x, punta_y), pasos=9)
@@ -796,7 +813,7 @@ class TransicionCaricaturesca:
     def _dibujar_mejillas(self, lienzo, c, paleta, tri):
         # Rubor opaco mezclado con la piel (con ``draw`` sobre SRCALPHA un
         # color con alfa dejaría un agujero transparente en la cara).
-        intensidad = 0.6 * (1.0 - tri * 0.85)
+        intensidad = 0.6 * (1.0 - tri * 0.85) * (1.0 - self.cansancio)
         if intensidad <= 0.03:
             return
         color = self._mezclar_color(paleta["piel"], paleta["rubor"], intensidad)
@@ -809,9 +826,11 @@ class TransicionCaricaturesca:
         # Maddocks. Con tristeza, el arco se invierte hacia la clásica
         # ceja de preocupación: la punta interior sube y la exterior baja.
         separacion = _ANCHO * 0.26
-        y = c.y - _ALTO * 0.31 - gesto * _ALTO * 0.11
+        can = self.cansancio
+        # Cansada: cejas bajas y casi planas (sin la preocupación de la tristeza).
+        y = c.y - _ALTO * 0.31 - gesto * _ALTO * 0.11 + can * _ALTO * 0.06 * (1.0 - gesto)
         largo = _ANCHO * 0.24
-        arco = largo * (0.45 + gesto * 0.35) * (1.0 - tri * 0.55)
+        arco = largo * (0.45 + gesto * 0.35) * (1.0 - tri * 0.55 - can * 0.75 * (1.0 - gesto))
         inclinacion_triste = tri * largo * 0.30
         for lado in (-1, 1):
             # Ligera asimetría para que no se vea calcado.
@@ -864,24 +883,40 @@ class TransicionCaricaturesca:
         # párpado caído de la tristeza es una cuerda inclinada.
         cierre = self._parpadeo(ms)
         abierto = 1.0 - 0.94 * cierre
-        y = c.y - _ALTO * 0.16 + tri * _ALTO * 0.03
+        can = self.cansancio
+        desanimo = max(tri, can)
+        y = c.y - _ALTO * 0.16 + desanimo * _ALTO * 0.03
         separacion = _ANCHO * 0.25
         radio_base = _ANCHO * 0.165 * (1.0 + 0.14 * gesto)
         borde = max(3.0, grosor * 0.45)
         # Un sobresalto se ve igual sea cual sea el humor: el párpado solo
         # actúa cuando ya no hay susto.
-        parpado = 0.42 * tri * (1.0 - gesto)
+        parpado = (0.42 * tri + 0.50 * can) * (1.0 - gesto)
+        # Cansada: el blanco del ojo también se ve opaco, no puro.
+        blanco = self._mezclar_color((255, 255, 255), paleta["piel"], 0.40 * can)
+        color_ojera = self._mezclar_color(paleta["piel"], paleta["tinta"], 0.32 * can)
 
         for lado in (-1, 1):
             x = c.x + lado * separacion
             radio = radio_base * (0.92 if lado < 0 else 1.0)
             lienzo.elipse(paleta["tinta"], (x, y), (radio + borde) * 2, (radio + borde) * 2 * abierto)
-            lienzo.elipse((255, 255, 255), (x, y), radio * 2, radio * 2 * abierto)
+            lienzo.elipse(blanco, (x, y), radio * 2, radio * 2 * abierto)
+            if can > 0.03:
+                # Ojeras: dos pinceladas curvas bajo cada ojo.
+                for k, (caida, anchura) in enumerate(((1.34, 0.95), (1.62, 0.70))):
+                    arco_ojera = self._bezier_cuadratica(
+                        (x - radio * anchura, y + radio * (caida - 0.12)),
+                        (x, y + radio * (caida + 0.38)),
+                        (x + radio * anchura, y + radio * (caida - 0.12)),
+                        pasos=8,
+                    )
+                    g = max(2.0, grosor * (0.62 - 0.22 * k) * can)
+                    lienzo.trazo(color_ojera, arco_ojera, g * 0.6, g * 0.6, panza=0.5)
             if cierre >= 0.85:
                 continue
 
             radio_pupila = radio * (0.34 + 0.24 * (1.0 - gesto))
-            desplazo = pygame.Vector2(self._mirada.x, self._mirada.y + tri * 0.9)
+            desplazo = pygame.Vector2(self._mirada.x, self._mirada.y + tri * 0.9 + can * 0.6)
             largo = desplazo.length()
             maximo = (radio - radio_pupila) * 0.85
             if largo > 1.0:
@@ -895,9 +930,9 @@ class TransicionCaricaturesca:
             if abierto > 0.6:
                 # Brillos: se achican con la tristeza (ojo apagado).
                 brillo = (pupila[0] - radio * 0.22, pupila[1] - radio * 0.24)
-                lienzo.circulo(paleta["brillo"], brillo, max(2.0, radio * (0.24 - tri * 0.14)))
+                lienzo.circulo(paleta["brillo"], brillo, max(2.0, radio * (0.24 - desanimo * 0.14)))
                 brillo_chico = (pupila[0] + radio * 0.28, pupila[1] + radio * 0.20)
-                lienzo.circulo(paleta["brillo"], brillo_chico, max(1.5, radio * (0.10 - tri * 0.06)))
+                lienzo.circulo(paleta["brillo"], brillo_chico, max(1.5, radio * (0.10 - desanimo * 0.06)))
 
             if parpado > 0.02:
                 y0 = y - radio + 2 * radio * parpado
@@ -980,8 +1015,10 @@ class TransicionCaricaturesca:
         tinta, lengua, brillo = paleta["tinta"], paleta["lengua"], paleta["brillo"]
         apertura = _limitar(gesto)
         factor_sonrisa = 1.0 - apertura
-        factor_alegre = factor_sonrisa * (1.0 - tri)
+        can = self.cansancio
+        factor_alegre = factor_sonrisa * (1.0 - tri) * (1.0 - can)
         factor_triste = factor_sonrisa * tri
+        factor_cansada = factor_sonrisa * can
         x = c.x
         y = c.y + _ALTO * (0.27 + apertura * 0.05)
 
@@ -1054,6 +1091,16 @@ class TransicionCaricaturesca:
                     )
                     lienzo.trazo(tinta, puntos, grosor_h, grosor_h * 0.5)
 
+        if factor_cansada > 0.03:
+            # Cansada: una línea corta y casi plana, con las comisuras
+            # apenas caídas. Sin sonrisa, sin puchero.
+            mitad = _ANCHO * 0.13 * min(1.0, factor_cansada * 1.4)
+            puntos = self._bezier_cuadratica(
+                (x - mitad, y + 4.0), (x, y - 1.0), (x + mitad, y + 4.0), pasos=8
+            )
+            grosor_linea = max(2.5, grosor * 0.75 * min(1.0, factor_cansada * 1.4))
+            lienzo.trazo(tinta, puntos, grosor_linea, grosor_linea * 0.8, panza=0.3)
+
         if factor_triste > 0.03:
             # Comisuras hacia abajo: el clásico puchero, con la misma
             # técnica de curva Bézier que las cejas.
@@ -1096,7 +1143,7 @@ class TransicionCaricaturesca:
             vida = t / 0.75
             if vida >= 1.0:
                 continue
-            radio = 8.0 * tamano * min(1.0, t * 9.0) * (1.0 - self._suave((vida - 0.6) / 0.4)) * (1.0 - tri * 0.9)
+            radio = 8.0 * tamano * min(1.0, t * 9.0) * (1.0 - self._suave((vida - 0.6) / 0.4)) * (1.0 - max(tri, self.cansancio) * 0.9)
             if radio < 0.8:
                 continue
             x = c.x + lado * (_ANCHO * 0.40 + vx * t)

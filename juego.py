@@ -362,7 +362,17 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     estado = ESTADO_ADVERTENCIA
     transicion = None
     despertar_mostrado = False
-    menu = MenuInicio(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
+    menu = MenuInicio(
+        WIDTH,
+        HEIGHT,
+        nombre_video=(
+            "image29.gif"
+            if configuracion.get("juego_completado")
+            else "image.gif"
+        ),
+        idioma=configuracion["idioma"],
+        escala_ui=configuracion["escala_ui"],
+    )
     pausa = MenuPausa(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
     estado_despues_opciones = ESTADO_MENU
@@ -641,6 +651,8 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
         if estado_antes_eventos == ESTADO_CREDITOS and estado == ESTADO_MENU:
             eventos_visuales.final_juego_activo = False
+            # Tras completar el juego, el menú muestra la imagen de victoria.
+            menu.establecer_video("image29.gif")
             nivel = 1
             plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
             jugador = PersonajeHumanoide(
@@ -672,6 +684,11 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             eventos_visuales.iniciar_final_juego(pygame.time.get_ticks())
             estado = ESTADO_CREDITOS
             nivel = 40
+            # El jugador llegó al nivel final: el juego queda completado y el
+            # menú principal pasará a mostrar la imagen de victoria.
+            if not configuracion.get("juego_completado"):
+                configuracion["juego_completado"] = True
+                guardar_configuracion(configuracion)
 
         eventos_visuales.actualizar_flashbacks_especiales(tiempo)
 

@@ -649,6 +649,7 @@ def normalizar_configuracion(configuracion):
         "volumen_musica": 0.8,
         "volumen_efectos": 0.8,
         "escala_ui": 1.0,
+        "juego_completado": False,
         "controles": MenuOpciones.DEFAULTS["controles"].copy(),
     }
     if not isinstance(configuracion, dict):

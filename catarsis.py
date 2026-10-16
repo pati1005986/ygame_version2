@@ -15,6 +15,10 @@ El personaje está hecho en PIXEL ART: se dibuja en un lienzo pequeño con forma
 rectas y esquinas cortadas a 45° (sin curvas) y se amplía sin suavizar. Pierde
 detalle a propósito. Cambia PX para hacer los píxeles más grandes o más pequeños.
 
+El personaje tiene sombreado tramado (luz arriba a la derecha), reflejos en el pelo, iris
+y brillos en los ojos, rubor, parpadeo, sobresalto al cabecear, lágrima y bocanada al
+suspirar, y al dormirse: moco que se infla, baba y "zZz".
+
 Además lleva grano de película animado, polvo y rayones, una capa de pixelado y
 un tramado (dither) de sombras y luces.
 
@@ -619,13 +623,24 @@ LW, LH = W // PX, H // PX                  # 160 x 225
 CLAVE = (255, 0, 255)                      # color transparente del sprite
 
 P_PIEL = (250, 246, 242)
+P_PIEL_M = (234, 228, 232)                 # tono medio de la piel (transición del tramado)
 P_PIEL_S = (212, 206, 216)                 # sombra de la piel
 P_OJERA = (118, 126, 178)                  # ojeras azuladas
 P_SUDOR = (190, 224, 255)
+P_LAGRIMA = (126, 178, 238)                # lágrima (más oscura que el sudor para que se lea sobre la piel)
 P_SUETER = (168, 168, 174)
+P_SUETER_L = (198, 198, 206)               # brillo del punto del suéter
 P_SUETER_S = (112, 112, 122)
 P_SUETER_O = (84, 84, 96)
 P_BATA = (240, 238, 234)
+P_BATA_S = (206, 204, 214)                 # arrugas y sombra de la bata
+P_PELO_L = (62, 68, 104)                   # reflejo azulado del pelo
+P_IRIS = (92, 108, 176)
+P_IRIS_L = (150, 168, 224)
+P_RUBOR = (244, 190, 198)
+P_BURBUJA = (226, 240, 255)
+P_VAHO = (240, 247, 255)
+P_VAHO_O = (150, 184, 224)
 BLANCO = (255, 255, 255)
 
 
@@ -668,11 +683,78 @@ def silueta(s, filas, cx, y0, relleno, borde=INK):
             rr(s, relleno, cx - w, y0 + i, 2 * w + 1, 1)
 
 
+def interior(filas, i):
+    """Semi-ancho del relleno de la fila i (dentro del contorno de 1 píxel); -1 si no hay."""
+    if i <= 0 or i >= len(filas) - 1:
+        return -1
+    return min(filas[i] - 1, filas[i - 1], filas[i + 1])
+
+
 def gota(s, x, y):
     """Gota de sudor."""
     for i, w in enumerate((0, 1, 1, 2, 2, 2, 1)):
         rr(s, P_SUDOR, x - w, y + i, 2 * w + 1, 1)
     rr(s, BLANCO, x - 1, y + 3, 1, 2)
+
+
+def lagrima(s, x, y, largo):
+    """Hilo de lágrima que resbala por la mejilla y acaba en una gota."""
+    for j in range(largo):
+        rr(s, P_LAGRIMA, x, y + j, 2, 1)
+    rr(s, P_LAGRIMA, x - 1, y + largo, 4, 2)
+    rr(s, P_LAGRIMA, x, y + largo + 2, 2, 1)
+    rr(s, BLANCO, x, y + largo, 1, 1)
+
+
+def burbuja_sueno(s, x, y, r):
+    """Burbuja de moco: crece al inhalar y se encoge al exhalar."""
+    if r < 2:
+        return
+    pygame.draw.circle(s, INK, (int(x), int(y)), int(r))
+    pygame.draw.circle(s, P_BURBUJA, (int(x), int(y)), int(r) - 1)
+    rr(s, BLANCO, x - r // 2, y - r // 2, 2, 1)
+    rr(s, BLANCO, x - r // 2, y - r // 2, 1, 2)
+
+
+def nube(s, bolas):
+    """Bocanada de aire del suspiro: bolas unidas en una sola nube con contorno."""
+    for x, y, r in bolas:
+        pygame.draw.circle(s, P_VAHO_O, (int(x), int(y)), int(r) + 1)
+    for x, y, r in bolas:
+        pygame.draw.circle(s, P_VAHO, (int(x), int(y)), int(r))
+    for x, y, r in bolas[:2]:
+        rr(s, BLANCO, x - r // 2, y - r // 2, 1, 1)
+
+
+def sombrear_cabeza(s, filas, hx, y0, hy):
+    """Sombra tramada: la luz viene de arriba a la derecha, así que el lado izquierdo,
+    la mandíbula y la zona bajo el flequillo quedan en sombra."""
+    n = len(filas)
+    for i in range(n):
+        w = interior(filas, i)
+        if w < 6:
+            continue
+        y = y0 + i
+        s.set_at((hx - w, y), P_PIEL_S)                             # borde izquierdo sólido
+        for k in (1, 2):                                            # y dos columnas de tramado
+            x = hx - w + k
+            chk = (x + y) & 1
+            if k == 1:
+                s.set_at((x, y), P_PIEL_S if chk else P_PIEL_M)
+            elif chk:
+                s.set_at((x, y), P_PIEL_M)
+        if i >= n - 8:                                              # sombra de la mandíbula
+            for x in range(hx - w, hx + w + 1):
+                if (x + y) & 1 and (i >= n - 4 or x < hx):
+                    s.set_at((x, y), P_PIEL_M if i < n - 4 else P_PIEL_S)
+    for x in range(hx - 31, hx + 32):                               # sombra que proyecta el flequillo
+        yy = hy - 35
+        chk = (x + yy) & 1
+        s.set_at((x, yy), P_PIEL_S if chk else P_PIEL_M)
+        if chk:
+            s.set_at((x, yy + 1), P_PIEL_S)
+        elif x & 1:
+            s.set_at((x, yy + 2), P_PIEL_M)
 
 
 class Personaje:
@@ -685,6 +767,9 @@ class Personaje:
         self.destino = [0.0, 0.0]
         self.t_mirada = 0.0
         self.spr = None
+        self.parp = 0.0                                             # progreso del parpadeo actual
+        self.t_parp = 2.0                                           # tiempo hasta el siguiente
+        self.zzz = 0.0                                              # cuánto se ve el sueño (suavizado)
 
     @staticmethod
     def cabeceo(t, cans):
@@ -694,12 +779,26 @@ class Personaje:
         ph = (t - 12.0) % 7.0
         return cans * smooth(0.4, 3.2, ph) * (1.0 - smooth(3.2, 3.45, ph))
 
+    @staticmethod
+    def sobresalto(t, cans):
+        """0 -> 1 -> 0: al levantar la cabeza de golpe abre los ojos de par en par."""
+        if cans < 0.5:
+            return 0.0
+        ph = (t - 12.0) % 7.0
+        return cans * smooth(3.15, 3.3, ph) * (1.0 - smooth(3.4, 4.3, ph))
+
     # ---- cuerpo, bata y suéter
     def cuerpo(self, s, cx, top):
         for lado in (-1, 1):                                        # solapas de la bata
             pts = [(cx + lado * 24, top - 5), (cx + lado * 60, top + 10),
                    (cx + lado * 82, LH + 2), (cx + lado * 30, LH + 2)]
             pygame.draw.polygon(s, P_BATA, pts)
+            # sombra que proyecta el suéter sobre la bata
+            pygame.draw.line(s, P_BATA_S, (cx + lado * 29, top - 4), (cx + lado * 37, LH + 2), 3)
+            # arrugas de la tela
+            for a, b in (((58, 26), (52, 31)), ((66, 40), (59, 45)), ((46, 46), (43, 51))):
+                pygame.draw.line(s, P_BATA_S, (cx + lado * a[0], top + a[1]),
+                                 (cx + lado * b[0], top + b[1]), 1)
             pygame.draw.polygon(s, INK, pts, 1)
             pygame.draw.line(s, INK, (cx + lado * 42, top + 8), (cx + lado * 50, top + 34), 1)
         pts = [(cx - 26, top - 5), (cx + 26, top - 5), (cx + 34, LH + 2), (cx - 34, LH + 2)]
@@ -707,10 +806,15 @@ class Personaje:
         for y in range(top + 3, LH, 4):                             # rayas del suéter
             w = 25 + (y - top) // 10
             rr(s, P_SUETER_S, cx - w, y, 2 * w + 1, 1)
+        for y in range(top + 1, LH, 4):                             # brillo del punto (lado de la luz)
+            w = 25 + (y - top) // 10
+            rr(s, P_SUETER_L, cx + w - 8, y, 7, 1)
         for y in range(top - 4, LH):                                # sombra tramada a la izquierda
             for x in range(cx - 25 - (y - top) // 10, cx - 8):
                 if (x + y) & 1:
                     s.set_at((x, y), P_SUETER_O)
+        for dx, dy, l in ((-16, 30, 9), (-9, 46, 7), (14, 24, 7), (18, 44, 6)):   # pliegues
+            pygame.draw.line(s, P_SUETER_O, (cx + dx, top + dy), (cx + dx + 3, top + dy + l), 1)
         pygame.draw.polygon(s, INK, pts, 1)
 
     def cuello(self, s, cx, hx, top, barbilla):
@@ -726,6 +830,7 @@ class Personaje:
                     col = P_PIEL_S if (x + i) & 1 else P_PIEL
                 s.set_at((x, barbilla + i), col)
         silueta(s, octogono(21, 12, 3), cx, top - 12, P_SUETER_S)   # cuello del suéter
+        rr(s, P_SUETER, cx + 4, top - 11, 14, 1)                    # brillo del cuello
         for x in range(cx - 18, cx + 19, 4):
             rr(s, INK, x, top - 10, 1, 8)
 
@@ -744,18 +849,33 @@ class Personaje:
             ang = a + ao + ruido(idx + 99, tb) * 0.12 * pan + math.sin(t * 1.3 + ph) * 0.03
             L = L0 * (k + 0.05 * math.sin(t * 2.0 + ph)) + ruido(idx, tb) * 2.5 * pan
             nx, ny = -math.sin(ang), math.cos(ang)
-            tri(s, INK, (bx + nx * wd, by + ny * wd),
-                (bx + math.cos(ang) * L, by + math.sin(ang) * L),
-                (bx - nx * wd, by - ny * wd))
+            ca, sa = math.cos(ang), math.sin(ang)
+            tri(s, INK, (bx + nx * wd, by + ny * wd), (bx + ca * L, by + sa * L), (bx - nx * wd, by - ny * wd))
+            if a > math.pi * 1.45 and L > 7:                        # reflejo en los pinchos del lado de la luz
+                pygame.draw.line(s, P_PELO_L,
+                                 (int(bx + nx * wd * 0.4 + ca * L * 0.25), int(by + ny * wd * 0.4 + sa * L * 0.25)),
+                                 (int(bx + nx * wd * 0.1 + ca * L * 0.72), int(by + ny * wd * 0.1 + sa * L * 0.72)), 1)
+        # brillo del pelo: tres trazos escalonados arriba a la derecha
+        rr(s, P_PELO_L, hx + 4, hy - 53, 12, 1)
+        rr(s, P_PELO_L, hx + 11, hy - 52, 11, 1)
+        rr(s, P_PELO_L, hx + 17, hy - 51, 9, 1)
+        rr(s, P_PELO_L, hx - 24, hy - 52, 7, 1)
+        rr(s, P_PELO_L, hx - 20, hy - 51, 4, 1)
 
     def flequillo_dibujar(self, s, hx, hy, t, pan):
         y0 = hy - 36
         rr(s, INK, hx - 41, hy - 48, 83, y0 - (hy - 48) + 1)
+        rr(s, P_PELO_L, hx + 2, hy - 46, 20, 1)                     # brillo en la raíz del flequillo
+        rr(s, P_PELO_L, hx + 9, hy - 45, 12, 1)
         tb = int(t * 12)
         for i, L in enumerate(self.flequillo):
             x = hx - 41 + i * 9
             L += int(round(ruido(i, tb) * 1.2 * pan))
-            tri(s, INK, (x, y0), (x + 9, y0), (x + 4 + (i % 3 - 1), y0 + L))
+            bal = int(round(math.sin(t * 1.4 + i * 0.8) * (1.0 - pan) * 0.9))   # mecha que se mece en calma
+            des = (i % 3 - 1) + bal
+            tri(s, INK, (x, y0), (x + 9, y0), (x + 4 + des, y0 + L))
+            if L >= 6:
+                pygame.draw.line(s, P_PELO_L, (x + 3, y0 + 1), (x + 3 + des, y0 + L - 3), 1)
 
     # ---- boca
     def boca(self, s, hx, my, w, h, esq):
@@ -763,24 +883,37 @@ class Personaje:
             rr(s, INK, hx - w // 2, my, w, 2)
             rr(s, INK, hx - w // 2, my + 2, 2, esq)
             rr(s, INK, hx + w // 2 - 2, my + 2, 2, esq)
+            rr(s, P_PIEL_S, hx - w // 4, my + 4 + esq, w // 2, 1)  # sombra del labio inferior
             return
         silueta(s, octogono(w // 2, h, min(4, h // 3)), hx, my, INK)
         if h >= 8:
             rr(s, BLANCO, hx - w // 2 + 3, my + 1, w - 5, 2)        # dientes
         if h >= 11:
             rr(s, ROSA, hx - w // 4, my + h - 5, w // 2, 3)         # lengua
+            rr(s, (200, 92, 112), hx - w // 4, my + h - 3, w // 2, 1)
 
-    # ---- ojo grande (octógono): párpado que baja, pupila cuadrada, ojera
-    def ojo(self, s, ex, ey, op, lx, ly, pw, bolsa):
+    # ---- ojo grande (octógono): párpado que baja, iris, pupila cuadrada, ojera
+    def ojo(self, s, ex, ey, op, lx, ly, pw, bolsa, lado=1, pan=0.0, iris=False):
         hw, alto = 12, 25
         y0 = ey - alto // 2
         filas = octogono(hw, alto, 5)
         silueta(s, filas, ex, y0, BLANCO)
+        if pan > 0.45:                                              # venitas rojas del ojo desorbitado
+            for (ax, ay), (bx, by) in (((10, 0), (6, -2)), ((10, 2), (7, 3)), ((9, -5), (6, -5)), ((9, 6), (6, 6))):
+                pygame.draw.line(s, ROSA, (ex + lado * ax, ey + ay), (ex + lado * bx, ey + by), 1)
         if op > 0.06:
+            iw = pw + 4 if iris else pw
+            if iris:
+                ix, iy = ex + lx - iw // 2, ey + ly - iw // 2
+                rr(s, P_IRIS, ix + 1, iy, iw - 2, iw)
+                rr(s, P_IRIS, ix, iy + 1, iw, iw - 2)
+                rr(s, P_IRIS_L, ix + 2, iy + iw - 2, iw - 4, 1)     # reflejo inferior del iris
             px, py = ex + lx - pw // 2, ey + ly - pw // 2
             rr(s, INK, px, py, pw, pw)
             if pw >= 5:
                 rr(s, BLANCO, px + 1, py + 1, 1, 1)
+            if pw >= 6:
+                rr(s, BLANCO, px + pw - 2, py + pw - 2, 1, 1)       # segundo brillo
         cubre = int(round((1 - op) * 15))                           # filas tapadas por el párpado
         if cubre > 0:
             for i in range(1, cubre):
@@ -794,6 +927,7 @@ class Personaje:
             rr(s, INK, ex - filas[cubre], yl, 2 * filas[cubre] + 1, 1)
             if op < 0.75:                                           # párpado pesado: línea doble
                 rr(s, INK, ex - filas[cubre + 1] + 1, yl + 1, 2 * filas[cubre + 1] - 1, 1)
+                rr(s, P_PIEL_S, ex - filas[cubre + 1] + 2, yl + 2, 2 * filas[cubre + 1] - 3, 1)   # sombra del párpado
             if op < 0.08:
                 for dx in (-8, 0, 8):
                     rr(s, INK, ex + dx, yl + 2, 1, 2)
@@ -811,23 +945,37 @@ class Personaje:
         s = self.spr
         s.fill(CLAVE)
         pan, cans, sus = e.panico, e.cansancio, e.suspiro
+        relax = cans * (1.0 - pan)                                  # cuánto está cansado Y en calma
         tb = int(t * 14)                                            # el temblor avanza a saltos
         nod = self.cabeceo(t, cans)
+        sob = self.sobresalto(t, cans)
+
+        # parpadeo: rápido y nervioso en pánico, lento y espaciado en calma
+        self.t_parp -= dt
+        if self.t_parp <= 0:
+            self.parp = 0.16
+            self.t_parp = lerp(random.uniform(2.2, 5.0), random.uniform(0.5, 1.4), pan)
+        blink = 0.0
+        if self.parp > 0:
+            self.parp = max(0.0, self.parp - dt)
+            blink = math.sin(math.pi * (1.0 - self.parp / 0.16)) * lerp(1.0, 0.55, pan)
 
         # respiración: corta y rápida en pánico, lenta y profunda en calma
         resp = int(round(math.sin(t * lerp(2.2, 11.0, pan)) * (1.0 + cans)))
         sx = int(round(ruido(1, tb) * 2.4 * pan))
         sy = int(round(ruido(2, tb) * 1.8 * pan))
         golpe = int(mundo.pulso * pan * 2)
+        bal = int(round(math.sin(t * 0.6) * 1.2 * cans * (1.0 - nod)))   # se balancea cansado
 
         cx = LW // 2
         top = 175 - int(5 * pan) + resp + int(4 * cans) + int(3 * sus)    # hombros: tensos -> caídos
-        hx = cx + sx + int(2 * cans)
-        hy = 117 + sy - int(3 * pan) - golpe + int(5 * cans) + int(2 * sus) + int(7 * nod) + resp // 2
+        hx = cx + sx + int(2 * cans) + bal
+        hy = (117 + sy - int(3 * pan) - golpe + int(5 * cans) + int(2 * sus)
+              + int(7 * nod) + resp // 2 - int(2 * sob))
 
-        # boca: grito en pánico, exhalación al soltar, línea caída cuando está cansado
+        # boca: grito en pánico, exhalación al soltar, línea caída (y floja al dormirse)
         grito = pan * (0.55 + 0.45 * abs(math.sin(t * 8.5 + 0.7 * math.sin(t * 3.1))))
-        o = max(grito, sus * 0.30)
+        o = max(grito, sus * 0.30, nod * 0.16)
         jaw = int(round(o * 10))
         mh = int(round(o * 22))
         mw = int(round(lerp(14, 32, pan)))
@@ -839,14 +987,20 @@ class Personaje:
             ox = hx + lado * 40
             silueta(s, octogono(4, 15, 2), ox, hy - 2, P_PIEL)
             rr(s, P_PIEL_S, ox - 1, hy + 2, 3, 6)
-        silueta(s, filas_cabeza(37, 42, 42 + jaw), hx, hy - 42, P_PIEL)
+            rr(s, P_PIEL_S, ox - 2, hy + 10, 5, 2)                  # lóbulo en sombra
+        filas = filas_cabeza(37, 42, 42 + jaw)
+        silueta(s, filas, hx, hy - 42, P_PIEL)
+        sombrear_cabeza(s, filas, hx, hy - 42, hy)
 
-        # arrugas de las mejillas y nariz
+
+        # arrugas de las mejillas y nariz (con su sombra)
         for lado in (-1, 1):
             for k in range(2):
                 rr(s, INK, hx + lado * (20 + k * 5), hy + 14 + k * 2, 1, 9)
+        rr(s, P_PIEL_S, hx + 1, hy + 7, 1, 6)
         rr(s, INK, hx + 2, hy + 6, 1, 8)
         rr(s, INK, hx, hy + 13, 3, 1)
+        rr(s, P_PIEL_S, hx - 2, hy + 14, 7, 1)
 
         # ---- mirada: saltona en pánico, lenta y hacia abajo cuando está cansado
         self.t_mirada -= dt
@@ -859,39 +1013,70 @@ class Personaje:
         self.mirada[0] += (self.destino[0] - self.mirada[0]) * k
         self.mirada[1] += (self.destino[1] - self.mirada[1]) * k
         pw = int(round(lerp(6, 3, pan)))                            # pupila diminuta en pánico
-        mx = 12 - pw // 2 - 4
+        iris = pan < 0.5                                            # con calma se ve el iris azul
+        iw = pw + 4 if iris else pw
+        mx = max(1, 11 - iw // 2 - 2)
         lx = int(max(-mx, min(mx, self.mirada[0])))
         ly = int(max(-mx, min(mx, self.mirada[1])))
 
-        # ---- párpados: desorbitados -> pesados, se cierran al suspirar y al cabecear
+        # ---- párpados: desorbitados -> pesados, se cierran al suspirar, parpadear y cabecear
         op = lerp(1.0, 0.5 - 0.1 * math.sin(t * 0.9), cans)
         op *= 1.0 - 0.9 * nod
+        op = op + (1.0 - op) * 0.85 * sob                           # sobresalto al despertar de golpe
         op *= 1.0 - 0.97 * sus
+        op *= 1.0 - blink
         for lado in (-1, 1):
-            self.ojo(s, hx + lado * 17, hy - 4, clamp01(op), lx, ly, pw, cans)
+            self.ojo(s, hx + lado * 17, hy - 4, clamp01(op), lx, ly, pw, cans, lado, pan, iris)
 
         self.flequillo_dibujar(s, hx, hy, t, pan)
 
-        # ---- cejas: arqueadas de angustia -> bajas y planas
+        # ---- cejas: arqueadas de angustia -> bajas y planas (y se disparan con el sobresalto)
         by = hy - 21 - int(5 * pan) + int(3 * cans)
         for lado in (-1, 1):
-            yi = by - int(8 * pan) - int(cans)
-            yo = by + int(pan) + int(2 * cans)
-            pygame.draw.line(s, INK, (hx + lado * 6, yi), (hx + lado * 30, yo), 3)
+            tw = int(round(ruido(3 + lado, tb) * 1.2 * pan))        # tic nervioso de la ceja
+            yi = by - int(8 * pan) - int(cans) - int(4 * sob) + tw
+            yo = by + int(pan) + int(2 * cans) - int(2 * sob)
+            xi, xo = hx + lado * 6, hx + lado * 30
+            xm, ym = int(xi * 0.6 + xo * 0.4), int(yi * 0.6 + yo * 0.4)
+            pygame.draw.line(s, INK, (xi, yi), (xm, ym), 3)         # grueso por dentro, fino por fuera
+            pygame.draw.line(s, INK, (xm, ym), (xo, yo), 2)
 
         self.boca(s, hx, hy + 20, mw, mh, 1 + int(2 * cans))
 
-        # ---- sudor y marcas de temblor (solo en pánico)
+        # ---- sudor, lágrimas y marcas de temblor (solo en pánico)
         if pan > 0.25:
             for lado in (-1, 1):
                 for i in range(3):
                     p = (t * 0.9 + i * 0.34 + (0.17 if lado > 0 else 0.0)) % 1.0
                     gota(s, hx + lado * (46 + 6 * i), hy - 32 + int(p * 52))
+        if pan > 0.6:                                               # lloro de angustia
+            for lado in (-1, 1):
+                for j in range(2):
+                    p = (t * 1.3 + j * 0.5 + (0.25 if lado > 0 else 0.0)) % 1.0
+                    lagrima(s, hx + lado * 29, hy + 6 + int(p * 34), 3)
         if pan > 0.3 and tb % 2 == 0:
             for lado in (-1, 1):
                 for j in range(3):
                     rr(s, P_BATA, hx + lado * (70 + 4 * j), hy - 12 + 5 * j, 1, 9)
 
+        # ---- el alivio: una lágrima que resbala despacio y una bocanada de aire
+        u = (t - 7.6) / 3.8
+        if 0.0 < u < 1.0 and sus > 0.02:
+            lagrima(s, hx - 30, hy + 8 + int(u * 26), 4)
+        u = (t - 7.7) / 2.8
+        if 0.0 < u < 1.0:
+            bolas = []
+            for i in range(5):                                      # sale de la boca y crece hacia delante
+                pu = clamp01(u * 1.4 - i * 0.1)
+                if pu <= 0.0:
+                    continue
+                r = max(2, 2 + int(pu * 4) - (2 if pu > 0.85 else 0))
+                bolas.append((hx + (i - 2) * int(4 + pu * 5), hy + 28 + int(pu * 13) + (i % 2) * 2, r))
+            if bolas:
+                nube(s, bolas)
+
+        # ---- se duerme: moco que se infla, baba y zZz
+       
         # ampliación sin suavizar: cada píxel del sprite pasa a ser PX x PX
         grande = pygame.transform.scale(s, (W, H))
         grande.set_colorkey(CLAVE)

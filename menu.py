@@ -113,6 +113,19 @@ class MenuInicio:
         self._crear_fuentes()
         self._crear_rectangulos()
 
+    def establecer_video(self, nombre_video):
+        """Cambia el video de fondo del menú (por ejemplo, cuando el jugador
+        ya completó el juego y corresponde mostrar la imagen final)."""
+        ruta = os.path.join("assets", nombre_video)
+        if ruta == self.ruta_video:
+            return
+        self.ruta_video = ruta
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+        self.frame_actual = None
+        self._cargar_video()
+
     def actualizar_tamano(self, ancho, alto):
         self.ancho = ancho
         self.alto = alto

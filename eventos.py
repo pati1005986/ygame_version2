@@ -569,12 +569,15 @@ class EventosVisuales:
             idioma,
         )
 
-    def iniciar_game_over(self, nivel, inicio, seleccionar_por_nivel=True):
+    def iniciar_game_over(
+        self, nivel, inicio, seleccionar_por_nivel=True, volumen_efectos=0.7
+    ):
         self.indice_imagen_game_over = 0
         self.inicio_game_over = inicio
         self.game_over_nivel_alto_activo = nivel >= 20
         self.secuencia_game_over_final_activa = 30 <= nivel <= 40
         self.indice_secuencia_game_over = None
+        sonido_gritos = self.animacion_despertar.sonido
         if self.game_over_nivel_alto_activo:
             self.gif_game_over = []
             self.gif_game_over_nombre = None
@@ -588,6 +591,18 @@ class EventosVisuales:
             self._establecer_gif_game_over(self.secuencia_game_over[0])
         elif self.gifs_game_over:
             self._establecer_gif_game_over(random.choice(self.gifs_game_over))
+
+        if (
+            self.game_over_nivel_alto_activo
+            and not self.secuencia_game_over_final_activa
+        ):
+            sonido_gritos.ajustar_volumen(volumen_efectos)
+            sonido_gritos.iniciar()
+        else:
+            sonido_gritos.detener()
+
+    def detener_audio_game_over(self):
+        self.animacion_despertar.sonido.detener()
 
     def dibujar_game_over(self, lienzo, nivel, tiempo_ms, tiempo):
         if (

@@ -7,6 +7,7 @@ No carga ninguna imagen: todo el dibujo se construye con formas y trazos en cód
 
 Controles:
     S       guardar un fotograma PNG (pequeño y ampliado)
+    M       silenciar / activar los gritos
     ESC     salir
 
 La animación alterna niveles, semilla, dithering y grano en un ciclo de 10 segundos.
@@ -309,6 +310,166 @@ def to_rgb(tone, levels=6, dither=True, paper=True, contrast=1.25):
     return pal[idx]                                  # (H, W, 3)
 
 
+class SonidoGritos:
+    """Gritos de desesperación sintetizados 100% en código (sin archivos de audio).
+
+    Cada grito es una fuente glotal (armónicos) con contorno de tono, vibrato,
+    jitter, quiebres de voz, formantes vocales, aspereza y saturación.
+    La pista de 9 s se repite en bucle y cada cambio de acabado visual dispara
+    un chasquido corto (fragmento de grito + crujido) sincronizado con la imagen.
+    """
+
+    SR = 22050                 # frecuencia interna de síntesis
+    DURACION_PISTA = 9.0
+    # formantes por vocal: (frecuencia, ancho, ganancia)
+    FORMANTES = {
+        "a": ((800, 120, 1.0), (1200, 150, 0.7), (2800, 250, 0.35)),
+        "o": ((500, 90, 1.0), (900, 120, 0.7), (2700, 250, 0.25)),
+        "e": ((600, 100, 1.0), (1900, 180, 0.7), (2700, 250, 0.40)),
+    }
+
+    def __init__(self, volumen=0.7):
+        self.activo = False
+        self.sonando = False
+        self.silenciado = False
+        self.volumen = volumen
+        self._rng_juego = np.random.default_rng()
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init(22050, -16, 2, 512)
+            self.freq, formato, self.canales = pygame.mixer.get_init()
+            if formato != -16 or self.canales not in (1, 2):
+                return
+            rng = np.random.default_rng(666)
+            self.pista = self._crear_sonido(self._pista(rng))
+            self.pista.set_volume(volumen)
+            self.chasquidos = [self._crear_sonido(self._chasquido(rng))
+                               for _ in range(5)]
+            for s in self.chasquidos:
+                s.set_volume(volumen * 0.6)
+            self.activo = True
+        except (pygame.error, NotImplementedError):
+            self.activo = False
+
+    # ---- síntesis -------------------------------------------------------
+    def _grito(self, rng, dur, f_ini, f_pico, f_fin, vocal="a"):
+        sr = self.SR
+        n = int(dur * sr)
+        t = np.arange(n) / sr
+        p = t / dur
+        # contorno de tono: sube rápido al pico y cae al final
+        f0 = (f_ini + (f_pico - f_ini) * smooth(p, 0.0, 0.22)
+              + (f_fin - f_pico) * smooth(p, 0.60, 1.0))
+        k_j = int(dur * 40) + 2
+        jitter = np.interp(t, np.linspace(0, dur, k_j), rng.normal(0, 1, k_j))
+        f0 = f0 * (1 + 0.018 * np.sin(2 * np.pi * 6.5 * t) + 0.012 * jitter)
+        if dur > 0.8:                                   # quiebre de voz
+            tq = rng.uniform(0.35, 0.65) * dur
+            f0 = f0 * (1 + 0.38 * np.exp(-((t - tq) / 0.035) ** 2))
+        fase = 2 * np.pi * np.cumsum(f0) / sr
+        deriva = 1 + 0.06 * np.sin(2 * np.pi * 0.7 * t + rng.uniform(0, 6.28))
+
+        senal = np.zeros(n)
+        for k in range(1, 41):
+            fk = k * f0
+            g = 0.04
+            for fc, bw, a in self.FORMANTES[vocal]:
+                g = g + a * np.exp(-0.5 * ((fk - fc * deriva) / bw) ** 2)
+            senal += (g / k ** 0.6) * (fk < sr * 0.45) * np.sin(k * fase)
+
+        senal *= 1 + 0.30 * np.sin(2 * np.pi * 70 * t + 2 * jitter)   # aspereza
+        aire = np.diff(rng.normal(0, 1, n), prepend=0.0)               # aliento
+        senal = senal / np.max(np.abs(senal)) + 0.22 * aire * (0.3 + smooth(p, 0, 0.2))
+        senal = np.tanh(2.4 * senal)                                   # saturación
+        cola = min(0.30, dur * 0.5)
+        env = (smooth(t, 0, 0.04) * (1 - smooth(t, dur - cola, dur))
+               * (0.88 + 0.12 * np.sin(2 * np.pi * 3.1 * t)))
+        senal *= env
+        return senal / np.max(np.abs(senal))
+
+    def _inhalar(self, rng, dur):
+        n = int(dur * self.SR)
+        p = np.arange(n) / (n - 1)
+        aire = np.diff(rng.normal(0, 1, n), prepend=0.0)
+        aire /= np.max(np.abs(aire))
+        return 0.30 * aire * smooth(p, 0, 0.8) * (1 - smooth(p, 0.85, 1.0))
+
+    def _chasquido(self, rng):
+        f = rng.uniform(900, 1500)
+        vocal = ["a", "e", "o"][int(rng.integers(3))]
+        frag = 0.6 * self._grito(rng, 0.20, f * 0.7, f, f * 0.8, vocal)
+        t = np.arange(len(frag)) / self.SR
+        crujido = rng.normal(0, 1, len(frag)) * np.exp(-t * 28) * (rng.random(len(frag)) > 0.6)
+        return frag + 0.5 * crujido
+
+    def _pista(self, rng):
+        sr = self.SR
+        total = int(self.DURACION_PISTA * sr)
+        pista = np.zeros(total)
+        t = np.arange(total) / sr
+
+        def poner(x, inicio):
+            i = max(0, int(inicio * sr))
+            j = min(total, i + len(x))
+            pista[i:j] += x[:j - i]
+
+        # zumbido grave inquietante (cíclico: el bucle no hace clic)
+        pista += 0.10 * (np.sin(2 * np.pi * 55 * t) + np.sin(2 * np.pi * 58 * t)) \
+            * (0.6 + 0.4 * np.sin(2 * np.pi * (2 / 9) * t))
+
+        guion = [  # inicio, duración, f_ini, f_pico, f_fin, vocal
+            (0.35, 1.6, 380, 900, 520, "a"),
+            (2.65, 0.9, 520, 1100, 700, "o"),
+            (3.85, 0.7, 650, 1250, 800, "e"),
+            (5.35, 2.4, 420, 1000, 300, "a"),
+        ]
+        for inicio, dur, fi, fp, ff, vocal in guion:
+            poner(self._inhalar(rng, 0.30), inicio - 0.30)
+            poner(0.9 * self._grito(rng, dur, fi, fp, ff, vocal), inicio)
+        poner(0.45 * self._grito(rng, 2.0, 600, 1300, 420, "e"), 5.9)   # segunda voz
+
+        return 0.95 * pista / np.max(np.abs(pista))
+
+    def _crear_sonido(self, mono):
+        if self.freq != self.SR:
+            n_out = int(len(mono) * self.freq / self.SR)
+            mono = np.interp(np.linspace(0, len(mono) - 1, n_out),
+                             np.arange(len(mono)), mono)
+        datos = (np.clip(mono, -1, 1) * 32767 * 0.9).astype(np.int16)
+        if self.canales == 2:
+            datos = np.ascontiguousarray(np.column_stack((datos, datos)))
+        return pygame.sndarray.make_sound(datos)
+
+    # ---- control --------------------------------------------------------
+    def ajustar_volumen(self, volumen):
+        self.volumen = max(0.0, min(1.0, float(volumen)))
+        if not self.activo:
+            return
+        self.pista.set_volume(0.0 if self.silenciado else self.volumen)
+        for sonido in self.chasquidos:
+            sonido.set_volume(self.volumen * 0.6)
+
+    def iniciar(self):
+        if self.activo and not self.sonando:
+            self.pista.play(loops=-1, fade_ms=300)
+            self.sonando = True
+
+    def detener(self):
+        if self.activo and self.sonando:
+            self.pista.fadeout(250)
+            self.sonando = False
+
+    def chasquido(self):
+        if self.activo and self.sonando and not self.silenciado:
+            self.chasquidos[int(self._rng_juego.integers(len(self.chasquidos)))].play()
+
+    def alternar_silencio(self):
+        if not self.activo:
+            return
+        self.silenciado = not self.silenciado
+        self.pista.set_volume(0.0 if self.silenciado else self.volumen)
+
+
 class CarboncilloAnimado:
     """Alterna cuatro acabados del retrato en un ciclo visual de 2,5 segundos."""
 
@@ -331,11 +492,17 @@ class CarboncilloAnimado:
             pygame.surfarray.blit_array(fotograma, np.transpose(rgb, (1, 0, 2)))
             self.fotogramas.append(fotograma)
         self.compuesto = pygame.Surface((W, H))
+        self.sonido = SonidoGritos()
+        self._ultimo_estado = None
 
     def dibujar(self, destino, tiempo):
         fase = (tiempo % self.DURACION_CICLO) / self.DURACION_ESTADO
         indice = int(fase)
         progreso = fase - indice
+        if indice != self._ultimo_estado:
+            if self._ultimo_estado is not None:
+                self.sonido.chasquido()          # golpe sonoro en cada cambio de acabado
+            self._ultimo_estado = indice
         actual = self.fotogramas[indice]
         siguiente = self.fotogramas[(indice + 1) % len(self.fotogramas)]
 
@@ -365,6 +532,7 @@ def play_wake_animation(
     animacion = CarboncilloAnimado()
     inicio = pygame.time.get_ticks()
     fuentes_salida = {}
+    animacion.sonido.iniciar()
 
     def obtener_fuente_salida(familia, tamano):
         clave = (familia, tamano)
@@ -405,6 +573,7 @@ def play_wake_animation(
 
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
+                animacion.sonido.detener()
                 pygame.event.post(evento)
                 return False
             if (
@@ -413,6 +582,7 @@ def play_wake_animation(
                 and evento.button == pygame.BUTTON_LEFT
                 and boton.collidepoint(evento.pos)
             ):
+                animacion.sonido.detener()
                 return False
 
         animacion.dibujar(screen, tiempo)
@@ -455,12 +625,16 @@ def main():
 
     animacion = CarboncilloAnimado()
     inicio = pygame.time.get_ticks()
+    animacion.sonido.iniciar()
 
     while True:
         for e in pygame.event.get():
             if e.type == pygame.QUIT or (e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE):
+                animacion.sonido.detener()
                 pygame.quit()
                 return
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_m:
+                animacion.sonido.alternar_silencio()
             if e.type == pygame.KEYDOWN and e.key == pygame.K_s:
                 pygame.image.save(
                     animacion.fotogramas[0], "carboncillo_pequeno.png"
@@ -474,7 +648,7 @@ def main():
 
         tiempo = (pygame.time.get_ticks() - inicio) / 1000.0
         animacion.dibujar(screen, tiempo)
-        screen.blit(font.render("S: guardar   ESC: salir", True, (255, 255, 0)), (4, 4))
+        screen.blit(font.render("S: guardar   M: silencio   ESC: salir", True, (255, 255, 0)), (4, 4))
         pygame.display.flip()
         clock.tick(30)
 

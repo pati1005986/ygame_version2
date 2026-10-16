@@ -450,7 +450,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     jugador.iniciar_engullido(plataforma_pisada)
                     intensidad_shake = 9.0
                     eventos_visuales.iniciar_game_over(
-                        nivel, pygame.time.get_ticks()
+                        nivel,
+                        pygame.time.get_ticks(),
+                        volumen_efectos=configuracion["volumen_efectos"],
                     )
                     estado = ESTADO_GAME_OVER
                 else:
@@ -461,7 +463,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             ):
                 intensidad_shake = 9.0
                 eventos_visuales.iniciar_game_over(
-                    nivel, pygame.time.get_ticks()
+                    nivel,
+                    pygame.time.get_ticks(),
+                    volumen_efectos=configuracion["volumen_efectos"],
                 )
                 estado = ESTADO_GAME_OVER
                 combo_actual = 0
@@ -514,6 +518,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
                     nivel,
                     pygame.time.get_ticks(),
                     seleccionar_por_nivel=False,
+                    volumen_efectos=configuracion["volumen_efectos"],
                 )
                 estado = ESTADO_GAME_OVER
                 combo_actual = 0
@@ -630,6 +635,9 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         fuente_boton = contexto_eventos.fuente_boton
         superficie_texto_boton = contexto_eventos.superficie_texto_boton
         idioma_mostrado = contexto_eventos.idioma_mostrado
+
+        if estado_antes_eventos == ESTADO_GAME_OVER and estado != ESTADO_GAME_OVER:
+            eventos_visuales.detener_audio_game_over()
 
         if estado_antes_eventos == ESTADO_CREDITOS and estado == ESTADO_MENU:
             eventos_visuales.final_juego_activo = False
@@ -983,6 +991,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
         pygame.display.flip()
 
+    eventos_visuales.detener_audio_game_over()
     pygame.quit()
 
 

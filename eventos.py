@@ -91,6 +91,8 @@ def _evento_con_posicion_logica(evento, contexto, dependencias):
 
 def _reiniciar_juego(contexto, dependencias):
     contexto.nivel = 1
+    dependencias.configuracion["nivel_guardado"] = 1
+    dependencias.guardar_configuracion(dependencias.configuracion)
     (
         contexto.plataformas,
         contexto.hue_fondo,

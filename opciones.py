@@ -650,6 +650,7 @@ def normalizar_configuracion(configuracion):
         "volumen_efectos": 0.8,
         "escala_ui": 1.0,
         "juego_completado": False,
+        "nivel_guardado": 1,
         "controles": MenuOpciones.DEFAULTS["controles"].copy(),
     }
     if not isinstance(configuracion, dict):
@@ -666,6 +667,10 @@ def normalizar_configuracion(configuracion):
 
     if "resoluciones" in configuracion and isinstance(configuracion["resoluciones"], (list, tuple)):
         base["resoluciones"] = tuple(configuracion["resoluciones"])
+
+    nivel_guardado = base["nivel_guardado"]
+    if isinstance(nivel_guardado, bool) or not isinstance(nivel_guardado, int) or nivel_guardado < 1:
+        base["nivel_guardado"] = 1
 
     return base
 

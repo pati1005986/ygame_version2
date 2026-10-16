@@ -28,6 +28,9 @@
    ```bash
    python juego.py
    ```
+   El juego guarda automáticamente el último nivel alcanzado y, al volver a
+   iniciar, el botón **Continuar** retoma la partida desde el comienzo de ese
+   nivel. Si la partida termina, el progreso se reinicia.
 
 ---
 

@@ -41,6 +41,7 @@ class MenuInicio:
         self.alto = alto
         self.idioma = idioma
         self.escala_ui = escala_ui
+        self.nivel_guardado = 1
         self.ruta_video = os.path.join("assets", nombre_video)
         self.cap = None
         self.frame_actual = None
@@ -107,6 +108,9 @@ class MenuInicio:
 
     def establecer_idioma(self, idioma):
         self.idioma = idioma
+
+    def establecer_nivel_guardado(self, nivel):
+        self.nivel_guardado = max(1, int(nivel))
 
     def establecer_escala_ui(self, escala_ui):
         self.escala_ui = escala_ui
@@ -239,7 +243,11 @@ class MenuInicio:
         ):
             hover = mouse_pos is not None and rect.collidepoint(mouse_pos)
             rect_dibujo = self._dibujar_boton_comic(superficie, rect, hover)
-            clave = {"jugar": "play", "opciones": "options", "salir": "exit"}[nombre]
+            clave = (
+                "continue"
+                if nombre == "jugar" and self.nivel_guardado > 1
+                else {"jugar": "play", "opciones": "options", "salir": "exit"}[nombre]
+            )
             self._texto_centrado(
                 superficie,
                 texto(self.idioma, clave),

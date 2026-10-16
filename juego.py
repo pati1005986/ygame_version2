@@ -224,7 +224,7 @@ def dibujar_nivel(capa, fondo, plataformas, entidades, tiempo, nivel):
 # --------------------------------------------------------------------------
 # Juego
 # --------------------------------------------------------------------------
-def main(nivel_inicial=1, idioma_inicial="en"):
+def main(nivel_inicial=None, idioma_inicial="en"):
     """Inicializa Pygame y ejecuta el bucle de eventos, física y renderizado."""
     idiomas_disponibles = {"en", "es", "pt", "ru"}
     if idioma_inicial not in idiomas_disponibles:
@@ -345,7 +345,10 @@ def main(nivel_inicial=1, idioma_inicial="en"):
     fuente_resumen.set_bold(True)
     eventos_visuales = EventosVisuales(WIDTH, HEIGHT)
 
-    nivel = max(1, int(nivel_inicial))
+    if nivel_inicial is None:
+        nivel = configuracion["nivel_guardado"]
+    else:
+        nivel = max(1, int(nivel_inicial))
     plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
     particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
 
@@ -373,6 +376,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         idioma=configuracion["idioma"],
         escala_ui=configuracion["escala_ui"],
     )
+    menu.establecer_nivel_guardado(nivel)
     pausa = MenuPausa(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
     estado_despues_opciones = ESTADO_MENU
@@ -394,6 +398,11 @@ def main(nivel_inicial=1, idioma_inicial="en"):
         guardar_configuracion=guardar_configuracion,
         texto=texto,
     )
+
+    def guardar_nivel_guardado(nivel_a_guardar):
+        configuracion["nivel_guardado"] = max(1, int(nivel_a_guardar))
+        guardar_configuracion(configuracion)
+        menu.establecer_nivel_guardado(configuracion["nivel_guardado"])
 
     # Conserva la física histórica por fotograma, desacoplándola del render.
     paso_fisica = 1 / FPS
@@ -582,6 +591,12 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
         if combo_actual and pygame.time.get_ticks() > combo_expira:
             combo_actual = 0
+        if estado == ESTADO_GAME_OVER:
+            if configuracion["nivel_guardado"] != 1:
+                guardar_nivel_guardado(1)
+        elif estado in (ESTADO_JUGANDO, ESTADO_TRANSICION):
+            if configuracion["nivel_guardado"] != nivel:
+                guardar_nivel_guardado(nivel)
 
     def registrar_truco(ahora):
         nonlocal combo_actual, combo_mejor_nivel, combo_expira
@@ -654,6 +669,7 @@ def main(nivel_inicial=1, idioma_inicial="en"):
             # Tras completar el juego, el menú muestra la imagen de victoria.
             menu.establecer_video("image29.gif")
             nivel = 1
+            guardar_nivel_guardado(1)
             plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
             jugador = PersonajeHumanoide(
                 *POS_SPAWN,
@@ -1008,12 +1024,15 @@ def main(nivel_inicial=1, idioma_inicial="en"):
 
         pygame.display.flip()
 
+    guardar_nivel_guardado(
+        1 if estado in (ESTADO_GAME_OVER, ESTADO_CREDITOS) else nivel
+    )
     eventos_visuales.detener_audio_game_over()
     pygame.quit()
 
 
 if __name__ == "__main__":
-    nivel_inicial = 1
+    nivel_inicial = None
     idioma_inicial = "en"
     if "--nivel" in sys.argv:
         indice_nivel = sys.argv.index("--nivel") + 1

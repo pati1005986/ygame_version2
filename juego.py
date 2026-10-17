@@ -449,7 +449,7 @@ class Juego:
             ancho_pantalla=WIDTH,
             modo_infinito=self.modo_infinito,
         )
-        self.jugador.vel_y = 0
+        self.jugador.reiniciar_movimiento()
         ajustar_dificultad_jugador(self.jugador, self.nivel, self.modo_infinito)
         self.estado = ESTADO_TRANSICION
 

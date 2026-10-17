@@ -1,13 +1,63 @@
 import math
 import random
+from functools import lru_cache
 
 import pygame
 
-from plataformas import color_desde_hue
+from plataformas import color_desde_hue as _color_desde_hue_real
+
+
+@lru_cache(maxsize=8192)
+def _color_cuantizado(h256, saturacion, valor):
+    return tuple(_color_desde_hue_real(h256 / 256, saturacion, valor))[:3]
+
+
+def color_desde_hue(hue, saturacion, valor):
+    """Versión cacheada de ``plataformas.color_desde_hue``.
+
+    Rendimiento: el matiz se cuantiza a 1/256 de vuelta (~1.4 grados), algo
+    imperceptible, y así el mismo color se reutiliza entre llamadas en vez de
+    repetir la conversión HSV->RGB cientos de veces por redibujo.
+    """
+    return _color_cuantizado(round((hue % 1.0) * 256) % 256, saturacion, valor)
+
+
+def _convertir(superficie):
+    """convert_alpha() acelera los blits repetidos; si aún no hay ventana
+    (p. ej. en un test sin display) se deja la superficie tal cual."""
+    try:
+        return superficie.convert_alpha()
+    except pygame.error:
+        return superficie
 
 
 # Caché de superficies reutilizadas entre frames para el fondo segmentado.
 _CACHE_FONDO = {}
+
+
+# Contadores para refrescar algunas capas lentas solo cada N redibujos.
+_CONTADORES = {}
+
+
+def _capa_persistente(clave, tam, cada, desfase=0):
+    """Devuelve ``(capa, refrescar)``.
+
+    La capa se limpia y hay que redibujarla solo cuando ``refrescar`` es True
+    (una de cada ``cada`` llamadas, o cuando se acaba de crear). En el resto
+    se reutiliza tal cual, así que solo cuesta el blit. ``desfase`` reparte
+    en redibujos distintos el trabajo de capas distintas para evitar picos.
+    """
+    capa = _CACHE_FONDO.get(clave)
+    n = _CONTADORES.get(clave, 0)
+    _CONTADORES[clave] = n + 1
+    if capa is None or capa.get_size() != tam:
+        capa = pygame.Surface(tam, pygame.SRCALPHA)
+        _CACHE_FONDO[clave] = capa
+        return capa, True
+    if (n + desfase) % cada == 0:
+        capa.fill((0, 0, 0, 0))
+        return capa, True
+    return capa, False
 
 
 def _obtener_superficie(clave, tam):
@@ -26,7 +76,16 @@ def _obtener_superficie(clave, tam):
 # en vez de círculos/elipses perfectos. Es la base "psicodélica" del fondo.
 # ---------------------------------------------------------------------------
 
-def _punto_organico(centro, radio, angulo, tiempo, fase, amplitud=0.42, asimetria=0.0):
+@lru_cache(maxsize=None)
+def _angulos(n):
+    """Ángulos equiespaciados con su (coseno, seno) precalculado."""
+    return tuple(
+        (a, (math.cos(a), math.sin(a)))
+        for a in (i * math.tau / n for i in range(n))
+    )
+
+
+def _punto_organico(centro, radio, angulo, tiempo, fase, amplitud=0.42, asimetria=0.0, trig=None):
     """Deforma un radio con varias ondas superpuestas, como un trazo a mano.
 
     `asimetria` rompe la simetría radial (más "dibujado a mano", menos
@@ -40,17 +99,15 @@ def _punto_organico(centro, radio, angulo, tiempo, fase, amplitud=0.42, asimetri
         + math.sin(angulo * 2 + fase * 0.6) * asimetria
     )
     r = radio * max(0.22, 1 + ondulacion)
-    return (
-        centro[0] + math.cos(angulo) * r,
-        centro[1] + math.sin(angulo) * r,
-    )
+    coseno, seno = trig if trig is not None else (math.cos(angulo), math.sin(angulo))
+    return (centro[0] + coseno * r, centro[1] + seno * r)
 
 
 def _mancha_organica(capa, centro, radio, color, alpha, tiempo, fase, puntos=18, asimetria=0.12):
     """Mancha con contorno ondulado: la unidad básica de 'pincelada' del fondo."""
     pts = [
-        _punto_organico(centro, radio, (i / puntos) * math.tau, tiempo, fase, asimetria=asimetria)
-        for i in range(puntos)
+        _punto_organico(centro, radio, ang, tiempo, fase, asimetria=asimetria, trig=cs)
+        for ang, cs in _angulos(puntos)
     ]
     pygame.draw.polygon(capa, (*color, alpha), pts)
 
@@ -58,8 +115,8 @@ def _mancha_organica(capa, centro, radio, color, alpha, tiempo, fase, puntos=18,
 def _trazo_contorno(capa, centro, radio, color, alpha, tiempo, fase, grosor=3):
     """Línea de contorno tipo tinta, exagerando el borde de la mancha (caricatura)."""
     pts = [
-        _punto_organico(centro, radio * 1.05, (i / 20) * math.tau, tiempo, fase, 0.5, asimetria=0.15)
-        for i in range(20)
+        _punto_organico(centro, radio * 1.05, ang, tiempo, fase, 0.5, asimetria=0.15, trig=cs)
+        for ang, cs in _angulos(20)
     ]
     pygame.draw.polygon(capa, (*color, alpha), pts, grosor)
 
@@ -68,8 +125,8 @@ def _trazo_tinta(capa, centro, radio, tiempo, fase, alpha=150, grosor=4):
     """Contorno oscuro tipo 'tinta de cómic': el rasgo caricaturesco más
     reconocible (bordes gruesos casi negros alrededor de formas de color)."""
     pts = [
-        _punto_organico(centro, radio * 1.08, (i / 34) * math.tau, tiempo, fase, 0.48, asimetria=0.14)
-        for i in range(34)
+        _punto_organico(centro, radio * 1.08, ang, tiempo, fase, 0.48, asimetria=0.14, trig=cs)
+        for ang, cs in _angulos(34)
     ]
     pygame.draw.polygon(capa, (18, 14, 28, alpha), pts, grosor)
 
@@ -85,7 +142,12 @@ def _puntos_halftone(superficie, ancho, alto, tiempo, hue_base, paso=52, alpha=2
     vecinos, así que reutilizarlo es imperceptible mientras ahorra muchas
     llamadas por fotograma.
     """
-    capa = _obtener_superficie("halftone", (ancho, alto))
+    # Rendimiento: cambia muy despacio; se redibuja 1 de cada 2 veces
+    # (la mitad que el resto del fondo) y el resto solo se reutiliza.
+    capa, refrescar = _capa_persistente("halftone", (ancho, alto), cada=2, desfase=1)
+    if not refrescar:
+        superficie.blit(capa, (0, 0))
+        return
     fila = 0
     for y in range(-paso, alto + paso, paso):
         desfase = (paso // 2) if fila % 2 else 0
@@ -141,6 +203,10 @@ def _dibujar_capas_parallax(superficie, ancho, alto, hue_base, tiempo):
             )
             y = int(alto * (0.18 + (forma * 0.29 + indice * 0.17) % 0.68))
             for centro_x in (x - paso, x, x + paso):
+                # Rendimiento: de las 3 copias casi siempre solo 1-2 se ven;
+                # 1.7 * radio cubre la deformación máxima del contorno.
+                if centro_x + radio * 1.7 < 0 or centro_x - radio * 1.7 > ancho:
+                    continue
                 centro = (centro_x, y)
                 puntos = [
                     _punto_organico(
@@ -151,8 +217,9 @@ def _dibujar_capas_parallax(superficie, ancho, alto, hue_base, tiempo):
                         indice * 2.4 + forma,
                         amplitud=0.26,
                         asimetria=0.12,
+                        trig=cs,
                     )
-                    for angulo in (i * math.tau / 18 for i in range(18))
+                    for angulo, cs in _angulos(18)
                 ]
                 pygame.draw.polygon(
                     capa,
@@ -251,7 +318,7 @@ class ParticulaAbstracta:
         brillo_rot = pygame.transform.rotate(brillo, math.degrees(self.fase) % 40 - 20)
         capa.blit(brillo_rot, brillo_rot.get_rect(center=brillo_pos))
 
-        self._capa_cache = capa
+        self._capa_cache = _convertir(capa)
         self._centro_cache = pygame.Vector2(centro)
         superficie.blit(capa, self.pos - self._centro_cache)
 
@@ -342,7 +409,12 @@ def _dibujar_goteo(superficie, x, y, longitud, hue, tiempo, fase, grosor=6):
 
 def _dibujar_caleidoscopio(superficie, centro, radio, hue_base, tiempo, ancho, alto, brazos=6):
     """Mandala giratorio de cuñas translúcidas: el 'motor' psicodélico del fondo."""
-    capa = _obtener_superficie("caleidoscopio", (ancho, alto))
+    # Rendimiento: gira lento y con alpha muy bajo; se redibuja 1 de cada 2
+    # veces, desfasado respecto al halftone para no juntar los dos picos.
+    capa, refrescar = _capa_persistente("caleidoscopio", (ancho, alto), cada=2)
+    if not refrescar:
+        superficie.blit(capa, (0, 0))
+        return
     cx, cy = centro
     rotacion = tiempo * 0.12
 
@@ -513,9 +585,14 @@ def _crear_cara(R, hue, estilo, rng, distorsion=0.0):
     return [pygame.transform.rotozoom(capa, a, 1.0) for a in _ANGULOS_CARA]
 
 
-def _construir_sprites(estilo, distorsion=0.0):
+def _construir_sprites_gen(estilo, distorsion=0.0):
     """Pool de caras (3 tamaños x varios matices) para una etapa de distorsión.
-    Se genera una sola vez por etapa; el alpha de profundidad queda 'horneado'."""
+
+    Es un generador: cede el control tras cada cara para poder construir la
+    etapa siguiente de a poco (una cara por redibujo) en vez de bloquear el
+    juego con ~90 caras y 450 rotozoom de golpe al cambiar de nivel. El alpha
+    de profundidad queda 'horneado'. Al terminar devuelve la lista (``return``).
+    """
     etapa_distorsion = round(distorsion * 9)
     rng = random.Random(1234 + estilo * 10 + etapa_distorsion)
     sprites = []
@@ -527,8 +604,49 @@ def _construir_sprites(estilo, distorsion=0.0):
             )
             for f in frames:
                 f.fill((255, 255, 255, _ALPHA_CARA[tam]), special_flags=pygame.BLEND_RGBA_MULT)
-            sprites.append((tam, frames))
+            sprites.append((tam, [_convertir(f) for f in frames]))
+            yield
     return sprites
+
+
+_PRECALC = {}  # (estilo, etapa) -> {"gen": generador, "listo": None | sprites}
+
+
+def _sprites_etapa(estilo, etapa, pasos=1):
+    """Avanza ``pasos`` caras en la construcción de una etapa y devuelve los
+    sprites si ya están listos (o None). Con ``pasos`` enorme la termina."""
+    e = _PRECALC.setdefault(
+        (estilo, etapa),
+        {"gen": _construir_sprites_gen(estilo, etapa / 9), "listo": None},
+    )
+    for _ in range(pasos):
+        if e["listo"] is not None:
+            break
+        try:
+            next(e["gen"])
+        except StopIteration as fin:
+            e["listo"] = fin.value
+    return e["listo"]
+
+
+def _construir_sprites(estilo, distorsion=0.0):
+    """Compatibilidad: construye (o reutiliza) la etapa completa de golpe."""
+    return _sprites_etapa(estilo, round(distorsion * 9), pasos=10**6)
+
+
+def _estilo_de(p):
+    return 0 if p < 0.34 else (1 if p < 0.67 else 2)
+
+
+def _mantener_sprites(estilo, etapa, p):
+    """Precalienta la etapa siguiente (un paso por llamada) y libera las
+    que ya no hacen falta, para tener como mucho 2 pools en memoria."""
+    p_sig = min(1.0, p + 1 / 9)
+    siguiente = (_estilo_de(p_sig), min(9, etapa + 1))
+    _sprites_etapa(*siguiente)
+    vigentes = {(estilo, etapa), siguiente}
+    for k in [k for k in _PRECALC if k not in vigentes]:
+        del _PRECALC[k]
 
 
 def _nueva_cara(ancho, alto, desde_arriba):
@@ -584,16 +702,20 @@ def _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo
     if objetivo == 0:
         e["caras"].clear()
         e["t"] = None
+        if nivel < 1:
+            _sprites_etapa(0, 0)  # precalienta las caras del nivel 1
         return
 
     # Las caras se transforman en el sitio al cambiar de etapa.
-    estilo = 0 if p < 0.34 else (1 if p < 0.67 else 2)
+    estilo = _estilo_de(p)
     etapa_distorsion = round(p * 9)
     if e["estilo"] != estilo or e["etapa_distorsion"] != etapa_distorsion:
-        distorsion = etapa_distorsion / 9
-        e["sprites"] = _construir_sprites(estilo, distorsion)
+        # Normalmente ya está lista (se precalentó en redibujos anteriores);
+        # si no, se termina de construir ahora, como antes.
+        e["sprites"] = _sprites_etapa(estilo, etapa_distorsion, pasos=10**6)
         e["estilo"] = estilo
         e["etapa_distorsion"] = etapa_distorsion
+    _mantener_sprites(estilo, etapa_distorsion, p)
 
     caras = e["caras"]
     primera = not caras
@@ -704,9 +826,9 @@ def _dibujar_fondo_azul(superficie, tiempo, ancho, alto, nivel):
         capa = _obtener_superficie(("azul", i), (lado, lado))
         centro_local = (lado / 2, lado / 2)
         puntos = [
-            _punto_organico(centro_local, radio, (k / 28) * math.tau, tiempo * 0.3, i * 1.7,
-                            amplitud=0.12, asimetria=0.06)
-            for k in range(28)
+            _punto_organico(centro_local, radio, ang, tiempo * 0.3, i * 1.7,
+                            amplitud=0.12, asimetria=0.06, trig=cs)
+            for ang, cs in _angulos(28)
         ]
         if i % 2 == 0:
             color = (*_tono_azul(1.35), 20)
@@ -750,7 +872,7 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0
     _fondo_degradado(superficie, ancho, alto, hue_base, tiempo)
     _dibujar_capas_parallax(superficie, ancho, alto, hue_base, tiempo)
 
-    capa_abstracta = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+    capa_abstracta = _obtener_superficie("abstracta", (ancho, alto))
     _dibujar_caleidoscopio(
         capa_abstracta,
         (ancho * 0.5, alto * 0.5),

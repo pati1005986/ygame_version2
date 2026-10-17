@@ -408,6 +408,28 @@ class PersonajeHumanoide:
     # ------------------------------------------------------------------
     # Lógica principal
     # ------------------------------------------------------------------
+    def reiniciar_movimiento(self):
+        """Elimina el impulso y las acciones pendientes entre niveles."""
+        self.vel_x = 0.0
+        self.vel_y = 0
+        self._resto_x = 0.0
+        self._resto_y = 0.0
+        self.en_suelo = False
+        self.plataforma_actual = None
+        self.coyote_restante = 0
+        self.buffer_salto_restante = 0
+        self._salto_ejecutado_este_frame = False
+        self._salto_sostenido = False
+        self._tecla_salto_soltada = False
+        self.saltos_restantes = self.saltos_maximos
+        self.girando = False
+        self.angulo_giro = 0.0
+        self.dashes_disponibles = self.dashes_maximos
+        self.dash_restante = 0
+        self.dash_enfriamiento = 0
+        self.dash_ejecutado_este_frame = False
+        self.rastro.clear()
+
     def mover(self, plataformas, controles=None):
         """Lee el teclado, aplica física y resuelve colisiones.
 

@@ -12,6 +12,10 @@ class Combo:
         self.mejor_nivel = 0
         self.expira = 0
 
+    def reiniciar_mejor_nivel(self):
+        """Reinicia el récord del nivel sin cortar la racha activa."""
+        self.mejor_nivel = 0
+
     def registrar(self, ahora_ms):
         """Suma un truco; si el combo ya había expirado, empieza de cero."""
         if ahora_ms > self.expira:

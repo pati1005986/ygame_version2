@@ -339,7 +339,16 @@ class Juego:
 
         self._comprobar_trampa()
 
-        if (
+        if self.estado == ESTADO_JUGANDO and self.modo_infinito:
+            for entidad in self.entidades:
+                if entidad.activa and entidad.rect.colliderect(jugador.rect):
+                    direccion = (
+                        1 if entidad.rect.centerx >= jugador.rect.centerx else -1
+                    )
+                    if entidad.derrotar(direccion):
+                        self.combo.registrar(ahora)
+                        self.intensidad_shake = max(self.intensidad_shake, 5.0)
+        elif (
             self.estado == ESTADO_JUGANDO
             and not dash_activo
             and any(e.rect.colliderect(jugador.rect) for e in self.entidades)
@@ -358,6 +367,7 @@ class Juego:
     def _mover_enemigos(self):
         for entidad in self.entidades:
             entidad.mover(self.plataformas, self.jugador.rect)
+        self.entidades = [entidad for entidad in self.entidades if entidad.activa]
         self.alerta_enemigos = max(
             self.alerta_enemigos,
             max((e.nivel_alerta() for e in self.entidades), default=0.0),
@@ -403,7 +413,7 @@ class Juego:
                 cfg["mejor_puntaje_infinito"] = self.puntaje
                 guardar_configuracion(cfg)
                 self.menu.establecer_mejor_puntaje_infinito(self.puntaje)
-        self.combo.reiniciar()
+        self.combo.reiniciar_mejor_nivel()
 
         # Foto del nivel que se deja atrás para la transición de cámara.
         dibujar_nivel(

@@ -77,6 +77,7 @@ class EntidadGris:
         self.pixel = 4
         self.fase = random.uniform(0, math.tau)
         self.activa = True
+        self.derrotado = False
         self.reloj = 0
         self._semilla = random.randrange(1_000_000)
 
@@ -133,6 +134,21 @@ class EntidadGris:
 
     def esta_persiguiendo(self):
         return self.alerta
+
+    def derrotar(self, direccion):
+        """Lanza al enemigo fuera de la pantalla tras recibir un golpe."""
+        if not self.activa or self.derrotado:
+            return False
+        self.derrotado = True
+        self.estado = PATRULLA
+        self.sospecha = 0.0
+        self.intensidad_alerta = 0.0
+        self.vel_x = 8.0 * (1 if direccion >= 0 else -1)
+        self.vel_y = -9.0
+        self._resto_x = 0.0
+        self.en_suelo = False
+        self.plataforma_actual = None
+        return True
 
     # ------------------------------------------------------------------
     # Utilidades
@@ -345,6 +361,18 @@ class EntidadGris:
     def mover(self, plataformas, objetivo_rect=None):
         """Percibe, decide y se mueve. Misma firma que la versión anterior."""
         if not self.activa:
+            return
+        if self.derrotado:
+            self.rect.x += round(self.vel_x)
+            self.rect.y += round(self.vel_y)
+            self.vel_y += 0.65
+            self.vel_x *= 0.985
+            if (
+                self.rect.right < -50
+                or self.rect.left > 850
+                or self.rect.top > 650
+            ):
+                self.activa = False
             return
 
         self.reloj += 1

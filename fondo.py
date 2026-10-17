@@ -719,7 +719,7 @@ def _dibujar_fondo_azul(superficie, tiempo, ancho, alto, nivel):
     # (suma de frecuencias que no coinciden, para que se sienta irregular).
     respiracion = 14 + 12 * math.sin(tiempo * 0.35)
     parpadeo = (1.0 + 3.0 * tension) * math.sin(tiempo * 7.3) * math.sin(tiempo * 2.9)
-    c["velo"].set_alpha(int(max(0, min(60, respiracion + parpadeo))))
+    c["velo"].set_alpha(int(max(0, min(45, respiracion + parpadeo))))
     superficie.blit(c["velo"], (0, 0))
 
     # Viñeta con latido (lub-dub) muy lento; se cierra un poco más con el nivel.

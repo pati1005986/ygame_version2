@@ -28,29 +28,34 @@ def parametros_dificultad(nivel):
     ahí, el juego vuelve a la línea base del nivel 1 y luego se hace más
     fácil progresivamente para relajar la experiencia en niveles muy altos.
     """
+    # Usamos una función de progresión que crece inicialmente más rápido (ej: raíz)
+    # pero aún respeta un tope aparente hasta N=30.
     if nivel <= 30:
-        progreso = max(0, nivel - 1)
+        # Se usa max(1, ...) para asegurar al menos un progreso inicial positivo en el nivel 2.
+        progreso = min(nivel - 1, int(1 + (nivel - 1) * 0.45)) # Curva ligeramente más pronunciada
         factor = 1.0
     else:
         # Desde el nivel 30 se reinicia a la dificultad del nivel 1; a partir
         # de ahí baja suavemente para que quede todo mucho más cómodo.
         progreso = 0
-        factor = max(0.45, 1.0 - (nivel - 30) * 0.08)
+        # Se suaviza la caída inicial: en lugar de -0.08, usamos un valor menor y más constante.
+        factor = max(0.5, 1.0 - (nivel - 30) * 0.06)
 
-    jugador_base = 6.0 + progreso * 0.12
-    gravedad_base = 0.6 + progreso * 0.018
-    prob_movil_base = 0.20 + progreso * 0.015
-    patrulla_base = 1.8 + progreso * 0.05
-    persecucion_base = 3.0 + progreso * 0.08
-    rango_base = 220 + progreso * 4
 
+    # Ajuste de coeficientes: Aumentar el inicio del jugador para dar más peso al reto inicial.
+    jugador_base = 8.0 + progreso * 0.12 # Inicio en 8.0, no 6.0
+    gravedad_base = 0.7 + progreso * 0.018 # Inicio ligeramente más alto
+    prob_movil_base = 0.25 + progreso * 0.015 # Mayor probabilidad inicial para sensación de reto
+    patrulla_base = 2.0 + progreso * 0.04 # Ligeramente menor aumento, ya que el inicio es mayor.
+    persecucion_base = 3.5 + progreso * 0.06 # Menor crecimiento en persecución para evitar picos muy grandes
+    rango_base = 240 + progreso * 4
     return {
         # Jugador: a partir del 30 vuelve a la línea base y luego se relaja.
-        "velocidad_jugador": min(jugador_base * factor, 8.5),
-        "gravedad_jugador": min(gravedad_base * factor, 0.9),
+        "velocidad_jugador": min(jugador_base * factor, 9.0), # Aumento el cap ligeramente para permitir más variedad
+        "gravedad_jugador": min(gravedad_base * factor, 1.0),
         # Plataformas y enemigos vuelven a ser mucho más suaves desde el 30.
-        "probabilidad_plataforma_movil": min(prob_movil_base * factor, 0.55),
-        "velocidad_enemigo_patrulla": min(patrulla_base * factor, 3.2),
-        "velocidad_enemigo_persecucion": min(persecucion_base * factor, 5.0),
-        "rango_deteccion_enemigo": min(rango_base * factor, 320),
+        "probabilidad_plataforma_movil": min(prob_movil_base * factor, 0.65), # Aumento cap para que la fase de reto sea más alta
+        "velocidad_enemigo_patrulla": min(patrulla_base * factor, 3.4),
+        "velocidad_enemigo_persecucion": min(persecucion_base * factor, 5.2),
+        "rango_deteccion_enemigo": min(rango_base * factor, 340), # Aumento cap de rango
     }

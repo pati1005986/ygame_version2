@@ -84,6 +84,17 @@ class Plataforma:
     PROBABILIDAD_MOVIMIENTO = 0.35
     GRAVEDAD_PARTICULAS = 260.0
 
+    # Parámetros de física visual (Spring/Squash)
+    SPRING_RIGIDITY = 120.0
+    SPRING_DAMPING = 12.0
+    SQUASH_MIN_SCALE = 0.55
+    SQUASH_X_MULTIPLIER = 0.75
+
+    # --- PARÁMETROS DE DIBUJO ESTÉTICO ---
+    LINEA_GROSOR_CONTOUR = 2 # Grosor del contorno base de la plataforma (en píxeles)
+    COLOR_CONTORNO_BASE_DARK = (0, 0, 0)
+    RAYO_MANCHA_MINIMO = 2  # Tamaño mínimo para las manchas/círculos decorativos
+
     def __init__(
         self,
         x,
@@ -343,8 +354,7 @@ class Plataforma:
 
         # Resorte crítico-amortiguado simple: hace que el squash vuelva a
         # cero con un ligero rebote elástico, como pintura fresca.
-        rigidez, amortiguacion = 120.0, 12.0
-        aceleracion = -rigidez * self._squash - amortiguacion * self._squash_velocidad
+        aceleracion = (-self.SPRING_RIGIDITY * self._squash - self.SPRING_DAMPING * self._squash_velocidad)
         self._squash_velocidad += aceleracion * dt
         self._squash += self._squash_velocidad * dt
         if abs(self._squash) < 0.002 and abs(self._squash_velocidad) < 0.01:
@@ -392,22 +402,25 @@ class Plataforma:
         color_halo = self.COLOR_PELIGRO if (self.es_trampa and self.trampa_activada) else color_base
         self._dibujar_halo(superficie, rect, color_halo, tiempo)
         self._dibujar_sombra_contacto(superficie, rect)
-
-        # Forma base abstracta: bloque irregular con perfiles orgánicos.
+                # Forma base abstracta: bloque irregular con perfiles orgánicos (5 capas de relleno).
         puntos = self._puntos_plataforma(rect)
+        
+        # 1. Contorno principal (negro sólido)
         pygame.draw.polygon(superficie, (0, 0, 0), puntos, 4)
-        pygame.draw.polygon(superficie, color_sombra, puntos)
-        pygame.draw.polygon(superficie, color_media, [(p[0] + 3, p[1] + 2) for p in puntos])
-        pygame.draw.polygon(superficie, color_base, [(p[0] + 6, p[1] + 4) for p in puntos])
-        # Segunda línea de contorno más fina, a modo de veta de pintura seca.
-        pygame.draw.polygon(superficie, color_sombra, puntos, 1)
 
-        # Capa superior luminosa, como una franja de pintura de alta energía.
-        puntos_luz = [(p[0] + 8, p[1] + 5) for p in puntos[:4]]
-        puntos_luz[0] = (puntos_luz[0][0] + 12, puntos_luz[0][1] + 4)
-        puntos_luz[1] = (puntos_luz[1][0] - 16, puntos_luz[1][1] + 3)
-        pygame.draw.polygon(superficie, color_luz, puntos_luz)
-        pygame.draw.polygon(superficie, (0, 0, 0), puntos_luz, 2)
+        # 2. Sombra base
+        pygame.draw.polygon(superficie, color_sombra, puntos)
+
+        # 3. Capa de color media con offset (+3, +2)
+        puntos_media = [(p[0] + 3, p[1] + 2) for p in puntos]
+        pygame.draw.polygon(superficie, color_media, puntos_media)
+
+        # 4. Capa principal de color con mayor offset (+6, +4)
+        puntos_base = [(p[0] + 6, p[1] + 4) for p in puntos]
+        pygame.draw.polygon(superficie, color_base, puntos_base)
+
+        # 5. Contorno secundario (otra vez negro/sombra para la veta de pintura seca).
+        pygame.draw.polygon(superficie, color_sombra, puntos, 1)
 
         # Textura pictórica: manchas, trazo curvo y salpicaduras (precalculadas).
         self._dibujar_textura_pictorica(superficie, rect)
@@ -458,6 +471,26 @@ class Plataforma:
                 pygame.draw.circle(capa, (*color, 85), (x, y), 2)
             superficie.blit(capa, (rect.centerx - ancho // 2, rect.centery - alto // 2))
 
+    def _dibujar_humo_ambiente(self, superficie, rect):
+        if self.es_trampa:
+            return # No hay humo si es una trampa
+        
+        smoke_color = (180, 190, 200) # Gris azulado suave para el humo
+        base_alpha = 30
+
+        for i in range(4): # 4 fuentes de emisión de humo
+            # Posición X aleatoria sobre el rectángulo base
+            x_start = random.uniform(rect.left + rect.width * 0.1, rect.right - rect.width * 0.1)
+            y_start = rect.bottom
+
+            for j in range(3): # 3 capas de humo (de la más baja a la más alta)
+                # El tamaño y transparencia aumentan ligeramente con la capa
+                puff_size = random.uniform(5, 12) * (j + 1)
+                smoke_alpha = base_alpha + (j * 8)
+
+                # Dibujar el círculo directamente en la superficie principal
+                pygame.draw.circle(superficie, (*smoke_color, smoke_alpha), (x_start + random.uniform(-10, 10), y_start - (j * 5)), puff_size)
+
     def _dibujar_particulas(self, superficie):
         for p in self._particulas:
             proporcion = max(0.0, p["vida"] / p["vida_total"])
@@ -473,8 +506,9 @@ class Plataforma:
     def _puntos_plataforma(self, rect):
         """Genera un perfil irregular que parece una pieza orgánica, casi
         escultórica, en lugar de un bloque rígido."""
+        # usando proporciones arreglas por puntos de llave que mantienen el sentido artistico
         margen_x = rect.width * 0.08
-        margen_y = rect.height * 0.25
+        margen_y = rect.height * 0.25 # This ratio is kept as a local variable since it's unique here
         return [
             (rect.left + margen_x, rect.top + 7),
             (rect.right - margen_x * 0.9, rect.top + 2),

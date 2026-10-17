@@ -1,20 +1,27 @@
 """Punto de entrada del juego de plataformas procedural.
 
-El módulo coordina la ventana de Pygame, la generación de niveles, el
-personaje y la transición visual. La lógica especializada vive en
-``eventos.py``, ``personaje.py`` y ``transicion.py`` para mantener este
-archivo centrado en el bucle principal.
+Este módulo contiene la clase ``Juego``, que coordina el bucle principal
+(eventos -> física -> hitos de historia -> render). El resto vive aparte:
+
+* ``constantes``  tamaño de pantalla, FPS, spawn y niveles clave.
+* ``ajustes``     carga/validación de configuración y volumen.
+* ``niveles``     generación de niveles y creación del jugador.
+* ``combo``       seguimiento del combo de trucos.
+* ``render``      ventana/escalado del lienzo y viñeta de peligro.
+* ``hud``         fuentes, aviso inicial y textos del HUD.
+* ``eventos``, ``personaje``, ``transicion``... lógica especializada.
 """
 
 import math
 import random
 import sys
 
-import numpy as np
 import pygame
 
-from dificultad import parametros_dificultad, parametros_dificultad_infinito
+from ajustes import IDIOMAS_DISPONIBLES, aplicar_volumen_audio, preparar_configuracion
 from catarsis import play_catarsis_animation
+from combo import Combo
+from constantes import FPS, HEIGHT, NIVEL_DESPERTAR, NIVEL_FINAL, POS_SPAWN, WIDTH
 from eventos import (
     ESTADO_ADVERTENCIA,
     ESTADO_CREDITOS,
@@ -25,1108 +32,721 @@ from eventos import (
     ESTADO_PAUSA,
     ESTADO_TRANSICION,
     DependenciasEventos,
-    EventosVisuales,
     EstadoEventos,
+    EventosVisuales,
     escala_grises,
     opacidad_nivel,
     procesar_eventos,
     saturacion_nivel,
 )
 from fondo import ParticulaAbstracta, dibujar_fondo_segmentado
-from enemigo import generar_entidades
+from hud import HUD, Fuentes, PantallaAdvertencia, crear_fuente_boton
 from idioma import texto
 from menu import MenuInicio
-from opciones import MenuOpciones, cargar_configuracion, guardar_configuracion, normalizar_configuracion
+from niveles import (
+    ajustar_dificultad_jugador,
+    crear_jugador,
+    dibujar_nivel,
+    generar_nivel,
+)
+from opciones import MenuOpciones, guardar_configuracion
 from pausa import MenuPausa
 from personaje import PersonajeHumanoide
-from plataformas import Plataforma, color_desde_hue
+from plataformas import color_desde_hue
+from render import Presentador, crear_vineta_peligro
 from transicion import TransicionCaricaturesca
 
-# --------------------------------------------------------------------------
-# Configuración general
-# --------------------------------------------------------------------------
-WIDTH, HEIGHT = 800, 600
-FPS = 60
-MARGEN_SALTO_SEGURO = 20
+# Atributos de ``Juego`` que ``procesar_eventos`` puede leer y modificar a
+# través de ``EstadoEventos`` (se copian ida y vuelta en cada fotograma).
+CAMPOS_EVENTOS = (
+    "jugando", "estado", "estado_despues_opciones", "jugador", "nivel",
+    "modo_infinito", "puntaje", "plataformas", "hue_fondo", "hue_jugador",
+    "entidades", "transicion", "texto_boton", "tamano_fuente", "fuente_boton",
+    "superficie_texto_boton",
+)
 
-POS_SPAWN = pygame.Vector2(120, 235)  # centro del punto de aparición del jugador
-
-
-def crear_vineta_peligro(ancho, alto):
-    """Prepara UNA VEZ (no en cada fotograma) una superficie con una viñeta
-    roja radial: transparente en el centro, más opaca hacia los bordes.
-
-    Se usa como aviso de que un enemigo está muy cerca: cada fotograma solo
-    hace falta ajustar su transparencia global (``set_alpha``) según
-    ``alerta_enemigos`` y pegarla (un solo ``blit``), así que es barata de
-    mantener en el bucle principal aunque el cálculo con numpy que arma el
-    degradado -relativamente caro- se hace solo aquí, al iniciar el juego.
-    """
-    y, x = np.mgrid[0:alto, 0:ancho]
-    centro_x, centro_y = ancho / 2, alto / 2
-    distancia = np.sqrt(((x - centro_x) / centro_x) ** 2 + ((y - centro_y) / centro_y) ** 2)
-    alpha = np.clip((distancia - 0.55) / (1.3 - 0.55), 0.0, 1.0) ** 1.6
-
-    rgba = np.zeros((alto, ancho, 4), dtype=np.uint8)
-    rgba[:, :, 0] = 175  # tinte rojo de advertencia
-    rgba[:, :, 1] = 15
-    rgba[:, :, 2] = 15
-    rgba[:, :, 3] = (alpha * 235).astype(np.uint8)
-    superficie = pygame.image.frombuffer(rgba.tobytes(), (ancho, alto), "RGBA")
-    return superficie.convert_alpha()
+FRECUENCIA_FONDO = 1 / 20  # el fondo abstracto se redibuja a 20 Hz
 
 
-def aplicar_volumen_audio(configuracion, jugador=None):
-    """Aplica el volumen general a todas las fuentes de audio del juego."""
-    volumen = max(
-        0.0,
-        min(
-            1.0,
-            float(
-                configuracion.get(
-                    "volumen_musica",
-                    configuracion.get("volumen_efectos", 0.8),
-                )
+class Juego:
+    def __init__(self, nivel_inicial=None, idioma_inicial="en"):
+        if idioma_inicial not in IDIOMAS_DISPONIBLES:
+            idioma_inicial = "en"
+
+        pygame.init()
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+
+        self.configuracion = preparar_configuracion(idioma_inicial)
+        self._crear_ventana()
+        self.reloj = pygame.time.Clock()
+
+        self.fuentes = Fuentes()
+        self.hud = HUD(self.fuentes, WIDTH, HEIGHT)
+        self.advertencia = PantallaAdvertencia(self.fuentes, WIDTH)
+        self._crear_boton_reintentar(idioma_inicial)
+        self.boton_creditos_menu = pygame.Rect(20, 62, 245, 38)
+        self._crear_capas()
+
+        self.eventos_visuales = EventosVisuales(WIDTH, HEIGHT)
+        self.combo = Combo()
+
+        # Estado de la partida
+        self.estado = ESTADO_ADVERTENCIA
+        self.jugando = True
+        self.modo_infinito = False
+        self.puntaje = 0
+        self.transicion = None
+        self.despertar_mostrado = False
+        self.estado_despues_opciones = ESTADO_MENU
+        self.resumen_combo = 0
+        self.resumen_expira = 0
+
+        # Efectos de cámara
+        self.intensidad_shake = 0.0  # sacudida: da sensación de impacto/velocidad
+        self.alerta_enemigos = 0.0   # 0-1: cercanía del enemigo más próximo
+
+        if nivel_inicial is None:
+            self.nivel = self.configuracion["nivel_guardado"]
+        else:
+            self.nivel = max(1, int(nivel_inicial))
+        self._preparar_partida(self.nivel)
+        self.particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
+        aplicar_volumen_audio(self.configuracion, self.jugador)
+
+        self._crear_menus()
+        self.dependencias_eventos = DependenciasEventos(
+            width=WIDTH,
+            height=HEIGHT,
+            pos_spawn=POS_SPAWN,
+            menu=self.menu,
+            pausa=self.pausa,
+            opciones=self.opciones,
+            configuracion=self.configuracion,
+            generar_nivel=generar_nivel,
+            color_desde_hue=color_desde_hue,
+            crear_jugador=PersonajeHumanoide,
+            ajustar_dificultad_jugador=ajustar_dificultad_jugador,
+            aplicar_volumen_audio=aplicar_volumen_audio,
+            guardar_configuracion=guardar_configuracion,
+            texto=texto,
+        )
+
+        # Física con paso fijo, desacoplada del render.
+        self.paso_fisica = 1 / FPS
+        self.acumulador_fisica = self.paso_fisica
+
+    # ------------------------------------------------------------------
+    # Inicialización
+    # ------------------------------------------------------------------
+    def _crear_ventana(self):
+        resolucion = MenuOpciones.RESOLUCIONES[self.configuracion["resolucion"]]
+        flags = pygame.FULLSCREEN if self.configuracion["pantalla_completa"] else 0
+        self.pantalla = Presentador(WIDTH, HEIGHT, resolucion, flags)
+        self.lienzo = self.pantalla.lienzo
+        pygame.display.set_caption(texto(self.configuracion["idioma"], "window_title"))
+
+    def _crear_boton_reintentar(self, idioma):
+        self.boton_reintentar = pygame.Rect(WIDTH // 2 - 110, HEIGHT // 2 + 45, 220, 52)
+        self.texto_boton = texto(idioma, "retry")
+        self.tamano_fuente, self.fuente_boton = crear_fuente_boton(
+            self.texto_boton, self.boton_reintentar.width - 28
+        )
+        self.superficie_texto_boton = self.fuente_boton.render(
+            self.texto_boton, True, (255, 245, 255)
+        )
+
+    def _crear_capas(self):
+        """Superficies reutilizadas en cada fotograma (se crean una sola vez)."""
+        tamano = (WIDTH, HEIGHT)
+        self.escena = pygame.Surface(tamano)
+        self.capa_nivel_anterior = pygame.Surface(tamano)  # foto fija del nivel que se deja atrás
+        self.capa_nivel_nuevo = pygame.Surface(tamano)
+        self.fondo_cache = pygame.Surface(tamano)
+        self.capa_opacidad = pygame.Surface(tamano, pygame.SRCALPHA)
+        self.vineta_peligro = crear_vineta_peligro(WIDTH, HEIGHT)
+        self.opacidad_mostrada = None
+        self.nivel_fondo = None
+        self.tiempo_ultimo_fondo = -1.0
+
+    def _crear_menus(self):
+        cfg = self.configuracion
+        self.menu = MenuInicio(
+            WIDTH,
+            HEIGHT,
+            nombre_video="image29.gif" if cfg.get("juego_completado") else "image.gif",
+            idioma=cfg["idioma"],
+            escala_ui=cfg["escala_ui"],
+        )
+        self.menu.establecer_nivel_guardado(self.nivel)
+        self.menu.establecer_modo_infinito_desbloqueado(cfg.get("juego_completado", False))
+        self.menu.establecer_mejor_puntaje_infinito(cfg["mejor_puntaje_infinito"])
+        self.pausa = MenuPausa(
+            WIDTH, HEIGHT, idioma=cfg["idioma"], escala_ui=cfg["escala_ui"]
+        )
+        self.opciones = MenuOpciones(WIDTH, HEIGHT, cfg)
+
+    def _preparar_partida(self, nivel):
+        """Genera el nivel dado y un jugador nuevo ajustado a su dificultad."""
+        self.plataformas, self.hue_fondo, self.hue_jugador, self.entidades = (
+            generar_nivel(nivel)
+        )
+        self.jugador = crear_jugador(
+            self.hue_jugador, self.configuracion["volumen_efectos"]
+        )
+        ajustar_dificultad_jugador(self.jugador, nivel)
+
+    def guardar_nivel_guardado(self, nivel_a_guardar):
+        self.configuracion["nivel_guardado"] = max(1, int(nivel_a_guardar))
+        guardar_configuracion(self.configuracion)
+        self.menu.establecer_nivel_guardado(self.configuracion["nivel_guardado"])
+
+    @property
+    def hay_gif_game_over(self):
+        ev = self.eventos_visuales
+        return self.estado == ESTADO_GAME_OVER and (
+            bool(ev.gif_game_over) or ev.game_over_nivel_alto_activo
+        )
+
+    # ------------------------------------------------------------------
+    # Bucle principal
+    # ------------------------------------------------------------------
+    def ejecutar(self):
+        while self.jugando:
+            # Limita el avance tras una pausa del sistema; el acumulador hace
+            # varios pasos pequeños si el render no alcanza los 60 FPS.
+            dt = min(self.reloj.tick(FPS) / 1000.0, 0.25)
+            self.acumulador_fisica += dt
+            tiempo = pygame.time.get_ticks() / 1000.0
+
+            self.eventos_visuales.actualizar_flashback(
+                self.nivel, self.estado, tiempo, ESTADO_JUGANDO
+            )
+            self._procesar_eventos()
+
+            if self.estado == ESTADO_MENU:
+                self.menu.actualizar()
+
+            while self.acumulador_fisica >= self.paso_fisica:
+                self._actualizar_mundo(self.paso_fisica)
+                self.acumulador_fisica -= self.paso_fisica
+
+            self._comprobar_hitos_de_historia()
+            self.eventos_visuales.actualizar_flashbacks_especiales(tiempo)
+
+            self._dibujar(dt, tiempo)
+            pygame.display.flip()
+
+        self._cerrar()
+
+    def _cerrar(self):
+        if not self.modo_infinito:
+            volver_al_inicio = self.estado in (ESTADO_GAME_OVER, ESTADO_CREDITOS)
+            self.guardar_nivel_guardado(1 if volver_al_inicio else self.nivel)
+        self.eventos_visuales.detener_audio_game_over()
+        pygame.quit()
+
+    # ------------------------------------------------------------------
+    # Eventos
+    # ------------------------------------------------------------------
+    def _procesar_eventos(self):
+        estado_antes = self.estado
+        contexto = EstadoEventos(
+            screen=self.pantalla.screen,
+            boton_reintentar=self.boton_reintentar,
+            idioma_mostrado=self.hud.idioma_mostrado,
+            boton_creditos_menu=self.boton_creditos_menu,
+            creditos_listos=self.eventos_visuales.creditos_listos(
+                pygame.time.get_ticks()
             ),
-        ),
-    )
-    configuracion["volumen_musica"] = volumen
-    configuracion["volumen_efectos"] = volumen
-    if pygame.mixer.get_init():
-        pygame.mixer.music.set_volume(volumen)
-    if jugador is not None:
-        jugador.ajustar_volumen_efectos(volumen)
-
-
-# --------------------------------------------------------------------------
-# Generación de niveles
-# --------------------------------------------------------------------------
-def generar_nivel(nivel, modo_infinito=False):
-    """Crea un nivel y devuelve sus plataformas y colores base.
-
-    Args:
-        nivel: Número del nivel actual.
-        modo_infinito: Activa la curva infinita y conserva enemigos/trampas
-            después del nivel 30, sin cambiar la curva de historia.
-
-    Returns:
-        Una tupla ``(plataformas, hue_fondo, hue_jugador, entidades)``.
-    """
-    parametros = (
-        parametros_dificultad_infinito(nivel)
-        if modo_infinito
-        else parametros_dificultad(nivel)
-    )
-    prob_movil = parametros["probabilidad_plataforma_movil"]
-
-    plataformas = [
-        Plataforma(50, 300, 150, 20, random.random(), probabilidad_movimiento=prob_movil)
-    ]
-    plataforma_guia = plataformas[0].rect
-    ultimo_x = plataforma_guia.right
-
-    if nivel >= 17:
-        cantidad_plataformas = random.randint(5, 7)
-        distancia_x = (95, 165)
-        desplazamiento_y = (-150, 150)
-    elif nivel >= 10:
-        cantidad_plataformas = random.randint(8, 12)
-        distancia_x = (35, 90)
-        desplazamiento_y = (-125, 110)
-    else:
-        cantidad_plataformas = random.randint(7, 10)
-        distancia_x = (25, 70)
-        desplazamiento_y = (-85, 75)
-
-    altura_maxima_salto = PersonajeHumanoide.altura_maxima_salto(
-        parametros["gravedad_jugador"]
-    )
-    altura_alcanzable = max(
-        0, altura_maxima_salto - MARGEN_SALTO_SEGURO
-    )
-    for indice in range(cantidad_plataformas):
-        w = random.randint(50, 115) if nivel >= 10 else random.randint(65, 135)
-        x = ultimo_x + random.randint(*distancia_x)
-        while True:
-            y = max(
-                70,
-                min(
-                    HEIGHT - 50,
-                    plataforma_guia.top + random.randint(*desplazamiento_y),
-                ),
-            )
-            if plataforma_guia.top - y <= altura_alcanzable:
-                break
-        es_trampa = (
-            nivel >= 10 and (modo_infinito or nivel < 30)
-            and random.random() < 0.28
+            **{campo: getattr(self, campo) for campo in CAMPOS_EVENTOS},
         )
-        plataforma_nueva = Plataforma(
-            x, y, w, 20, random.random(), es_trampa, probabilidad_movimiento=prob_movil
-        )
-        plataformas.append(plataforma_nueva)
-        plataforma_guia = plataforma_nueva.rect
-        ultimo_x = plataforma_guia.right
+        procesar_eventos(pygame.event.get(), contexto, self.dependencias_eventos)
 
-        # Las rutas opcionales aparecen como decisiones laterales y no
-        # reemplazan la ruta principal. En niveles medios también pueden
-        # convertirse en caminos falsos.
-        if nivel >= 10 and indice % 2 == 1 and random.random() < 0.65:
-            x_opcional = x + random.randint(-35, 35)
-            y_opcional = max(70, min(HEIGHT - 50, y + random.randint(-145, 145)))
-            ancho_opcional = random.randint(45, 95)
-            falso = nivel <= 16 and random.random() < 0.30
-            plataformas.append(
-                Plataforma(
-                    x_opcional,
-                    y_opcional,
-                    ancho_opcional,
-                    20,
-                    random.random(),
-                    (modo_infinito or nivel < 30)
-                    and (falso or random.random() < 0.20),
-                    probabilidad_movimiento=prob_movil,
-                )
-            )
+        self.pantalla.screen = contexto.screen
+        self.hud.idioma_mostrado = contexto.idioma_mostrado
+        for campo in CAMPOS_EVENTOS:
+            setattr(self, campo, getattr(contexto, campo))
 
-    hue_fondo = random.random()
-    hue_jugador = random.random()
-    entidades = (
-        generar_entidades(
-            nivel,
-            plataformas,
-            POS_SPAWN,
-            velocidad_patrulla=parametros["velocidad_enemigo_patrulla"],
-            velocidad_persecucion=parametros["velocidad_enemigo_persecucion"],
-            rango_deteccion=parametros["rango_deteccion_enemigo"],
-            ancho_pantalla=WIDTH,
-            alto_pantalla=HEIGHT,
-            cantidad_maxima=6 if modo_infinito else 4,
-        )
-        if modo_infinito or nivel < 30
-        else []
-    )
-    return plataformas, hue_fondo, hue_jugador, entidades
+        if estado_antes == ESTADO_GAME_OVER and self.estado != ESTADO_GAME_OVER:
+            self.eventos_visuales.detener_audio_game_over()
+        if estado_antes == ESTADO_CREDITOS and self.estado == ESTADO_MENU:
+            self._reiniciar_tras_creditos()
 
+    def _reiniciar_tras_creditos(self):
+        self.eventos_visuales.final_juego_activo = False
+        # Tras completar el juego, el menú muestra la imagen de victoria.
+        self.menu.establecer_video("image29.gif")
+        self.modo_infinito = False
+        self.puntaje = 0
+        self.nivel = 1
+        self.guardar_nivel_guardado(1)
+        self._preparar_partida(self.nivel)
 
-def ajustar_dificultad_jugador(jugador, nivel, modo_infinito=False):
-    """Aumenta el ritmo sin hacer que los primeros niveles sean bruscos."""
-    parametros = (
-        parametros_dificultad_infinito(nivel)
-        if modo_infinito
-        else parametros_dificultad(nivel)
-    )
-    jugador.velocidad = parametros["velocidad_jugador"]
-    jugador.gravedad = parametros["gravedad_jugador"]
-    jugador.actualizar_nivel(nivel)
+    # ------------------------------------------------------------------
+    # Actualización del mundo (un paso de física)
+    # ------------------------------------------------------------------
+    def _actualizar_mundo(self, dt):
+        self._decaer_efectos()
 
+        if self.estado == ESTADO_JUGANDO:
+            self._actualizar_jugando()
+        elif self.estado == ESTADO_GAME_OVER:
+            self._actualizar_game_over(dt)
+        elif self.estado == ESTADO_TRANSICION:
+            self._actualizar_transicion()
 
-def dibujar_nivel(capa, fondo, plataformas, entidades, tiempo, nivel):
-    """Pinta un nivel completo (fondo, plataformas y enemigos) en ``capa``.
-
-    Se usa durante la transición: cada nivel se dibuja en su propia capa del
-    tamaño de la pantalla y la cámara las desliza una junto a la otra.
-    El personaje no se incluye: se dibuja aparte, por encima de todo.
-    """
-    capa.blit(fondo, (0, 0))
-    for plataforma in plataformas:
-        plataforma.dibujar(capa, tiempo, nivel)
-    for entidad in entidades:
-        entidad.dibujar(capa, tiempo)
-
-
-# --------------------------------------------------------------------------
-# Juego
-# --------------------------------------------------------------------------
-def main(nivel_inicial=None, idioma_inicial="en"):
-    """Inicializa Pygame y ejecuta el bucle de eventos, física y renderizado."""
-    idiomas_disponibles = {"en", "es", "pt", "ru"}
-    if idioma_inicial not in idiomas_disponibles:
-        idioma_inicial = "en"
-
-    pygame.init()
-    if not pygame.mixer.get_init():
-        pygame.mixer.init()
-    configuracion_guardada = cargar_configuracion()
-    configuracion = normalizar_configuracion(configuracion_guardada)
-    configuracion["resoluciones"] = MenuOpciones.RESOLUCIONES
-    configuracion["idioma"] = configuracion.get("idioma", idioma_inicial)
-    if configuracion["idioma"] not in idiomas_disponibles:
-        configuracion["idioma"] = idioma_inicial
-    configuracion["resolucion"] = max(
-        0,
-        min(
-            configuracion.get("resolucion", 0),
-            len(MenuOpciones.RESOLUCIONES) - 1,
-        ),
-    )
-    configuracion["pantalla_completa"] = bool(
-        configuracion.get("pantalla_completa", False)
-    )
-    configuracion["volumen_musica"] = max(
-        0.0, min(1.0, float(configuracion.get("volumen_musica", 0.8)))
-    )
-    configuracion["volumen_efectos"] = max(
-        0.0, min(1.0, float(configuracion.get("volumen_efectos", 0.8)))
-    )
-    configuracion["escala_ui"] = float(configuracion.get("escala_ui", 1.0))
-    if configuracion["escala_ui"] not in MenuOpciones.ESCALAS_UI:
-        configuracion["escala_ui"] = 1.0
-    configuracion["controles"] = MenuOpciones.DEFAULTS["controles"].copy()
-    configuracion["controles"].update(
-        configuracion_guardada.get("controles", {})
-    )
-
-    resolucion = MenuOpciones.RESOLUCIONES[configuracion["resolucion"]]
-    flags_pantalla = (
-        pygame.FULLSCREEN if configuracion["pantalla_completa"] else 0
-    )
-    screen = pygame.display.set_mode(resolucion, flags_pantalla)
-    lienzo = pygame.Surface((WIDTH, HEIGHT))
-    superficie_escalada = None
-
-    def presentar_lienzo():
-        nonlocal superficie_escalada
-        tamano_pantalla = screen.get_size()
-        if tamano_pantalla == lienzo.get_size():
-            screen.blit(lienzo, (0, 0))
-            return
+        if self.estado == ESTADO_JUGANDO:
+            for plataforma in self.plataformas:
+                plataforma.actualizar(dt)
 
         if (
-            superficie_escalada is None
-            or superficie_escalada.get_size() != tamano_pantalla
+            self.estado in (ESTADO_JUGANDO, ESTADO_TRANSICION, ESTADO_GAME_OVER)
+            and not self.hay_gif_game_over
         ):
-            superficie_escalada = pygame.Surface(tamano_pantalla).convert()
-        # ``scale`` es notablemente más rápido que ``smoothscale`` y para el
-        # estilo pixel-art/caricaturesco del juego la diferencia visual es
-        # mínima. Esta operación corre 60 veces por segundo.
-        pygame.transform.scale(
-            lienzo, tamano_pantalla, superficie_escalada
-        )
-        screen.blit(superficie_escalada, (0, 0))
-
-    pygame.display.set_caption(
-        texto(configuracion["idioma"], "window_title")
-    )
-    clock = pygame.time.Clock()
-    font = pygame.font.Font(None, 36)
-    font_advertencia_titulo = pygame.font.Font(None, 46)
-    font_advertencia_titulo.set_bold(True)
-    font_advertencia = pygame.font.Font(None, 26)
-    font_advertencia_prompt = pygame.font.Font(None, 22)
-    boton_reintentar = pygame.Rect(WIDTH // 2 - 110, HEIGHT // 2 + 45, 220, 52)
-    texto_boton = texto(idioma_inicial, "retry")
-    tamano_fuente = 36
-    fuente_boton = pygame.font.Font(None, tamano_fuente)
-    fuente_boton.set_bold(True)
-    while tamano_fuente > 16 and fuente_boton.size(texto_boton)[0] > boton_reintentar.width - 28:
-        tamano_fuente -= 1
-        fuente_boton = pygame.font.Font(None, tamano_fuente)
-        fuente_boton.set_bold(True)
-    superficie_texto_boton = fuente_boton.render(texto_boton, True, (255, 245, 255))
-    boton_creditos_menu = pygame.Rect(20, 62, 245, 38)
-    fuente_boton_creditos = pygame.font.SysFont("comicsansms", 14, bold=True)
-    idioma_advertencia_mostrado = None
-    textos_advertencia = None
-    escena = pygame.Surface((WIDTH, HEIGHT))
-    capa_nivel_anterior = pygame.Surface((WIDTH, HEIGHT))  # foto fija del nivel que se deja atrás
-    capa_nivel_nuevo = pygame.Surface((WIDTH, HEIGHT))
-    fondo_cache = pygame.Surface((WIDTH, HEIGHT))
-    capa_opacidad = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    vineta_peligro = crear_vineta_peligro(WIDTH, HEIGHT)
-    panel_texto = pygame.Surface((220, 78), pygame.SRCALPHA)
-    panel_texto.fill((0, 0, 0, 90))
-    nivel_mostrado = None
-    idioma_mostrado = None
-    texto_nivel = None
-    opacidad_mostrada = None
-    nivel_fondo = None
-    intensidad_shake = 0.0  # sacudida de cámara: da sensación de impacto/velocidad
-    alerta_enemigos = 0.0  # 0-1: qué tan cerca está el enemigo más próximo
-    tiempo_ultimo_fondo = -1.0
-    combo_actual = 0
-    combo_mejor_nivel = 0
-    combo_expira = 0
-    resumen_combo = 0
-    resumen_expira = 0
-    combo_hud_clave = None
-    combo_hud_superficie = None
-    resumen_clave = None
-    resumen_superficies = None
-    modo_infinito = False
-    puntaje = 0
-    fuente_combo = pygame.font.Font(None, 26)
-    fuente_combo.set_bold(True)
-    fuente_resumen = pygame.font.Font(None, 32)
-    fuente_resumen.set_bold(True)
-    eventos_visuales = EventosVisuales(WIDTH, HEIGHT)
-
-    if nivel_inicial is None:
-        nivel = configuracion["nivel_guardado"]
-    else:
-        nivel = max(1, int(nivel_inicial))
-    plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
-    particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
-
-    jugador = PersonajeHumanoide(
-        *POS_SPAWN,
-        color_desde_hue(hue_jugador),
-        configuracion["volumen_efectos"],
-        dash_habilitado=True,
-    )
-    jugador.rect.center = POS_SPAWN
-    ajustar_dificultad_jugador(jugador, nivel)
-    aplicar_volumen_audio(configuracion, jugador)
-
-    estado = ESTADO_ADVERTENCIA
-    transicion = None
-    despertar_mostrado = False
-    menu = MenuInicio(
-        WIDTH,
-        HEIGHT,
-        nombre_video=(
-            "image29.gif"
-            if configuracion.get("juego_completado")
-            else "image.gif"
-        ),
-        idioma=configuracion["idioma"],
-        escala_ui=configuracion["escala_ui"],
-    )
-    menu.establecer_nivel_guardado(nivel)
-    menu.establecer_modo_infinito_desbloqueado(
-        configuracion.get("juego_completado", False)
-    )
-    menu.establecer_mejor_puntaje_infinito(
-        configuracion["mejor_puntaje_infinito"]
-    )
-    pausa = MenuPausa(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
-    opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
-    estado_despues_opciones = ESTADO_MENU
-    jugando = True
-
-    dependencias_eventos = DependenciasEventos(
-        width=WIDTH,
-        height=HEIGHT,
-        pos_spawn=POS_SPAWN,
-        menu=menu,
-        pausa=pausa,
-        opciones=opciones,
-        configuracion=configuracion,
-        generar_nivel=generar_nivel,
-        color_desde_hue=color_desde_hue,
-        crear_jugador=PersonajeHumanoide,
-        ajustar_dificultad_jugador=ajustar_dificultad_jugador,
-        aplicar_volumen_audio=aplicar_volumen_audio,
-        guardar_configuracion=guardar_configuracion,
-        texto=texto,
-    )
-
-    def guardar_nivel_guardado(nivel_a_guardar):
-        configuracion["nivel_guardado"] = max(1, int(nivel_a_guardar))
-        guardar_configuracion(configuracion)
-        menu.establecer_nivel_guardado(configuracion["nivel_guardado"])
-
-    # Conserva la física histórica por fotograma, desacoplándola del render.
-    paso_fisica = 1 / FPS
-    acumulador_fisica = paso_fisica
-
-    def actualizar_mundo(dt):
-        nonlocal intensidad_shake, alerta_enemigos
-        nonlocal jugador, estado, nivel, plataformas
-        nonlocal hue_fondo, hue_jugador, entidades, transicion
-        nonlocal combo_actual, combo_mejor_nivel, combo_expira
-        nonlocal resumen_combo, resumen_expira
-        nonlocal puntaje
-
-        tiempo_mundo = pygame.time.get_ticks() / 1000.0
-        intensidad_shake *= 0.82
-        if intensidad_shake < 0.05:
-            intensidad_shake = 0.0
-        alerta_enemigos *= 0.9
-        if alerta_enemigos < 0.02:
-            alerta_enemigos = 0.0
-
-        hay_gif_game_over = (
-            estado == ESTADO_GAME_OVER
-            and (
-                bool(eventos_visuales.gif_game_over)
-                or eventos_visuales.game_over_nivel_alto_activo
-            )
-        )
-        if estado == ESTADO_JUGANDO:
-            en_aire_antes = not jugador.en_suelo
-            dash_activo = jugador.dash_restante > 0
-            jugador.mover(plataformas, configuracion["controles"])
-            ahora_combo = pygame.time.get_ticks()
-            if jugador._salto_ejecutado_este_frame and en_aire_antes:
-                registrar_truco(ahora_combo)
-            if jugador.dash_ejecutado_este_frame:
-                registrar_truco(ahora_combo)
-                jugador.dash_ejecutado_este_frame = False
-            if not eventos_visuales.evento_flashback_especial_activo:
-                for entidad in entidades:
-                    entidad.mover(plataformas, jugador.rect)
-                alerta_enemigos = max(
-                    alerta_enemigos,
-                    max(
-                        (entidad.nivel_alerta() for entidad in entidades),
-                        default=0.0,
-                    ),
-                )
-                if alerta_enemigos > 0:
-                    intensidad_shake = max(
-                        intensidad_shake, alerta_enemigos * 2.2
-                    )
-
-            if jugador.en_suelo and en_aire_antes:
-                intensidad_shake = max(intensidad_shake, 3.5)
-
-            plataforma_pisada = jugador.plataforma_actual
-            if (
-                jugador.en_suelo
-                and plataforma_pisada is not None
-                and plataforma_pisada.es_trampa
-            ):
-                plataforma_pisada.activar_trampa()
-                if plataforma_pisada.lista_para_caer:
-                    jugador.iniciar_engullido(plataforma_pisada)
-                    intensidad_shake = 9.0
-                    eventos_visuales.iniciar_game_over(
-                        nivel,
-                        pygame.time.get_ticks(),
-                        volumen_efectos=configuracion["volumen_efectos"],
-                        modo_infinito=modo_infinito,
-                    )
-                    estado = ESTADO_GAME_OVER
-                else:
-                    intensidad_shake = max(intensidad_shake, 2.0)
-
-            if estado == ESTADO_JUGANDO and not dash_activo and any(
-                entidad.rect.colliderect(jugador.rect) for entidad in entidades
-            ):
-                intensidad_shake = 9.0
-                eventos_visuales.iniciar_game_over(
-                    nivel,
-                    pygame.time.get_ticks(),
-                    volumen_efectos=configuracion["volumen_efectos"],
-                    modo_infinito=modo_infinito,
-                )
-                estado = ESTADO_GAME_OVER
-                combo_actual = 0
-                combo_mejor_nivel = 0
-                combo_expira = 0
-
-            salio_por_la_derecha = jugador.rect.centerx >= WIDTH
-            salio_por_otro_borde = (
-                jugador.rect.top > HEIGHT or jugador.rect.right < 0
-            )
-            if salio_por_la_derecha:
-                resumen_combo = combo_mejor_nivel
-                resumen_expira = pygame.time.get_ticks() + 1800
-                if modo_infinito:
-                    puntaje += nivel * 100 + combo_mejor_nivel * 25
-                    if puntaje > configuracion["mejor_puntaje_infinito"]:
-                        configuracion["mejor_puntaje_infinito"] = puntaje
-                        guardar_configuracion(configuracion)
-                        menu.establecer_mejor_puntaje_infinito(puntaje)
-                combo_actual = 0
-                combo_mejor_nivel = 0
-                combo_expira = 0
-                dibujar_nivel(
-                    capa_nivel_anterior,
-                    fondo_cache,
-                    plataformas,
-                    entidades,
-                    tiempo_mundo,
-                    nivel,
-                )
-                nivel += 1
-                if not modo_infinito:
-                    eventos_visuales.entrar_nivel(nivel, tiempo_mundo)
-                color_origen = jugador.color
-                pos_origen = pygame.Vector2(jugador.rect.center)
-
-                plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(
-                    nivel, modo_infinito
-                )
-                color_destino = color_desde_hue(hue_jugador)
-                transicion = TransicionCaricaturesca(
-                    color_origen,
-                    color_destino,
-                    pos_origen,
-                    POS_SPAWN,
-                    nivel=nivel,
-                    volumen_efectos=configuracion["volumen_efectos"],
-                    suelo_spawn=plataformas[0].rect.top,
-                    ancho_pantalla=WIDTH,
-                )
-                jugador.vel_y = 0
-                ajustar_dificultad_jugador(jugador, nivel, modo_infinito)
-                estado = ESTADO_TRANSICION
-            elif salio_por_otro_borde:
-                intensidad_shake = 9.0
-                eventos_visuales.iniciar_game_over(
-                    nivel,
-                    pygame.time.get_ticks(),
-                    seleccionar_por_nivel=False,
-                    volumen_efectos=configuracion["volumen_efectos"],
-                    modo_infinito=modo_infinito,
-                )
-                estado = ESTADO_GAME_OVER
-                combo_actual = 0
-                combo_mejor_nivel = 0
-                combo_expira = 0
-
-        elif estado == ESTADO_GAME_OVER:
-            combo_actual = 0
-            combo_mejor_nivel = 0
-            combo_expira = 0
-            resumen_expira = 0
-            for plataforma in plataformas:
-                plataforma.actualizar(dt)
-            if jugador.muriendo:
-                jugador.actualizar_engullido()
-            elif any(plataforma.trampa_activada for plataforma in plataformas):
-                jugador.rect.y += 3
-
-        elif estado == ESTADO_TRANSICION:
-            transicion_terminada = transicion.actualizar(jugador)
-            for fuerza_impacto in transicion.recoger_impactos():
-                intensidad_shake = max(intensidad_shake, fuerza_impacto)
-            if transicion_terminada:
-                plataforma_spawn = plataformas[0]
-                jugador.rect.bottom = plataforma_spawn.rect_colision().top
-                jugador.en_suelo = True
-                jugador.plataforma_actual = plataforma_spawn
-                jugador.vel_y = 0
-                jugador._resto_y = 0.0
-                aplicar_volumen_audio(configuracion, jugador)
-                estado = ESTADO_JUGANDO
-
-        if estado == ESTADO_JUGANDO:
-            for plataforma in plataformas:
-                plataforma.actualizar(dt)
-
-        hay_gif_game_over = (
-            estado == ESTADO_GAME_OVER
-            and (
-                bool(eventos_visuales.gif_game_over)
-                or eventos_visuales.game_over_nivel_alto_activo
-            )
-        )
-        if estado in (
-            ESTADO_JUGANDO,
-            ESTADO_TRANSICION,
-            ESTADO_GAME_OVER,
-        ) and not hay_gif_game_over:
-            for particula in particulas:
+            for particula in self.particulas:
                 particula.actualizar(dt)
 
-        if combo_actual and pygame.time.get_ticks() > combo_expira:
-            combo_actual = 0
-        if estado == ESTADO_GAME_OVER:
-            if not modo_infinito and configuracion["nivel_guardado"] != 1:
-                guardar_nivel_guardado(1)
-        elif not modo_infinito and estado in (ESTADO_JUGANDO, ESTADO_TRANSICION):
-            if configuracion["nivel_guardado"] != nivel:
-                guardar_nivel_guardado(nivel)
+        self.combo.actualizar(pygame.time.get_ticks())
+        self._sincronizar_nivel_guardado()
 
-    def registrar_truco(ahora):
-        nonlocal combo_actual, combo_mejor_nivel, combo_expira
-        if ahora > combo_expira:
-            combo_actual = 0
-        combo_actual += 1
-        combo_mejor_nivel = max(combo_mejor_nivel, combo_actual)
-        combo_expira = ahora + 2000
+    def _decaer_efectos(self):
+        self.intensidad_shake *= 0.82
+        if self.intensidad_shake < 0.05:
+            self.intensidad_shake = 0.0
+        self.alerta_enemigos *= 0.9
+        if self.alerta_enemigos < 0.02:
+            self.alerta_enemigos = 0.0
 
-    while jugando:
-        # Limita el avance tras una pausa del sistema; el acumulador hace
-        # varios pasos pequeños si el render no alcanza los 60 FPS.
-        dt = min(clock.tick(FPS) / 1000.0, 0.25)
-        acumulador_fisica += dt
-        tiempo = pygame.time.get_ticks() / 1000.0
+    def _actualizar_jugando(self):
+        jugador = self.jugador
+        en_aire_antes = not jugador.en_suelo
+        dash_activo = jugador.dash_restante > 0
 
-        eventos_visuales.actualizar_flashback(
-            nivel, estado, tiempo, ESTADO_JUGANDO
-        )
+        jugador.mover(self.plataformas, self.configuracion["controles"])
+        ahora = pygame.time.get_ticks()
+        if jugador._salto_ejecutado_este_frame and en_aire_antes:
+            self.combo.registrar(ahora)
+        if jugador.dash_ejecutado_este_frame:
+            self.combo.registrar(ahora)
+            jugador.dash_ejecutado_este_frame = False
 
-        estado_antes_eventos = estado
-        contexto_eventos = EstadoEventos(
-            screen=screen,
-            jugando=jugando,
-            estado=estado,
-            estado_despues_opciones=estado_despues_opciones,
-            jugador=jugador,
-            nivel=nivel,
-            modo_infinito=modo_infinito,
-            puntaje=puntaje,
-            plataformas=plataformas,
-            hue_fondo=hue_fondo,
-            hue_jugador=hue_jugador,
-            entidades=entidades,
-            transicion=transicion,
-            boton_reintentar=boton_reintentar,
-            texto_boton=texto_boton,
-            tamano_fuente=tamano_fuente,
-            fuente_boton=fuente_boton,
-            superficie_texto_boton=superficie_texto_boton,
-            idioma_mostrado=idioma_mostrado,
-            boton_creditos_menu=boton_creditos_menu,
-            creditos_listos=eventos_visuales.creditos_listos(
-                pygame.time.get_ticks()
-            ),
-        )
-        procesar_eventos(
-            pygame.event.get(), contexto_eventos, dependencias_eventos
-        )
-        screen = contexto_eventos.screen
-        jugando = contexto_eventos.jugando
-        estado = contexto_eventos.estado
-        estado_despues_opciones = contexto_eventos.estado_despues_opciones
-        modo_infinito = contexto_eventos.modo_infinito
-        puntaje = contexto_eventos.puntaje
-        jugador = contexto_eventos.jugador
-        nivel = contexto_eventos.nivel
-        plataformas = contexto_eventos.plataformas
-        hue_fondo = contexto_eventos.hue_fondo
-        hue_jugador = contexto_eventos.hue_jugador
-        entidades = contexto_eventos.entidades
-        transicion = contexto_eventos.transicion
-        texto_boton = contexto_eventos.texto_boton
-        tamano_fuente = contexto_eventos.tamano_fuente
-        fuente_boton = contexto_eventos.fuente_boton
-        superficie_texto_boton = contexto_eventos.superficie_texto_boton
-        idioma_mostrado = contexto_eventos.idioma_mostrado
+        if not self.eventos_visuales.evento_flashback_especial_activo:
+            self._mover_enemigos()
 
-        if estado_antes_eventos == ESTADO_GAME_OVER and estado != ESTADO_GAME_OVER:
-            eventos_visuales.detener_audio_game_over()
+        if jugador.en_suelo and en_aire_antes:
+            self.intensidad_shake = max(self.intensidad_shake, 3.5)
 
-        if estado_antes_eventos == ESTADO_CREDITOS and estado == ESTADO_MENU:
-            eventos_visuales.final_juego_activo = False
-            # Tras completar el juego, el menú muestra la imagen de victoria.
-            menu.establecer_video("image29.gif")
-            modo_infinito = False
-            puntaje = 0
-            nivel = 1
-            guardar_nivel_guardado(1)
-            plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
-            jugador = PersonajeHumanoide(
-                *POS_SPAWN,
-                color_desde_hue(hue_jugador),
-                configuracion["volumen_efectos"],
-                dash_habilitado=True,
-            )
-            jugador.rect.center = POS_SPAWN
-            ajustar_dificultad_jugador(jugador, nivel)
-            menu.establecer_nivel_guardado(nivel)
-
-        if estado == ESTADO_MENU:
-            menu.actualizar()
-
-        while acumulador_fisica >= paso_fisica:
-            actualizar_mundo(paso_fisica)
-            acumulador_fisica -= paso_fisica
+        self._comprobar_trampa()
 
         if (
-            estado == ESTADO_JUGANDO
-            and not modo_infinito
-            and nivel == 30
-            and not despertar_mostrado
+            self.estado == ESTADO_JUGANDO
+            and not dash_activo
+            and any(e.rect.colliderect(jugador.rect) for e in self.entidades)
         ):
-            despertar_mostrado = True
-            play_catarsis_animation(
-                screen,
-                clock,
-                exit_text=texto(configuracion["idioma"], "exit"),
-                button_renderer=menu,
+            self._iniciar_game_over()
+            self.combo.reiniciar()
+
+        salio_por_la_derecha = jugador.rect.centerx >= WIDTH
+        salio_por_otro_borde = jugador.rect.top > HEIGHT or jugador.rect.right < 0
+        if salio_por_la_derecha:
+            self._pasar_al_siguiente_nivel()
+        elif salio_por_otro_borde:
+            self._iniciar_game_over(seleccionar_por_nivel=False)
+            self.combo.reiniciar()
+
+    def _mover_enemigos(self):
+        for entidad in self.entidades:
+            entidad.mover(self.plataformas, self.jugador.rect)
+        self.alerta_enemigos = max(
+            self.alerta_enemigos,
+            max((e.nivel_alerta() for e in self.entidades), default=0.0),
+        )
+        if self.alerta_enemigos > 0:
+            self.intensidad_shake = max(
+                self.intensidad_shake, self.alerta_enemigos * 2.2
             )
 
-        if (
-            estado == ESTADO_JUGANDO
-            and not modo_infinito
-            and nivel >= 40
-            and not eventos_visuales.final_juego_activo
-        ):
-            eventos_visuales.iniciar_final_juego(pygame.time.get_ticks())
-            estado = ESTADO_CREDITOS
-            nivel = 40
-            # El jugador llegó al nivel final: el juego queda completado y el
-            # menú principal pasará a mostrar la imagen de victoria.
-            if not configuracion.get("juego_completado"):
-                configuracion["juego_completado"] = True
-                guardar_configuracion(configuracion)
-            menu.establecer_modo_infinito_desbloqueado(True)
-
-        eventos_visuales.actualizar_flashbacks_especiales(tiempo)
-
-        # --- Renderizado ---
-        if estado == ESTADO_ADVERTENCIA:
-            lienzo.fill((8, 8, 12))
-            if idioma_advertencia_mostrado != configuracion["idioma"]:
-                idioma_advertencia_mostrado = configuracion["idioma"]
-                textos_advertencia = (
-                    (
-                        font_advertencia_titulo.render(
-                            texto(idioma_advertencia_mostrado, "epilepsy_warning_title"),
-                            True,
-                            (255, 210, 80),
-                        ),
-                        (WIDTH // 2, 190),
-                    ),
-                    (
-                        font_advertencia.render(
-                            texto(idioma_advertencia_mostrado, "epilepsy_warning_line_1"),
-                            True,
-                            (245, 245, 245),
-                        ),
-                        (WIDTH // 2, 275),
-                    ),
-                    (
-                        font_advertencia.render(
-                            texto(idioma_advertencia_mostrado, "epilepsy_warning_line_2"),
-                            True,
-                            (245, 245, 245),
-                        ),
-                        (WIDTH // 2, 315),
-                    ),
-                    (
-                        font_advertencia_prompt.render(
-                            texto(
-                                idioma_advertencia_mostrado,
-                                "epilepsy_warning_continue",
-                            ),
-                            True,
-                            (180, 180, 190),
-                        ),
-                        (WIDTH // 2, 430),
-                    ),
-                )
-            for superficie_texto, centro in textos_advertencia:
-                lienzo.blit(
-                    superficie_texto,
-                    superficie_texto.get_rect(center=centro),
-                )
-            presentar_lienzo()
-        elif estado == ESTADO_MENU:
-            posicion_raton = pygame.mouse.get_pos()
-            posicion_raton_logica = (
-                int(posicion_raton[0] * WIDTH / screen.get_width()),
-                int(posicion_raton[1] * HEIGHT / screen.get_height()),
-            )
-            menu.dibujar(lienzo, posicion_raton_logica)
-            presentar_lienzo()
-        elif estado == ESTADO_CREDITOS:
-            creditos_listos = eventos_visuales.creditos_listos(
-                pygame.time.get_ticks()
-            )
-            eventos_visuales.dibujar_final_juego(
-                lienzo,
-                pygame.time.get_ticks(),
-                jugador,
-                configuracion["idioma"],
-            )
-            if creditos_listos:
-                posicion_raton = pygame.mouse.get_pos()
-                posicion_raton_logica = (
-                    int(posicion_raton[0] * WIDTH / screen.get_width()),
-                    int(posicion_raton[1] * HEIGHT / screen.get_height()),
-                )
-                hover_creditos = boton_creditos_menu.collidepoint(
-                    posicion_raton_logica
-                )
-                rect_boton_creditos = menu._dibujar_boton_comic(
-                    lienzo, boton_creditos_menu, hover_creditos
-                )
-                menu._texto_centrado(
-                    lienzo,
-                    texto(configuracion["idioma"], "return_main_menu"),
-                    fuente_boton_creditos,
-                    rect_boton_creditos.center,
-                    (255, 255, 255),
-                )
-            presentar_lienzo()
-        elif estado == ESTADO_PAUSA:
-            posicion_raton = pygame.mouse.get_pos()
-            posicion_raton_logica = (
-                int(posicion_raton[0] * WIDTH / screen.get_width()),
-                int(posicion_raton[1] * HEIGHT / screen.get_height()),
-            )
-            pausa.dibujar(lienzo, posicion_raton_logica, dt)
-            presentar_lienzo()
-        elif estado == ESTADO_OPCIONES:
-            opciones.dibujar(lienzo, dt=dt)
-            presentar_lienzo()
+    def _comprobar_trampa(self):
+        jugador = self.jugador
+        plataforma = jugador.plataforma_actual
+        if not (jugador.en_suelo and plataforma is not None and plataforma.es_trampa):
+            return
+        plataforma.activar_trampa()
+        if plataforma.lista_para_caer:
+            jugador.iniciar_engullido(plataforma)
+            self._iniciar_game_over()
         else:
-            # La escena se dibuja aparte para poder desaturarla como un todo
-            # antes de mezclarla con el resto de la interfaz.
-            hay_gif_game_over = (
-                estado == ESTADO_GAME_OVER
-                and (
-                    bool(eventos_visuales.gif_game_over)
-                    or eventos_visuales.game_over_nivel_alto_activo
-                )
-            )
+            self.intensidad_shake = max(self.intensidad_shake, 2.0)
 
-            if not hay_gif_game_over:
-                fotograma_flashback = (
-                    eventos_visuales.obtener_fotograma_flashback(tiempo)
-                )
-
-                # El fondo abstracto es lo más pesado de dibujar; con las
-                # optimizaciones de fondo.py ya es mucho más barato, pero
-                # de todas formas no hace falta recalcularlo en cada
-                # fotograma: sus formas se mueven lento y a 20 Hz (cada 3
-                # fotogramas a 60 FPS) sigue viéndose fluido.
-                if (
-                    tiempo - tiempo_ultimo_fondo >= 1 / 20
-                    or nivel != nivel_fondo
-                ):
-                    dibujar_fondo_segmentado(fondo_cache, tiempo, hue_fondo, WIDTH, HEIGHT, nivel)
-                    nivel_fondo = nivel
-                    tiempo_ultimo_fondo = tiempo
-                if estado == ESTADO_TRANSICION:
-                    # Los dos niveles se dibujan uno junto al otro y la cámara
-                    # se desliza del viejo al nuevo siguiendo al personaje.
-                    camara = int(round(transicion.desplazamiento_camara()))
-                    dibujar_nivel(capa_nivel_nuevo, fondo_cache, plataformas, entidades, tiempo, nivel)
-                    escena.blit(capa_nivel_anterior, (-camara, 0))
-                    escena.blit(capa_nivel_nuevo, (WIDTH - camara, 0))
-
-                    for particula in particulas:
-                        particula.dibujar(escena, tiempo)
-
-                    # Foco y cara primero; el personaje va por encima para que
-                    # no lo tape la oscuridad.
-                    transicion.dibujar(escena)
-                    jugador.dibujar(escena)
-                else:
-                    if fotograma_flashback is not None:
-                        escena.blit(fotograma_flashback, (0, 0))
-                    else:
-                        escena.blit(fondo_cache, (0, 0))
-
-                    for particula in particulas:
-                        particula.dibujar(escena, tiempo)
-
-                    for plataforma in plataformas:
-                        plataforma.dibujar(escena, tiempo, nivel)
-
-                    for entidad in entidades:
-                        entidad.dibujar(escena, tiempo)
-
-                    jugador.dibujar(escena)
-
-                # El color se atenúa al avanzar; desde el nivel 30 vuelve en
-                # tonos apagados. Durante la transición el cambio sigue a la cámara.
-                nivel_visual = nivel - 1 + transicion.progreso_camara() if estado == ESTADO_TRANSICION else nivel
-                escala_grises(escena, saturacion_nivel(nivel_visual))
-                if intensidad_shake > 0:
-                    lienzo.fill((0, 0, 0))
-                    offset = (
-                        random.uniform(-intensidad_shake, intensidad_shake),
-                        random.uniform(-intensidad_shake, intensidad_shake),
-                    )
-                    lienzo.blit(escena, offset)
-                else:
-                    lienzo.blit(escena, (0, 0))
-
-                if alerta_enemigos > 0.02:
-                    # Pulso suave para que la viñeta "respire" en vez de
-                    # quedarse fija, como un latido que se acelera con el
-                    # peligro (el propio halo del enemigo, en enemigo.py,
-                    # ya pulsa más rápido cerca; esto lo refuerza en toda
-                    # la pantalla).
-                    pulso = 0.85 + 0.15 * math.sin(tiempo * (4.0 + 4.0 * alerta_enemigos))
-                    vineta_peligro.set_alpha(int(255 * min(1.0, alerta_enemigos) * pulso))
-                    lienzo.blit(vineta_peligro, (0, 0))
-
-            # La escena se vuelve progresivamente más opaca al avanzar.
-            alpha_opacidad = opacidad_nivel(nivel)
-            if alpha_opacidad > 0:
-                if alpha_opacidad != opacidad_mostrada:
-                    capa_opacidad.fill((0, 0, 0, alpha_opacidad))
-                    opacidad_mostrada = alpha_opacidad
-                lienzo.blit(capa_opacidad, (0, 0))
-
-            lienzo.blit(panel_texto, (6, 6))
-            nivel_hud = nivel - 1 if estado == ESTADO_TRANSICION and transicion.progreso_camara() < 0.5 else nivel
-            if nivel_hud != nivel_mostrado or configuracion["idioma"] != idioma_mostrado:
-                texto_nivel = font.render(
-                    f"{texto(configuracion['idioma'], 'level')}: {nivel_hud}",
-                    True,
-                    (255, 255, 255),
-                )
-                nivel_mostrado = nivel_hud
-                idioma_mostrado = configuracion["idioma"]
-            lienzo.blit(texto_nivel, (14, 10))
-            if modo_infinito and estado != ESTADO_GAME_OVER:
-                superficie_puntaje = fuente_combo.render(
-                    f"{texto(configuracion['idioma'], 'score')}: {puntaje}",
-                    True,
-                    (255, 221, 87),
-                )
-                lienzo.blit(superficie_puntaje, (14, 48))
-
-            clave_hud_combo = (
-                configuracion["idioma"],
-                combo_actual if tiempo * 1000 <= combo_expira else 0,
-                configuracion["controles"]["dash"],
-                jugador.dashes_disponibles > 0
-                and jugador.dash_enfriamiento <= 0,
-            )
-            if clave_hud_combo != combo_hud_clave:
-                combo_hud_clave = clave_hud_combo
-                idioma_hud, combo_visible, tecla_dash, dash_listo = clave_hud_combo
-                lineas_hud = []
-                if combo_visible > 0:
-                    lineas_hud.append(
-                        fuente_combo.render(
-                            f"{texto(idioma_hud, 'combo')} x{combo_visible}",
-                            True,
-                            (255, 225, 100),
-                        )
-                    )
-                lineas_hud.append(
-                    fuente_combo.render(
-                        f"{pygame.key.name(tecla_dash).upper()}: "
-                        f"{texto(idioma_hud, 'dash')} "
-                        f"{texto(idioma_hud, 'ready') if dash_listo else '...'}",
-                        True,
-                        (130, 255, 190) if dash_listo else (165, 165, 175),
-                    )
-                )
-                combo_hud_superficie = lineas_hud
-            for indice, linea_hud in enumerate(combo_hud_superficie):
-                rect_hud = linea_hud.get_rect(topright=(WIDTH - 14, 10 + indice * 26))
-                lienzo.blit(linea_hud, rect_hud)
-
-            if (
-                estado == ESTADO_TRANSICION
-                and pygame.time.get_ticks() <= resumen_expira
-            ):
-                clave_resumen = (
-                    configuracion["idioma"],
-                    nivel - 1,
-                    resumen_combo,
-                )
-                if clave_resumen != resumen_clave:
-                    resumen_clave = clave_resumen
-                    idioma_resumen, nivel_resumen, combo_resumen = clave_resumen
-                    resumen_superficies = (
-                        fuente_resumen.render(
-                            f"{texto(idioma_resumen, 'level_clear')} "
-                            f"{nivel_resumen}",
-                            True,
-                            (255, 245, 205),
-                        ),
-                        fuente_combo.render(
-                            f"{texto(idioma_resumen, 'best_combo')} "
-                            f"x{combo_resumen}",
-                            True,
-                            (255, 215, 105),
-                        ),
-                    )
-                for linea, y in zip(resumen_superficies, (58, 92)):
-                    lienzo.blit(
-                        linea,
-                        linea.get_rect(center=(WIDTH // 2, y)),
-                    )
-
-            if estado == ESTADO_GAME_OVER:
-                eventos_visuales.dibujar_game_over(
-                    lienzo,
-                    nivel,
-                    pygame.time.get_ticks(),
-                    tiempo,
-                )
-                if modo_infinito:
-                    mejor_puntaje = configuracion["mejor_puntaje_infinito"]
-                    resultado_puntaje = fuente_resumen.render(
-                        f"{texto(configuracion['idioma'], 'score')}: {puntaje}",
-                        True,
-                        (255, 245, 205),
-                    )
-                    resultado_record = fuente_combo.render(
-                        f"{texto(configuracion['idioma'], 'best_score')}: "
-                        f"{mejor_puntaje}",
-                        True,
-                        (255, 221, 87),
-                    )
-                    lienzo.blit(
-                        resultado_puntaje,
-                        resultado_puntaje.get_rect(
-                            center=(WIDTH // 2, HEIGHT // 2 + 2)
-                        ),
-                    )
-                    lienzo.blit(
-                        resultado_record,
-                        resultado_record.get_rect(
-                            center=(WIDTH // 2, HEIGHT // 2 + 31)
-                        ),
-                    )
-
-                ahora_boton = pygame.time.get_ticks() / 1000.0
-                posicion_raton = pygame.mouse.get_pos()
-                posicion_raton_logica = (
-                    int(posicion_raton[0] * WIDTH / screen.get_width()),
-                    int(posicion_raton[1] * HEIGHT / screen.get_height()),
-                )
-                hover_boton = boton_reintentar.collidepoint(posicion_raton_logica)
-
-                rect_boton = menu._dibujar_boton_comic(lienzo, boton_reintentar, hover_boton)
-                texto_retry = texto(configuracion["idioma"], "retry")
-                menu._texto_centrado(
-                    lienzo,
-                    texto_retry,
-                    menu.font_prompt,
-                    rect_boton.center,
-                    (255, 255, 255),
-                )
-
-                if hover_boton:
-                    pulso_boton = (math.sin(ahora_boton * 4.0) + 1.0) * 0.5
-                    brillo = int(180 + pulso_boton * 75)
-                    pygame.draw.line(
-                        lienzo,
-                        (255, brillo, 255),
-                        rect_boton.topleft,
-                        (rect_boton.right, rect_boton.top),
-                        2,
-                    )
-
-            eventos_visuales.dibujar_flashback_especial(
-                lienzo,
-                tiempo,
-                configuracion["idioma"],
-                font,
-                font_advertencia_titulo,
-                texto,
-            )
-
-            presentar_lienzo()
-
-        pygame.display.flip()
-
-    if not modo_infinito:
-        guardar_nivel_guardado(
-            1 if estado in (ESTADO_GAME_OVER, ESTADO_CREDITOS) else nivel
+    def _iniciar_game_over(self, **opciones):
+        """Dispara el game over; ``opciones`` se pasan a ``iniciar_game_over``."""
+        self.intensidad_shake = 9.0
+        self.eventos_visuales.iniciar_game_over(
+            self.nivel,
+            pygame.time.get_ticks(),
+            volumen_efectos=self.configuracion["volumen_efectos"],
+            modo_infinito=self.modo_infinito,
+            **opciones,
         )
-    eventos_visuales.detener_audio_game_over()
-    pygame.quit()
+        self.estado = ESTADO_GAME_OVER
+
+    def _pasar_al_siguiente_nivel(self):
+        cfg = self.configuracion
+        tiempo_mundo = pygame.time.get_ticks() / 1000.0
+
+        self.resumen_combo = self.combo.mejor_nivel
+        self.resumen_expira = pygame.time.get_ticks() + 1800
+        if self.modo_infinito:
+            self.puntaje += self.nivel * 100 + self.combo.mejor_nivel * 25
+            if self.puntaje > cfg["mejor_puntaje_infinito"]:
+                cfg["mejor_puntaje_infinito"] = self.puntaje
+                guardar_configuracion(cfg)
+                self.menu.establecer_mejor_puntaje_infinito(self.puntaje)
+        self.combo.reiniciar()
+
+        # Foto del nivel que se deja atrás para la transición de cámara.
+        dibujar_nivel(
+            self.capa_nivel_anterior, self.fondo_cache, self.plataformas,
+            self.entidades, tiempo_mundo, self.nivel,
+        )
+        self.nivel += 1
+        if not self.modo_infinito:
+            self.eventos_visuales.entrar_nivel(self.nivel, tiempo_mundo)
+
+        color_origen = self.jugador.color
+        pos_origen = pygame.Vector2(self.jugador.rect.center)
+        self.plataformas, self.hue_fondo, self.hue_jugador, self.entidades = (
+            generar_nivel(self.nivel, self.modo_infinito)
+        )
+        self.transicion = TransicionCaricaturesca(
+            color_origen,
+            color_desde_hue(self.hue_jugador),
+            pos_origen,
+            POS_SPAWN,
+            nivel=self.nivel,
+            volumen_efectos=cfg["volumen_efectos"],
+            suelo_spawn=self.plataformas[0].rect.top,
+            ancho_pantalla=WIDTH,
+        )
+        self.jugador.vel_y = 0
+        ajustar_dificultad_jugador(self.jugador, self.nivel, self.modo_infinito)
+        self.estado = ESTADO_TRANSICION
+
+    def _actualizar_game_over(self, dt):
+        self.combo.reiniciar()
+        self.resumen_expira = 0
+        for plataforma in self.plataformas:
+            plataforma.actualizar(dt)
+        if self.jugador.muriendo:
+            self.jugador.actualizar_engullido()
+        elif any(p.trampa_activada for p in self.plataformas):
+            self.jugador.rect.y += 3
+
+    def _actualizar_transicion(self):
+        terminada = self.transicion.actualizar(self.jugador)
+        for fuerza in self.transicion.recoger_impactos():
+            self.intensidad_shake = max(self.intensidad_shake, fuerza)
+        if not terminada:
+            return
+        jugador = self.jugador
+        plataforma_spawn = self.plataformas[0]
+        jugador.rect.bottom = plataforma_spawn.rect_colision().top
+        jugador.en_suelo = True
+        jugador.plataforma_actual = plataforma_spawn
+        jugador.vel_y = 0
+        jugador._resto_y = 0.0
+        aplicar_volumen_audio(self.configuracion, jugador)
+        self.estado = ESTADO_JUGANDO
+
+    def _sincronizar_nivel_guardado(self):
+        if self.modo_infinito:
+            return
+        if self.estado == ESTADO_GAME_OVER:
+            if self.configuracion["nivel_guardado"] != 1:
+                self.guardar_nivel_guardado(1)
+        elif self.estado in (ESTADO_JUGANDO, ESTADO_TRANSICION):
+            if self.configuracion["nivel_guardado"] != self.nivel:
+                self.guardar_nivel_guardado(self.nivel)
+
+    # ------------------------------------------------------------------
+    # Hitos de historia
+    # ------------------------------------------------------------------
+    def _comprobar_hitos_de_historia(self):
+        en_historia = self.estado == ESTADO_JUGANDO and not self.modo_infinito
+
+        if en_historia and self.nivel == NIVEL_DESPERTAR and not self.despertar_mostrado:
+            self.despertar_mostrado = True
+            play_catarsis_animation(
+                self.pantalla.screen,
+                self.reloj,
+                exit_text=texto(self.configuracion["idioma"], "exit"),
+                button_renderer=self.menu,
+            )
+
+        if (
+            en_historia
+            and self.nivel >= NIVEL_FINAL
+            and not self.eventos_visuales.final_juego_activo
+        ):
+            self.eventos_visuales.iniciar_final_juego(pygame.time.get_ticks())
+            self.estado = ESTADO_CREDITOS
+            self.nivel = NIVEL_FINAL
+            # El juego queda completado: el menú pasará a mostrar la imagen
+            # de victoria y se desbloquea el modo infinito.
+            if not self.configuracion.get("juego_completado"):
+                self.configuracion["juego_completado"] = True
+                guardar_configuracion(self.configuracion)
+            self.menu.establecer_modo_infinito_desbloqueado(True)
+
+    # ------------------------------------------------------------------
+    # Render
+    # ------------------------------------------------------------------
+    def _dibujar(self, dt, tiempo):
+        idioma = self.configuracion["idioma"]
+        estado = self.estado
+
+        if estado == ESTADO_ADVERTENCIA:
+            self.advertencia.dibujar(self.lienzo, idioma)
+        elif estado == ESTADO_MENU:
+            self.menu.dibujar(self.lienzo, self.pantalla.posicion_raton_logica())
+        elif estado == ESTADO_CREDITOS:
+            self._dibujar_creditos()
+        elif estado == ESTADO_PAUSA:
+            self.pausa.dibujar(self.lienzo, self.pantalla.posicion_raton_logica(), dt)
+        elif estado == ESTADO_OPCIONES:
+            self.opciones.dibujar(self.lienzo, dt=dt)
+        else:
+            self._dibujar_partida(tiempo)
+
+        self.pantalla.presentar()
+
+    def _dibujar_creditos(self):
+        idioma = self.configuracion["idioma"]
+        ahora = pygame.time.get_ticks()
+        creditos_listos = self.eventos_visuales.creditos_listos(ahora)
+        self.eventos_visuales.dibujar_final_juego(self.lienzo, ahora, self.jugador, idioma)
+        if not creditos_listos:
+            return
+        hover = self.boton_creditos_menu.collidepoint(
+            self.pantalla.posicion_raton_logica()
+        )
+        rect = self.menu._dibujar_boton_comic(self.lienzo, self.boton_creditos_menu, hover)
+        self.menu._texto_centrado(
+            self.lienzo,
+            texto(idioma, "return_main_menu"),
+            self.fuentes.boton_creditos,
+            rect.center,
+            (255, 255, 255),
+        )
+
+    def _dibujar_partida(self, tiempo):
+        """Escena de juego (jugando, transición o game over) con su HUD."""
+        if not self.hay_gif_game_over:
+            self._dibujar_escena(tiempo)
+        self._dibujar_opacidad()
+        self._dibujar_hud(tiempo)
+        if self.estado == ESTADO_GAME_OVER:
+            self._dibujar_game_over(tiempo)
+        self.eventos_visuales.dibujar_flashback_especial(
+            self.lienzo,
+            tiempo,
+            self.configuracion["idioma"],
+            self.fuentes.base,
+            self.fuentes.titulo_advertencia,
+            texto,
+        )
+
+    def _dibujar_escena(self, tiempo):
+        """La escena se dibuja aparte para poder desaturarla como un todo
+        antes de mezclarla con el resto de la interfaz."""
+        fotograma_flashback = self.eventos_visuales.obtener_fotograma_flashback(tiempo)
+        self._actualizar_fondo(tiempo)
+
+        if self.estado == ESTADO_TRANSICION:
+            self._componer_transicion(tiempo)
+        else:
+            self._componer_nivel(tiempo, fotograma_flashback)
+
+        # El color se atenúa al avanzar; desde el nivel 30 vuelve en tonos
+        # apagados. Durante la transición el cambio sigue a la cámara.
+        nivel_visual = self.nivel
+        if self.estado == ESTADO_TRANSICION:
+            nivel_visual = self.nivel - 1 + self.transicion.progreso_camara()
+        escala_grises(self.escena, saturacion_nivel(nivel_visual))
+
+        self._volcar_escena_con_shake()
+        self._dibujar_vineta_peligro(tiempo)
+
+    def _actualizar_fondo(self, tiempo):
+        # El fondo abstracto es lo más pesado de dibujar y sus formas se
+        # mueven lento: a 20 Hz sigue viéndose fluido.
+        if (
+            tiempo - self.tiempo_ultimo_fondo >= FRECUENCIA_FONDO
+            or self.nivel != self.nivel_fondo
+        ):
+            dibujar_fondo_segmentado(
+                self.fondo_cache, tiempo, self.hue_fondo, WIDTH, HEIGHT, self.nivel
+            )
+            self.nivel_fondo = self.nivel
+            self.tiempo_ultimo_fondo = tiempo
+
+    def _componer_transicion(self, tiempo):
+        # Los dos niveles se dibujan uno junto al otro y la cámara se desliza
+        # del viejo al nuevo siguiendo al personaje.
+        camara = int(round(self.transicion.desplazamiento_camara()))
+        dibujar_nivel(
+            self.capa_nivel_nuevo, self.fondo_cache, self.plataformas,
+            self.entidades, tiempo, self.nivel,
+        )
+        self.escena.blit(self.capa_nivel_anterior, (-camara, 0))
+        self.escena.blit(self.capa_nivel_nuevo, (WIDTH - camara, 0))
+        for particula in self.particulas:
+            particula.dibujar(self.escena, tiempo)
+        # Foco y cara primero; el personaje va por encima para que no lo
+        # tape la oscuridad.
+        self.transicion.dibujar(self.escena)
+        self.jugador.dibujar(self.escena)
+
+    def _componer_nivel(self, tiempo, fotograma_flashback):
+        escena = self.escena
+        if fotograma_flashback is not None:
+            escena.blit(fotograma_flashback, (0, 0))
+        else:
+            escena.blit(self.fondo_cache, (0, 0))
+        for particula in self.particulas:
+            particula.dibujar(escena, tiempo)
+        for plataforma in self.plataformas:
+            plataforma.dibujar(escena, tiempo, self.nivel)
+        for entidad in self.entidades:
+            entidad.dibujar(escena, tiempo)
+        self.jugador.dibujar(escena)
+
+    def _volcar_escena_con_shake(self):
+        if self.intensidad_shake > 0:
+            self.lienzo.fill((0, 0, 0))
+            offset = (
+                random.uniform(-self.intensidad_shake, self.intensidad_shake),
+                random.uniform(-self.intensidad_shake, self.intensidad_shake),
+            )
+            self.lienzo.blit(self.escena, offset)
+        else:
+            self.lienzo.blit(self.escena, (0, 0))
+
+    def _dibujar_vineta_peligro(self, tiempo):
+        if self.alerta_enemigos <= 0.02:
+            return
+        # Pulso suave: un latido que se acelera con el peligro (el halo del
+        # enemigo, en enemigo.py, ya pulsa más rápido cerca; esto lo refuerza
+        # en toda la pantalla).
+        pulso = 0.85 + 0.15 * math.sin(tiempo * (4.0 + 4.0 * self.alerta_enemigos))
+        self.vineta_peligro.set_alpha(
+            int(255 * min(1.0, self.alerta_enemigos) * pulso)
+        )
+        self.lienzo.blit(self.vineta_peligro, (0, 0))
+
+    def _dibujar_opacidad(self):
+        """La escena se vuelve progresivamente más opaca al avanzar."""
+        alpha = opacidad_nivel(self.nivel)
+        if alpha <= 0:
+            return
+        if alpha != self.opacidad_mostrada:
+            self.capa_opacidad.fill((0, 0, 0, alpha))
+            self.opacidad_mostrada = alpha
+        self.lienzo.blit(self.capa_opacidad, (0, 0))
+
+    def _dibujar_hud(self, tiempo):
+        cfg = self.configuracion
+        idioma = cfg["idioma"]
+        hud, lienzo = self.hud, self.lienzo
+
+        en_primera_mitad = (
+            self.estado == ESTADO_TRANSICION
+            and self.transicion.progreso_camara() < 0.5
+        )
+        hud.dibujar_nivel(lienzo, idioma, self.nivel - 1 if en_primera_mitad else self.nivel)
+        if self.modo_infinito and self.estado != ESTADO_GAME_OVER:
+            hud.dibujar_puntaje(lienzo, idioma, self.puntaje)
+
+        jugador = self.jugador
+        dash_listo = jugador.dashes_disponibles > 0 and jugador.dash_enfriamiento <= 0
+        combo_visible = self.combo.visible(tiempo)
+        hud.dibujar_combo_y_dash(
+            lienzo,
+            idioma,
+            0 if self.modo_infinito else combo_visible,
+            cfg["controles"]["dash"],
+            dash_listo,
+        )
+        if self.modo_infinito and self.estado == ESTADO_JUGANDO:
+            hud.dibujar_combo_infinito(lienzo, idioma, combo_visible, tiempo)
+
+        if (
+            self.estado == ESTADO_TRANSICION
+            and pygame.time.get_ticks() <= self.resumen_expira
+        ):
+            hud.dibujar_resumen_nivel(lienzo, idioma, self.nivel - 1, self.resumen_combo)
+
+    def _dibujar_game_over(self, tiempo):
+        cfg = self.configuracion
+        self.eventos_visuales.dibujar_game_over(
+            self.lienzo, self.nivel, pygame.time.get_ticks(), tiempo
+        )
+        if self.modo_infinito:
+            self.hud.dibujar_resultado_infinito(
+                self.lienzo,
+                cfg["idioma"],
+                self.puntaje,
+                cfg["mejor_puntaje_infinito"],
+            )
+        self._dibujar_boton_reintentar()
+
+    def _dibujar_boton_reintentar(self):
+        lienzo, menu = self.lienzo, self.menu
+        hover = self.boton_reintentar.collidepoint(self.pantalla.posicion_raton_logica())
+        rect = menu._dibujar_boton_comic(lienzo, self.boton_reintentar, hover)
+        menu._texto_centrado(
+            lienzo,
+            texto(self.configuracion["idioma"], "retry"),
+            menu.font_prompt,
+            rect.center,
+            (255, 255, 255),
+        )
+        if hover:
+            pulso = (math.sin(pygame.time.get_ticks() / 1000.0 * 4.0) + 1.0) * 0.5
+            brillo = int(180 + pulso * 75)
+            pygame.draw.line(
+                lienzo, (255, brillo, 255), rect.topleft, (rect.right, rect.top), 2
+            )
+
+
+# --------------------------------------------------------------------------
+# Punto de entrada
+# --------------------------------------------------------------------------
+def main(nivel_inicial=None, idioma_inicial="en"):
+    """Crea el juego y ejecuta el bucle principal."""
+    Juego(nivel_inicial, idioma_inicial).ejecutar()
+
+
+def _valor_de_opcion(argv, opcion):
+    """Devuelve el valor que sigue a ``opcion`` en ``argv`` (o None)."""
+    if opcion in argv:
+        indice = argv.index(opcion) + 1
+        if indice < len(argv):
+            return argv[indice]
+    return None
 
 
 if __name__ == "__main__":
     nivel_inicial = None
-    idioma_inicial = "en"
-    if "--nivel" in sys.argv:
-        indice_nivel = sys.argv.index("--nivel") + 1
-        if indice_nivel < len(sys.argv):
-            try:
-                nivel_inicial = int(sys.argv[indice_nivel])
-            except ValueError:
-                pass
-    if "--idioma" in sys.argv:
-        indice_idioma = sys.argv.index("--idioma") + 1
-        if indice_idioma < len(sys.argv):
-            idioma_inicial = sys.argv[indice_idioma].lower()
+    valor_nivel = _valor_de_opcion(sys.argv, "--nivel")
+    if valor_nivel is not None:
+        try:
+            nivel_inicial = int(valor_nivel)
+        except ValueError:
+            pass
+
+    valor_idioma = _valor_de_opcion(sys.argv, "--idioma")
+    idioma_inicial = valor_idioma.lower() if valor_idioma is not None else "en"
+
     main(nivel_inicial, idioma_inicial)

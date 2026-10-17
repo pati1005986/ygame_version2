@@ -292,6 +292,10 @@ class Juego:
     # Actualización del mundo (un paso de física)
     # ------------------------------------------------------------------
     def _actualizar_mundo(self, dt):
+        # El personaje va eufórico e inquieto durante todo el modo infinito.
+        # Se sincroniza en cada paso porque el jugador puede crearse en otro
+        # módulo (el de eventos) sin conocer este modo.
+        self.jugador.euforico = self.modo_infinito
         self._decaer_efectos()
 
         if self.estado == ESTADO_JUGANDO:

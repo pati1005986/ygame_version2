@@ -58,6 +58,11 @@ class PersonajeHumanoide:
     FUERZA_SALTO = -13
     FACTOR_DOBLE_SALTO = 0.88
 
+    # Modo infinito: el personaje va eufórico e inquieto todo el rato (ver
+    # la propiedad ``euforico``). Solo cambia el aspecto y la animación,
+    # nunca la física. ENERGIA_EUFORIA acelera la caminata y la exagera.
+    ENERGIA_EUFORIA = 1.4
+
     # Dash
     DASH_FRAMES = 9
     DASH_VELOCIDAD = 15.0
@@ -123,6 +128,7 @@ class PersonajeHumanoide:
         self._halo_personaje = None
 
         # --- Expresión según el nivel (ver actualizar_nivel) ---
+        self._euforico = False
         self.paranoico = False
         self.desesperado = False
         self.cansado = False
@@ -231,14 +237,41 @@ class PersonajeHumanoide:
             if sonido is not None:
                 sonido.set_volume(self.volumen_efectos * volumen_base)
 
+    @property
+    def euforico(self):
+        """``True`` en el modo infinito: el personaje se ve eufórico y
+        frenético (ojos desorbitados con pupilas locas, sonrisa enorme que
+        late, pelo disparado, temblor, brazos que no paran, rebotes
+        impacientes). Anula la paranoia, la desesperación y el cansancio."""
+        return self._euforico
+
+    @euforico.setter
+    def euforico(self, valor):
+        valor = bool(valor)
+        if valor == self._euforico:
+            return
+        self._euforico = valor
+        if valor:
+            self.paranoico = self.desesperado = self.cansado = False
+
+    @property
+    def _energia(self):
+        return self.ENERGIA_EUFORIA if self._euforico else 1.0
+
     def actualizar_nivel(self, nivel):
         """Informa al personaje en qué nivel del juego está.
+
+        Si ``euforico`` está activo (modo infinito) no hace nada: la
+        euforia sustituye a cualquier expresión que dependa del nivel.
 
         A partir del nivel 10 el personaje adopta una expresión paranoica,
         que se vuelve desesperada desde el 21. Desde el nivel 30 queda
         cansado, sin la mirada paranoica ni los rasgos de desesperación.
         Llamar cada vez que cambie el nivel actual.
         """
+        if self._euforico:
+            self.paranoico = self.desesperado = self.cansado = False
+            return
         self.paranoico = 10 <= nivel < 30
         self.desesperado = 21 <= nivel < 30
         self.cansado = nivel >= 30
@@ -579,15 +612,15 @@ class PersonajeHumanoide:
         caminando = abs(self.vel_x) > 0.4 and self.en_suelo
         intensidad = min(1.0, abs(self.vel_x) / self.velocidad)
         if caminando:
-            self.tiempo_animacion += self.velocidad_animacion * max(0.6, intensidad)
+            self.tiempo_animacion += self.velocidad_animacion * max(0.6, intensidad) * self._energia
 
         self.amplitud_paso = self._lerp(self.amplitud_paso, intensidad if caminando else 0.0, 0.25)
         self.pose_aire = self._lerp(self.pose_aire, 0.0 if self.en_suelo else 1.0, 0.30)
 
-        objetivo_balanceo = math.sin(self.tiempo_animacion) * 8 * self.amplitud_paso if caminando else 0.0
+        objetivo_balanceo = math.sin(self.tiempo_animacion) * 8 * self.amplitud_paso * self._energia if caminando else 0.0
         self.balanceo_actual = self._lerp(self.balanceo_actual, objetivo_balanceo, self.suavizado)
 
-        objetivo_bob = abs(math.sin(self.tiempo_animacion)) * 3 * self.amplitud_paso if caminando else 0.0
+        objetivo_bob = abs(math.sin(self.tiempo_animacion)) * 3 * self.amplitud_paso * self._energia if caminando else 0.0
         self.bob_actual = self._lerp(self.bob_actual, objetivo_bob, self.suavizado)
         self.bob_cabeza_actual = self._lerp(self.bob_cabeza_actual, self.bob_actual, 0.14)
 
@@ -597,6 +630,9 @@ class PersonajeHumanoide:
             objetivo_inclinacion = 9.0 * self.dash_direccion
         elif caminando or not self.en_suelo:
             objetivo_inclinacion = max(-1.3, min(1.3, self.vel_x / self.velocidad)) * 3.5
+        elif self._euforico:
+            # Quieto pero sin poder estarse quieto: se balancea de lado a lado.
+            objetivo_inclinacion = math.sin(pygame.time.get_ticks() * 0.014) * 2.5
         else:
             objetivo_inclinacion = 0.0
         self.inclinacion_actual = self._lerp(self.inclinacion_actual, objetivo_inclinacion, 0.15)
@@ -651,14 +687,18 @@ class PersonajeHumanoide:
         elif not self.en_suelo:
             self.escala_y_objetivo = 1.08 if self.vel_y < 0 else 1.04
         else:
-            self.escala_y_objetivo = 1.0 + math.sin(self.tiempo_idle) * 0.015
+            if self._euforico:
+                # Rebotecitos impacientes sobre las puntas de los pies.
+                self.escala_y_objetivo = 1.0 + (0.5 + 0.5 * math.sin(self.tiempo_idle * 5.0)) * 0.06
+            else:
+                self.escala_y_objetivo = 1.0 + math.sin(self.tiempo_idle) * 0.015
         self.escala_y = self._lerp(self.escala_y, self.escala_y_objetivo, 0.35)
 
         if not caminando:
             self.tiempo_animacion = 0.0
 
         # --- Pasos (más frecuentes cuanto más rápido) y derrape ---
-        intervalo_paso = 260 / max(0.6, intensidad)
+        intervalo_paso = 260 / max(0.6, intensidad) / self._energia
         if caminando and ahora - self.ultimo_paso > intervalo_paso:
             if self.sonido_paso:
                 self.sonido_paso.play()
@@ -681,7 +721,7 @@ class PersonajeHumanoide:
             self._contador_derrape = 0
 
         # --- Parpadeo y mirada ociosa ---
-        if not self.parpadeando and ahora >= self.proximo_parpadeo:
+        if not self._euforico and not self.parpadeando and ahora >= self.proximo_parpadeo:
             self.parpadeando = True
             self.fin_parpadeo = ahora + 90
         elif self.parpadeando and ahora >= self.fin_parpadeo:
@@ -692,8 +732,13 @@ class PersonajeHumanoide:
             self._mirada_invertida = False
         elif ahora >= self._proxima_mirada:
             # Quieto: de vez en cuando mira "hacia atrás", como curioseando.
-            self._mirada_invertida = random.random() < 0.4
-            self._proxima_mirada = ahora + random.randint(1200, 3200)
+            if self._euforico:
+                # Mira a todos lados a cada rato.
+                self._mirada_invertida = random.random() < 0.5
+                self._proxima_mirada = ahora + random.randint(250, 700)
+            else:
+                self._mirada_invertida = random.random() < 0.4
+                self._proxima_mirada = ahora + random.randint(1200, 3200)
 
         # --- Rastro del dash y partículas ---
         for rastro in self.rastro:
@@ -889,10 +934,12 @@ class PersonajeHumanoide:
         p = self.pixel
 
         # Paleta monocromática: todo deriva de self.color
-        brillo = self._tono(1.75)
-        claro = self._tono(1.45)
-        base = self._tono(1.0)
-        medio = self._tono(0.8)
+        # Euforia: el color está un poco más vivo y "chisporrotea" en 3 pasos.
+        m = 1.10 + 0.05 * ((pygame.time.get_ticks() // 90) % 3) if self._euforico else 1.0
+        brillo = self._tono(1.75 * m)
+        claro = self._tono(1.45 * m)
+        base = self._tono(1.0 * m)
+        medio = self._tono(0.8 * m)
         oscuro = self._tono(0.62)
         muy_oscuro = self._tono(0.35)
         contorno = self._tono(0.16)
@@ -967,8 +1014,13 @@ class PersonajeHumanoide:
         # hacia atrás en el dash. ---
         brazo_alto = round(self._lerp(20, 14, agachado) / p) * p
         levantar = int(aire * (6 if subiendo else 10))
-        brazo_izq_y = torso_y + 2 - balanceo + int(agachado * 6) - levantar
-        brazo_der_y = torso_y + 2 + balanceo + int(agachado * 6) - levantar
+        balanceo_brazos = balanceo
+        if self._euforico:
+            # Brazos medio alzados y agitándose todo el tiempo.
+            balanceo_brazos += round(math.sin(pygame.time.get_ticks() * 0.022) * 6 * (1.0 - 0.6 * self.amplitud_paso))
+            levantar += p
+        brazo_izq_y = torso_y + 2 - balanceo_brazos + int(agachado * 6) - levantar
+        brazo_der_y = torso_y + 2 + balanceo_brazos + int(agachado * 6) - levantar
         brazo_desplazamiento = int(agachado * 5) * self.direccion
         if en_dash:
             brazo_desplazamiento -= self.dash_direccion * 6
@@ -991,6 +1043,8 @@ class PersonajeHumanoide:
 
         self._dibujar_pelo(lienzo, cabeza_x, cabeza_y, contorno)
         self._dibujar_cara(lienzo, cabeza_x, cabeza_y, lado_cabeza, contorno, blanco_ojo)
+        if self._euforico:
+            self._dibujar_chispas(lienzo, cabeza_x, cabeza_y, lado_cabeza, contorno)
 
         # --- Giro del doble salto ---
         if self.girando:
@@ -1038,8 +1092,8 @@ class PersonajeHumanoide:
             self._halo_personaje.get_rect(center=ancla_mundo),
         )
 
-        if self.desesperado:
-            # Temblor leve: al límite de sus fuerzas.
+        if self.desesperado or self._euforico:
+            # Temblor leve: al límite de sus fuerzas (o de pura energía).
             amplitud_temblor = self.pixel * 0.5
             ancla_mundo = (
                 ancla_mundo[0] + random.uniform(-amplitud_temblor, amplitud_temblor),
@@ -1058,7 +1112,15 @@ class PersonajeHumanoide:
             extra = -p
         else:
             extra = 0
-        for offset, alto in ((-8, p), (0, p * 2), (8, p)):
+        mechones = ((-8, p), (0, p * 2), (8, p))
+        if self._euforico:
+            # Cinco mechones de alto cambiante (cada ~70 ms) y erizados.
+            fase = pygame.time.get_ticks() // 70
+            mechones = tuple(
+                (off, p * (2 + ((fase + i) * 7) % 3)) for i, off in enumerate((-10, -5, 0, 5, 10))
+            )
+            viento = max(-1.0, min(1.0, viento + (((fase * 5) % 3) - 1) * 0.35))
+        for offset, alto in mechones:
             niveles = max(1, (alto + extra) // p)
             for nivel in range(niveles):
                 # Cuanto más arriba, más se dobla con el viento.
@@ -1069,6 +1131,27 @@ class PersonajeHumanoide:
                     cabeza_y - (nivel + 1) * p,
                     p, p, color,
                 )
+
+    def _dibujar_chispas(self, superficie, centro_x, cabeza_y, lado_cabeza, color):
+        """Rayitas de vibración alrededor de la cabeza (el recurso clásico
+        del cómic para alguien que no para quieto). Cambian de sitio y
+        parpadean ~14 veces por segundo."""
+        p = self.pixel
+        cuadro = pygame.time.get_ticks() // 70
+        cx = centro_x
+        cy = cabeza_y + lado_cabeza / 2
+        # Solo los lados y la parte alta-lateral: abajo estorban los brazos.
+        for i, grados in enumerate((-160, -130, -50, -20, 10, 170)):
+            if (cuadro + i) % 3 == 0:
+                continue
+            a = math.radians(grados)
+            r = lado_cabeza / 2 + 2 * p + p * ((cuadro + i) % 2)
+            x = cx + math.cos(a) * r
+            y = cy + math.sin(a) * r
+            if abs(math.cos(a)) > abs(math.sin(a)):
+                self._bloque(superficie, x - p, y, p * 2, p, color)
+            else:
+                self._bloque(superficie, x, y - p, p, p * 2, color)
 
     def _dibujar_cara(self, superficie, centro_x, cabeza_y, lado_cabeza, color_trazo, color_ojo):
         """Ojos y boca expresivos según el estado. Las pupilas se colocan
@@ -1088,7 +1171,12 @@ class PersonajeHumanoide:
         else:
             mirada_y = 1
 
-        if self.desesperado:
+        euf = self._euforico
+        ticks = pygame.time.get_ticks()
+        if euf:
+            # Ojos desorbitados, siempre bien abiertos.
+            tam_ojo = p * 3
+        elif self.desesperado:
             # Ojos entornados con ojeras marcadas; sin ánimo para nada más.
             tam_ojo = p
         elif self.cansado:
@@ -1104,7 +1192,7 @@ class PersonajeHumanoide:
         pupila_dx = round((mirada + 1) / 2 * huecos) * p
         pupila_dy = round((mirada_y + 1) / 2 * huecos) * p
 
-        if self.parpadeando and not en_aire and not self.paranoico and not self.desesperado and not self.cansado:
+        if self.parpadeando and not euf and not en_aire and not self.paranoico and not self.desesperado and not self.cansado:
             for lado in (-1, 1):
                 x = centro_x + lado * separacion_ojo
                 self._bloque(superficie, x - p, ojo_y + p, p * 2, p, color_trazo)
@@ -1114,11 +1202,23 @@ class PersonajeHumanoide:
                 ex = self._celda(x - tam_ojo // 2)
                 ey = self._celda(ojo_y)
                 self._bloque(superficie, ex, ey, tam_ojo, tam_ojo, color_ojo)
-                self._bloque(superficie, ex + pupila_dx, ey + pupila_dy, p, p, color_trazo)
+                dx_p, dy_p = pupila_dx, pupila_dy
+                if euf:
+                    # Cada pupila va por su lado: mirada desquiciada.
+                    paso_mirada = ticks // 65
+                    dx_p = ((paso_mirada * 5 + lado * 2) % 3) * p
+                    dy_p = ((paso_mirada * 7 + lado) % 3) * p
+                self._bloque(superficie, ex + dx_p, ey + dy_p, p, p, color_trazo)
                 if self.desesperado:
                     self._bloque(superficie, x - tam_ojo, ojo_y + tam_ojo + p, tam_ojo * 2, p, color_trazo)
                 elif self.cansado:
                     self._bloque(superficie, ex, ey, tam_ojo, p, color_trazo)
+                if euf:
+                    # Cejas altísimas que suben y bajan a destiempo.
+                    subida = p if (ticks // 110 + (lado > 0)) % 2 else 0
+                    self._bloque(superficie, ex, ey - p * 2 - subida, tam_ojo, p, color_trazo)
+                    extremo = ex + (tam_ojo - p if lado > 0 else 0)
+                    self._bloque(superficie, extremo, ey - p * 3 - subida, p, p, color_trazo)
 
         if self.desesperado:
             # Gota de sudor cayendo por la sien (ciclo de ~0.9 s).
@@ -1135,7 +1235,17 @@ class PersonajeHumanoide:
 
         # Boca (todos los bloques son múltiplos del píxel base)
         boca_y = cabeza_y + lado_cabeza * 0.81
-        if self.desesperado:
+        if euf:
+            # Sonrisa enorme que late como una risa nerviosa: abre (con
+            # dientes) y cierra unas 4 veces por segundo.
+            ancho_boca = p * 5
+            bx = centro_x - ancho_boca // 2
+            if (ticks // 110) % 2 == 0:
+                self._bloque(superficie, bx, boca_y, ancho_boca, p * 2, color_trazo)
+                self._bloque(superficie, bx + p, boca_y, ancho_boca - 2 * p, p, color_ojo)
+            else:
+                self._bloque(superficie, bx, boca_y, ancho_boca, p, color_trazo)
+        elif self.desesperado:
             ancho_boca = p * 4
             self._bloque(superficie, centro_x - ancho_boca // 2, boca_y - p, ancho_boca, p * 2, color_trazo)
         elif self.cansado:

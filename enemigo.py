@@ -751,7 +751,7 @@ def propagar_alerta(entidades, radio=240):
 
 
 # --------------------------------------------------------------------------
-# Generación por nivel (sin cambios)
+# Generación por nivel
 # --------------------------------------------------------------------------
 def generar_entidades(
     nivel,
@@ -763,12 +763,17 @@ def generar_entidades(
     rango_deteccion=220,
     ancho_pantalla=800,
     alto_pantalla=600,
+    cantidad_maxima=4,
 ):
-    """Crea las entidades grises para un nivel dado (desde el nivel 3)."""
+    """Crea las entidades grises para un nivel dado (desde el nivel 3).
+
+    ``cantidad_maxima`` permite que el modo infinito alcance una densidad
+    mayor sin modificar la cantidad de enemigos de la historia.
+    """
     if nivel < 3:
         return []
 
-    cantidad = min(1 + (nivel - 3) // 3, 4)
+    cantidad = min(1 + (nivel - 3) // 4, cantidad_maxima)
 
     ancho_entidad = 32
     alto_entidad = 58

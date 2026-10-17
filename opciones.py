@@ -651,6 +651,7 @@ def normalizar_configuracion(configuracion):
         "escala_ui": 1.0,
         "juego_completado": False,
         "nivel_guardado": 1,
+        "mejor_puntaje_infinito": 0,
         "controles": MenuOpciones.DEFAULTS["controles"].copy(),
     }
     if not isinstance(configuracion, dict):
@@ -671,6 +672,17 @@ def normalizar_configuracion(configuracion):
     nivel_guardado = base["nivel_guardado"]
     if isinstance(nivel_guardado, bool) or not isinstance(nivel_guardado, int) or nivel_guardado < 1:
         base["nivel_guardado"] = 1
+
+    mejor_puntaje = base["mejor_puntaje_infinito"]
+    if (
+        isinstance(mejor_puntaje, bool)
+        or not isinstance(mejor_puntaje, int)
+        or mejor_puntaje < 0
+    ):
+        base["mejor_puntaje_infinito"] = 0
+
+    if not isinstance(base["juego_completado"], bool):
+        base["juego_completado"] = False
 
     return base
 

@@ -13,7 +13,7 @@ import sys
 import numpy as np
 import pygame
 
-from dificultad import parametros_dificultad
+from dificultad import parametros_dificultad, parametros_dificultad_infinito
 from catarsis import play_catarsis_animation
 from eventos import (
     ESTADO_ADVERTENCIA,
@@ -101,17 +101,22 @@ def aplicar_volumen_audio(configuracion, jugador=None):
 # --------------------------------------------------------------------------
 # Generación de niveles
 # --------------------------------------------------------------------------
-def generar_nivel(nivel):
+def generar_nivel(nivel, modo_infinito=False):
     """Crea un nivel y devuelve sus plataformas y colores base.
 
     Args:
-        nivel: Número del nivel actual; aumenta gradualmente la cantidad de
-            plataformas.
+        nivel: Número del nivel actual.
+        modo_infinito: Activa la curva infinita y conserva enemigos/trampas
+            después del nivel 30, sin cambiar la curva de historia.
 
     Returns:
         Una tupla ``(plataformas, hue_fondo, hue_jugador, entidades)``.
     """
-    parametros = parametros_dificultad(nivel)
+    parametros = (
+        parametros_dificultad_infinito(nivel)
+        if modo_infinito
+        else parametros_dificultad(nivel)
+    )
     prob_movil = parametros["probabilidad_plataforma_movil"]
 
     plataformas = [
@@ -152,7 +157,10 @@ def generar_nivel(nivel):
             )
             if plataforma_guia.top - y <= altura_alcanzable:
                 break
-        es_trampa = nivel >= 10 and nivel < 30 and random.random() < 0.28
+        es_trampa = (
+            nivel >= 10 and (modo_infinito or nivel < 30)
+            and random.random() < 0.28
+        )
         plataforma_nueva = Plataforma(
             x, y, w, 20, random.random(), es_trampa, probabilidad_movimiento=prob_movil
         )
@@ -175,7 +183,8 @@ def generar_nivel(nivel):
                     ancho_opcional,
                     20,
                     random.random(),
-                    nivel < 30 and (falso or random.random() < 0.20),
+                    (modo_infinito or nivel < 30)
+                    and (falso or random.random() < 0.20),
                     probabilidad_movimiento=prob_movil,
                 )
             )
@@ -192,16 +201,21 @@ def generar_nivel(nivel):
             rango_deteccion=parametros["rango_deteccion_enemigo"],
             ancho_pantalla=WIDTH,
             alto_pantalla=HEIGHT,
+            cantidad_maxima=6 if modo_infinito else 4,
         )
-        if nivel < 30
+        if modo_infinito or nivel < 30
         else []
     )
     return plataformas, hue_fondo, hue_jugador, entidades
 
 
-def ajustar_dificultad_jugador(jugador, nivel):
+def ajustar_dificultad_jugador(jugador, nivel, modo_infinito=False):
     """Aumenta el ritmo sin hacer que los primeros niveles sean bruscos."""
-    parametros = parametros_dificultad(nivel)
+    parametros = (
+        parametros_dificultad_infinito(nivel)
+        if modo_infinito
+        else parametros_dificultad(nivel)
+    )
     jugador.velocidad = parametros["velocidad_jugador"]
     jugador.gravedad = parametros["gravedad_jugador"]
     jugador.actualizar_nivel(nivel)
@@ -320,7 +334,7 @@ def main(nivel_inicial=None, idioma_inicial="en"):
     fondo_cache = pygame.Surface((WIDTH, HEIGHT))
     capa_opacidad = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     vineta_peligro = crear_vineta_peligro(WIDTH, HEIGHT)
-    panel_texto = pygame.Surface((110, 36), pygame.SRCALPHA)
+    panel_texto = pygame.Surface((220, 78), pygame.SRCALPHA)
     panel_texto.fill((0, 0, 0, 90))
     nivel_mostrado = None
     idioma_mostrado = None
@@ -339,6 +353,8 @@ def main(nivel_inicial=None, idioma_inicial="en"):
     combo_hud_superficie = None
     resumen_clave = None
     resumen_superficies = None
+    modo_infinito = False
+    puntaje = 0
     fuente_combo = pygame.font.Font(None, 26)
     fuente_combo.set_bold(True)
     fuente_resumen = pygame.font.Font(None, 32)
@@ -377,6 +393,12 @@ def main(nivel_inicial=None, idioma_inicial="en"):
         escala_ui=configuracion["escala_ui"],
     )
     menu.establecer_nivel_guardado(nivel)
+    menu.establecer_modo_infinito_desbloqueado(
+        configuracion.get("juego_completado", False)
+    )
+    menu.establecer_mejor_puntaje_infinito(
+        configuracion["mejor_puntaje_infinito"]
+    )
     pausa = MenuPausa(WIDTH, HEIGHT, idioma=configuracion["idioma"], escala_ui=configuracion["escala_ui"])
     opciones = MenuOpciones(WIDTH, HEIGHT, configuracion)
     estado_despues_opciones = ESTADO_MENU
@@ -414,6 +436,7 @@ def main(nivel_inicial=None, idioma_inicial="en"):
         nonlocal hue_fondo, hue_jugador, entidades, transicion
         nonlocal combo_actual, combo_mejor_nivel, combo_expira
         nonlocal resumen_combo, resumen_expira
+        nonlocal puntaje
 
         tiempo_mundo = pygame.time.get_ticks() / 1000.0
         intensidad_shake *= 0.82
@@ -472,6 +495,7 @@ def main(nivel_inicial=None, idioma_inicial="en"):
                         nivel,
                         pygame.time.get_ticks(),
                         volumen_efectos=configuracion["volumen_efectos"],
+                        modo_infinito=modo_infinito,
                     )
                     estado = ESTADO_GAME_OVER
                 else:
@@ -485,6 +509,7 @@ def main(nivel_inicial=None, idioma_inicial="en"):
                     nivel,
                     pygame.time.get_ticks(),
                     volumen_efectos=configuracion["volumen_efectos"],
+                    modo_infinito=modo_infinito,
                 )
                 estado = ESTADO_GAME_OVER
                 combo_actual = 0
@@ -498,6 +523,12 @@ def main(nivel_inicial=None, idioma_inicial="en"):
             if salio_por_la_derecha:
                 resumen_combo = combo_mejor_nivel
                 resumen_expira = pygame.time.get_ticks() + 1800
+                if modo_infinito:
+                    puntaje += nivel * 100 + combo_mejor_nivel * 25
+                    if puntaje > configuracion["mejor_puntaje_infinito"]:
+                        configuracion["mejor_puntaje_infinito"] = puntaje
+                        guardar_configuracion(configuracion)
+                        menu.establecer_mejor_puntaje_infinito(puntaje)
                 combo_actual = 0
                 combo_mejor_nivel = 0
                 combo_expira = 0
@@ -510,12 +541,13 @@ def main(nivel_inicial=None, idioma_inicial="en"):
                     nivel,
                 )
                 nivel += 1
-                eventos_visuales.entrar_nivel(nivel, tiempo_mundo)
+                if not modo_infinito:
+                    eventos_visuales.entrar_nivel(nivel, tiempo_mundo)
                 color_origen = jugador.color
                 pos_origen = pygame.Vector2(jugador.rect.center)
 
                 plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(
-                    nivel
+                    nivel, modo_infinito
                 )
                 color_destino = color_desde_hue(hue_jugador)
                 transicion = TransicionCaricaturesca(
@@ -529,7 +561,7 @@ def main(nivel_inicial=None, idioma_inicial="en"):
                     ancho_pantalla=WIDTH,
                 )
                 jugador.vel_y = 0
-                ajustar_dificultad_jugador(jugador, nivel)
+                ajustar_dificultad_jugador(jugador, nivel, modo_infinito)
                 estado = ESTADO_TRANSICION
             elif salio_por_otro_borde:
                 intensidad_shake = 9.0
@@ -538,6 +570,7 @@ def main(nivel_inicial=None, idioma_inicial="en"):
                     pygame.time.get_ticks(),
                     seleccionar_por_nivel=False,
                     volumen_efectos=configuracion["volumen_efectos"],
+                    modo_infinito=modo_infinito,
                 )
                 estado = ESTADO_GAME_OVER
                 combo_actual = 0
@@ -592,9 +625,9 @@ def main(nivel_inicial=None, idioma_inicial="en"):
         if combo_actual and pygame.time.get_ticks() > combo_expira:
             combo_actual = 0
         if estado == ESTADO_GAME_OVER:
-            if configuracion["nivel_guardado"] != 1:
+            if not modo_infinito and configuracion["nivel_guardado"] != 1:
                 guardar_nivel_guardado(1)
-        elif estado in (ESTADO_JUGANDO, ESTADO_TRANSICION):
+        elif not modo_infinito and estado in (ESTADO_JUGANDO, ESTADO_TRANSICION):
             if configuracion["nivel_guardado"] != nivel:
                 guardar_nivel_guardado(nivel)
 
@@ -625,6 +658,8 @@ def main(nivel_inicial=None, idioma_inicial="en"):
             estado_despues_opciones=estado_despues_opciones,
             jugador=jugador,
             nivel=nivel,
+            modo_infinito=modo_infinito,
+            puntaje=puntaje,
             plataformas=plataformas,
             hue_fondo=hue_fondo,
             hue_jugador=hue_jugador,
@@ -648,6 +683,8 @@ def main(nivel_inicial=None, idioma_inicial="en"):
         jugando = contexto_eventos.jugando
         estado = contexto_eventos.estado
         estado_despues_opciones = contexto_eventos.estado_despues_opciones
+        modo_infinito = contexto_eventos.modo_infinito
+        puntaje = contexto_eventos.puntaje
         jugador = contexto_eventos.jugador
         nivel = contexto_eventos.nivel
         plataformas = contexto_eventos.plataformas
@@ -668,6 +705,8 @@ def main(nivel_inicial=None, idioma_inicial="en"):
             eventos_visuales.final_juego_activo = False
             # Tras completar el juego, el menú muestra la imagen de victoria.
             menu.establecer_video("image29.gif")
+            modo_infinito = False
+            puntaje = 0
             nivel = 1
             guardar_nivel_guardado(1)
             plataformas, hue_fondo, hue_jugador, entidades = generar_nivel(nivel)
@@ -679,6 +718,7 @@ def main(nivel_inicial=None, idioma_inicial="en"):
             )
             jugador.rect.center = POS_SPAWN
             ajustar_dificultad_jugador(jugador, nivel)
+            menu.establecer_nivel_guardado(nivel)
 
         if estado == ESTADO_MENU:
             menu.actualizar()
@@ -687,7 +727,12 @@ def main(nivel_inicial=None, idioma_inicial="en"):
             actualizar_mundo(paso_fisica)
             acumulador_fisica -= paso_fisica
 
-        if estado == ESTADO_JUGANDO and nivel == 30 and not despertar_mostrado:
+        if (
+            estado == ESTADO_JUGANDO
+            and not modo_infinito
+            and nivel == 30
+            and not despertar_mostrado
+        ):
             despertar_mostrado = True
             play_catarsis_animation(
                 screen,
@@ -696,7 +741,12 @@ def main(nivel_inicial=None, idioma_inicial="en"):
                 button_renderer=menu,
             )
 
-        if estado == ESTADO_JUGANDO and nivel >= 40 and not eventos_visuales.final_juego_activo:
+        if (
+            estado == ESTADO_JUGANDO
+            and not modo_infinito
+            and nivel >= 40
+            and not eventos_visuales.final_juego_activo
+        ):
             eventos_visuales.iniciar_final_juego(pygame.time.get_ticks())
             estado = ESTADO_CREDITOS
             nivel = 40
@@ -705,6 +755,7 @@ def main(nivel_inicial=None, idioma_inicial="en"):
             if not configuracion.get("juego_completado"):
                 configuracion["juego_completado"] = True
                 guardar_configuracion(configuracion)
+            menu.establecer_modo_infinito_desbloqueado(True)
 
         eventos_visuales.actualizar_flashbacks_especiales(tiempo)
 
@@ -908,6 +959,13 @@ def main(nivel_inicial=None, idioma_inicial="en"):
                 nivel_mostrado = nivel_hud
                 idioma_mostrado = configuracion["idioma"]
             lienzo.blit(texto_nivel, (14, 10))
+            if modo_infinito and estado != ESTADO_GAME_OVER:
+                superficie_puntaje = fuente_combo.render(
+                    f"{texto(configuracion['idioma'], 'score')}: {puntaje}",
+                    True,
+                    (255, 221, 87),
+                )
+                lienzo.blit(superficie_puntaje, (14, 48))
 
             clave_hud_combo = (
                 configuracion["idioma"],
@@ -981,6 +1039,31 @@ def main(nivel_inicial=None, idioma_inicial="en"):
                     pygame.time.get_ticks(),
                     tiempo,
                 )
+                if modo_infinito:
+                    mejor_puntaje = configuracion["mejor_puntaje_infinito"]
+                    resultado_puntaje = fuente_resumen.render(
+                        f"{texto(configuracion['idioma'], 'score')}: {puntaje}",
+                        True,
+                        (255, 245, 205),
+                    )
+                    resultado_record = fuente_combo.render(
+                        f"{texto(configuracion['idioma'], 'best_score')}: "
+                        f"{mejor_puntaje}",
+                        True,
+                        (255, 221, 87),
+                    )
+                    lienzo.blit(
+                        resultado_puntaje,
+                        resultado_puntaje.get_rect(
+                            center=(WIDTH // 2, HEIGHT // 2 + 2)
+                        ),
+                    )
+                    lienzo.blit(
+                        resultado_record,
+                        resultado_record.get_rect(
+                            center=(WIDTH // 2, HEIGHT // 2 + 31)
+                        ),
+                    )
 
                 ahora_boton = pygame.time.get_ticks() / 1000.0
                 posicion_raton = pygame.mouse.get_pos()
@@ -1024,9 +1107,10 @@ def main(nivel_inicial=None, idioma_inicial="en"):
 
         pygame.display.flip()
 
-    guardar_nivel_guardado(
-        1 if estado in (ESTADO_GAME_OVER, ESTADO_CREDITOS) else nivel
-    )
+    if not modo_infinito:
+        guardar_nivel_guardado(
+            1 if estado in (ESTADO_GAME_OVER, ESTADO_CREDITOS) else nivel
+        )
     eventos_visuales.detener_audio_game_over()
     pygame.quit()
 

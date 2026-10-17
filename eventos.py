@@ -31,6 +31,8 @@ class EstadoEventos:
     estado_despues_opciones: str
     jugador: Any
     nivel: int
+    modo_infinito: bool
+    puntaje: int
     plataformas: list
     hue_fondo: float
     hue_jugador: float
@@ -89,16 +91,21 @@ def _evento_con_posicion_logica(evento, contexto, dependencias):
     )
 
 
-def _reiniciar_juego(contexto, dependencias):
-    contexto.nivel = 1
-    dependencias.configuracion["nivel_guardado"] = 1
-    dependencias.guardar_configuracion(dependencias.configuracion)
+def _iniciar_juego(
+    contexto, dependencias, nivel, modo_infinito, reiniciar_progreso=False
+):
+    contexto.nivel = nivel
+    contexto.modo_infinito = modo_infinito
+    contexto.puntaje = 0
+    if reiniciar_progreso and not modo_infinito:
+        dependencias.configuracion["nivel_guardado"] = 1
+        dependencias.guardar_configuracion(dependencias.configuracion)
     (
         contexto.plataformas,
         contexto.hue_fondo,
         contexto.hue_jugador,
         contexto.entidades,
-    ) = dependencias.generar_nivel(contexto.nivel)
+    ) = dependencias.generar_nivel(contexto.nivel, modo_infinito)
     contexto.jugador = dependencias.crear_jugador(
         *dependencias.pos_spawn,
         dependencias.color_desde_hue(contexto.hue_jugador),
@@ -106,9 +113,21 @@ def _reiniciar_juego(contexto, dependencias):
         dash_habilitado=True,
     )
     contexto.jugador.rect.center = dependencias.pos_spawn
-    dependencias.ajustar_dificultad_jugador(contexto.jugador, contexto.nivel)
+    dependencias.ajustar_dificultad_jugador(
+        contexto.jugador, contexto.nivel, modo_infinito
+    )
     contexto.transicion = None
     contexto.estado = ESTADO_JUGANDO
+
+
+def _reiniciar_juego(contexto, dependencias):
+    _iniciar_juego(
+        contexto,
+        dependencias,
+        1,
+        contexto.modo_infinito,
+        reiniciar_progreso=True,
+    )
 
 
 def procesar_eventos(eventos, contexto, dependencias):
@@ -134,8 +153,18 @@ def procesar_eventos(eventos, contexto, dependencias):
                     evento, contexto, dependencias
                 )
             accion_menu = dependencias.menu.manejar_evento(evento_menu)
-            if accion_menu == "jugar":
-                contexto.estado = ESTADO_JUGANDO
+            if accion_menu == "historia":
+                _iniciar_juego(
+                    contexto,
+                    dependencias,
+                    contexto.nivel,
+                    False,
+                )
+            elif (
+                accion_menu == "infinito"
+                and dependencias.configuracion.get("juego_completado")
+            ):
+                _iniciar_juego(contexto, dependencias, 1, True)
             elif accion_menu == "opciones":
                 contexto.estado_despues_opciones = ESTADO_MENU
                 contexto.estado = ESTADO_OPCIONES
@@ -572,12 +601,19 @@ class EventosVisuales:
         )
 
     def iniciar_game_over(
-        self, nivel, inicio, seleccionar_por_nivel=True, volumen_efectos=0.7
+        self,
+        nivel,
+        inicio,
+        seleccionar_por_nivel=True,
+        volumen_efectos=0.7,
+        modo_infinito=False,
     ):
         self.indice_imagen_game_over = 0
         self.inicio_game_over = inicio
         self.game_over_nivel_alto_activo = nivel >= 20
-        self.secuencia_game_over_final_activa = 30 <= nivel <= 40
+        self.secuencia_game_over_final_activa = (
+            not modo_infinito and 30 <= nivel <= 40
+        )
         self.indice_secuencia_game_over = None
         sonido_gritos = self.animacion_despertar.sonido
         if self.game_over_nivel_alto_activo:

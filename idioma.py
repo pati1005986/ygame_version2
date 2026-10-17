@@ -1,6 +1,10 @@
 TRADUCCIONES = {
     "en": {
         "play": "PLAY",
+        "story": "STORY",
+        "infinite": "INFINITE",
+        "score": "SCORE",
+        "best_score": "BEST",
         "options": "OPTIONS",
         "pause": "PAUSED",
         "continue": "CONTINUE",
@@ -50,6 +54,10 @@ TRADUCCIONES = {
     },
     "es": {
         "play": "JUGAR",
+        "story": "HISTORIA",
+        "infinite": "INFINITO",
+        "score": "PUNTAJE",
+        "best_score": "RECORD",
         "options": "OPCIONES",
         "pause": "PAUSA",
         "continue": "CONTINUAR",
@@ -99,6 +107,10 @@ TRADUCCIONES = {
     },
     "pt": {
         "play": "JOGAR",
+        "story": "HISTÓRIA",
+        "infinite": "INFINITO",
+        "score": "PONTOS",
+        "best_score": "RECORDE",
         "options": "OPÇÕES",
         "pause": "PAUSADO",
         "continue": "CONTINUAR",
@@ -148,6 +160,10 @@ TRADUCCIONES = {
     },
     "ru": {
         "play": "ИГРАТЬ",
+        "story": "ИСТОРИЯ",
+        "infinite": "БЕСКОН.",
+        "score": "СЧЁТ",
+        "best_score": "РЕКОРД",
         "options": "ОПЦИИ",
         "pause": "ПАУЗА",
         "continue": "ПРОДОЛЖИТЬ",

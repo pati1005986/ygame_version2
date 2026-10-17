@@ -10,11 +10,10 @@ vuelve más rápido nivel a nivel, pero los enemigos no lo acompañan, así
 que dejan de sentirse amenazantes exactamente cuando el juego "cree" que
 se está poniendo más difícil.
 
-``parametros_dificultad(nivel)`` es el único lugar donde vive esa curva.
-Todo lo demás (``generar_nivel`` y ``ajustar_dificultad_jugador`` en
-``juego.py``, ``generar_entidades`` en ``enemigo.py``) le pide los
-valores a esta función en vez de tener su propia fórmula suelta. Para
-ajustar el ritmo del juego, este es el archivo que hay que tocar.
+``parametros_dificultad(nivel)`` contiene la curva de historia y
+``parametros_dificultad_infinito(nivel)`` la curva creciente del modo
+infinito. Los generadores de niveles y los ajustes del jugador usan estas
+funciones para mantener ambas progresiones centralizadas.
 
 Cada valor tiene un techo (``min(..., tope)``) para que la dificultad se
 estabilice en partidas muy largas en vez de crecer sin límite.
@@ -58,4 +57,17 @@ def parametros_dificultad(nivel):
         "velocidad_enemigo_patrulla": min(patrulla_base * factor, 3.4),
         "velocidad_enemigo_persecucion": min(persecucion_base * factor, 5.2),
         "rango_deteccion_enemigo": min(rango_base * factor, 340), # Aumento cap de rango
+    }
+
+
+def parametros_dificultad_infinito(nivel):
+    """Devuelve una curva de dificultad creciente, acotada, para el modo infinito."""
+    progreso = max(0, nivel - 1)
+    return {
+        "velocidad_jugador": min(8.0 + progreso * 0.045, 9.8),
+        "gravedad_jugador": min(0.7 + progreso * 0.008, 0.95),
+        "probabilidad_plataforma_movil": min(0.25 + progreso * 0.012, 0.72),
+        "velocidad_enemigo_patrulla": min(2.0 + progreso * 0.045, 4.0),
+        "velocidad_enemigo_persecucion": min(3.5 + progreso * 0.075, 6.0),
+        "rango_deteccion_enemigo": min(240 + progreso * 3, 420),
     }

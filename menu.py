@@ -42,6 +42,8 @@ class MenuInicio:
         self.idioma = idioma
         self.escala_ui = escala_ui
         self.nivel_guardado = 1
+        self.modo_infinito_desbloqueado = False
+        self.mejor_puntaje_infinito = 0
         self.ruta_video = os.path.join("assets", nombre_video)
         self.cap = None
         self.frame_actual = None
@@ -88,22 +90,37 @@ class MenuInicio:
         self.font_prompt = pygame.font.SysFont(
             "comicsansms", max(14, int(22 * escala)), bold=True
         )
+        self.font_record = pygame.font.SysFont(
+            "arial", max(11, int(13 * escala)), bold=True
+        )
 
     def _crear_rectangulos(self):
-        boton_ancho = int(max(110, min(170, self.ancho * 0.19)))
+        nombres = ["historia"]
+        if self.modo_infinito_desbloqueado:
+            nombres.append("infinito")
+        nombres.extend(("opciones", "salir"))
+        boton_ancho = int(
+            max(90, min(170, (self.ancho - 48) / len(nombres) - 12))
+        )
         boton_alto = int(max(36, min(58, self.alto * 0.1)))
-        espacio_entre_botones = max(8, int(boton_ancho * 0.1))
-        x_izq = (self.ancho - (boton_ancho * 3 + espacio_entre_botones * 2)) // 2
+        espacio_entre_botones = max(8, int(boton_ancho * 0.08))
+        ancho_total = boton_ancho * len(nombres) + espacio_entre_botones * (len(nombres) - 1)
+        x_izq = (self.ancho - ancho_total) // 2
         alto_panel = max(120, min(170, int(self.alto * 0.3)))
         y_boton = self.alto - int(alto_panel * 0.55)
 
-        self.boton_jugar = pygame.Rect(x_izq, y_boton, boton_ancho, boton_alto)
-        self.boton_opciones = pygame.Rect(
-            x_izq + boton_ancho + espacio_entre_botones, y_boton, boton_ancho, boton_alto
-        )
-        self.boton_salir = pygame.Rect(
-            x_izq + (boton_ancho + espacio_entre_botones) * 2, y_boton, boton_ancho, boton_alto
-        )
+        self.botones_inicio = {}
+        for indice, nombre in enumerate(nombres):
+            self.botones_inicio[nombre] = pygame.Rect(
+                x_izq + (boton_ancho + espacio_entre_botones) * indice,
+                y_boton,
+                boton_ancho,
+                boton_alto,
+            )
+        self.boton_jugar = self.botones_inicio["historia"]
+        self.boton_infinito = self.botones_inicio.get("infinito")
+        self.boton_opciones = self.botones_inicio["opciones"]
+        self.boton_salir = self.botones_inicio["salir"]
         self._alto_panel = alto_panel
 
     def establecer_idioma(self, idioma):
@@ -111,6 +128,16 @@ class MenuInicio:
 
     def establecer_nivel_guardado(self, nivel):
         self.nivel_guardado = max(1, int(nivel))
+
+    def establecer_modo_infinito_desbloqueado(self, desbloqueado):
+        desbloqueado = bool(desbloqueado)
+        if desbloqueado == self.modo_infinito_desbloqueado:
+            return
+        self.modo_infinito_desbloqueado = desbloqueado
+        self._crear_rectangulos()
+
+    def establecer_mejor_puntaje_infinito(self, puntaje):
+        self.mejor_puntaje_infinito = max(0, int(puntaje))
 
     def establecer_escala_ui(self, escala_ui):
         self.escala_ui = escala_ui
@@ -236,25 +263,36 @@ class MenuInicio:
             superficie, (*self.COLOR_ACENTO, alpha_acento), (0, y_linea), (self.ancho, y_linea), 2
         )
 
-        for rect, nombre in (
-            (self.boton_jugar, "jugar"),
-            (self.boton_opciones, "opciones"),
-            (self.boton_salir, "salir"),
-        ):
+        claves = {
+            "historia": (
+                "continue" if self.nivel_guardado > 1 else "story"
+            ),
+            "infinito": "infinite",
+            "opciones": "options",
+            "salir": "exit",
+        }
+        for nombre, rect in self.botones_inicio.items():
             hover = mouse_pos is not None and rect.collidepoint(mouse_pos)
             rect_dibujo = self._dibujar_boton_comic(superficie, rect, hover)
-            clave = (
-                "continue"
-                if nombre == "jugar" and self.nivel_guardado > 1
-                else {"jugar": "play", "opciones": "options", "salir": "exit"}[nombre]
-            )
             self._texto_centrado(
                 superficie,
-                texto(self.idioma, clave),
+                texto(self.idioma, claves[nombre]),
                 self.font_prompt,
                 rect_dibujo.center,
                 (255, 255, 255),
             )
+            if nombre == "infinito":
+                etiqueta_record = (
+                    f"{texto(self.idioma, 'best_score')}: "
+                    f"{self.mejor_puntaje_infinito}"
+                )
+                self._texto_centrado(
+                    superficie,
+                    etiqueta_record,
+                    self.font_record,
+                    (rect_dibujo.centerx, rect_dibujo.bottom + 12),
+                    (255, 221, 87),
+                )
 
     def _puntos_garabateados(self, rect, fase, semilla, amplitud=1.3, segmentos=3):
         """Devuelve los puntos de un rectangulo con bordes "temblorosos" a
@@ -399,10 +437,7 @@ class MenuInicio:
         if evento.type != pygame.MOUSEBUTTONDOWN or evento.button != 1:
             return None
 
-        if self.boton_jugar.collidepoint(evento.pos):
-            return "jugar"
-        if self.boton_opciones.collidepoint(evento.pos):
-            return "opciones"
-        if self.boton_salir.collidepoint(evento.pos):
-            return "salir"
+        for nombre, rect in self.botones_inicio.items():
+            if rect.collidepoint(evento.pos):
+                return nombre
         return None

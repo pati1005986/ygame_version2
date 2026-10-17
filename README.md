@@ -28,9 +28,12 @@
    ```bash
    python juego.py
    ```
-   El juego guarda automáticamente el último nivel alcanzado y, al volver a
-   iniciar, el botón **Continuar** retoma la partida desde el comienzo de ese
-   nivel. Si la partida termina, el progreso se reinicia.
+   El modo **Historia** guarda automáticamente el último nivel alcanzado y,
+   al volver a iniciar, permite continuar desde el comienzo de ese nivel. Al
+   completar la historia (nivel 40), se desbloquea el **Modo infinito**:
+   una partida independiente sin final, con dificultad creciente, puntaje por
+   nivel y combos, y récord guardado. Las partidas infinitas no alteran el
+   progreso de la historia.
 
 ---
 

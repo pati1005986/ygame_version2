@@ -39,7 +39,12 @@ from eventos import (
     procesar_eventos,
     saturacion_nivel,
 )
-from fondo import ParticulaAbstracta, dibujar_fondo_segmentado
+from fondo import (
+    NIVEL_VISUAL_INFINITO,
+    ParticulaAbstracta,
+    dibujar_fondo_infinito,
+    dibujar_fondo_segmentado,
+)
 from hud import HUD, Fuentes, PantallaAdvertencia, crear_fuente_boton
 from idioma import texto
 from menu import MenuInicio
@@ -418,7 +423,7 @@ class Juego:
         # Foto del nivel que se deja atrás para la transición de cámara.
         dibujar_nivel(
             self.capa_nivel_anterior, self.fondo_cache, self.plataformas,
-            self.entidades, tiempo_mundo, self.nivel,
+            self.entidades, tiempo_mundo, self._nivel_estetico(),
         )
         self.nivel += 1
         if not self.modo_infinito:
@@ -438,6 +443,7 @@ class Juego:
             volumen_efectos=cfg["volumen_efectos"],
             suelo_spawn=self.plataformas[0].rect.top,
             ancho_pantalla=WIDTH,
+            modo_infinito=self.modo_infinito,
         )
         self.jugador.vel_y = 0
         ajustar_dificultad_jugador(self.jugador, self.nivel, self.modo_infinito)
@@ -583,22 +589,33 @@ class Juego:
         nivel_visual = self.nivel
         if self.estado == ESTADO_TRANSICION:
             nivel_visual = self.nivel - 1 + self.transicion.progreso_camara()
+        if self.modo_infinito:
+            nivel_visual = NIVEL_VISUAL_INFINITO
         escala_grises(self.escena, saturacion_nivel(nivel_visual))
 
         self._volcar_escena_con_shake()
         self._dibujar_vineta_peligro(tiempo)
 
+    def _nivel_estetico(self):
+        """Nivel que usa el aspecto visual: en infinito es fijo para que el
+        juego se vea igual durante toda la partida."""
+        return NIVEL_VISUAL_INFINITO if self.modo_infinito else self.nivel
+
     def _actualizar_fondo(self, tiempo):
         # El fondo abstracto es lo más pesado de dibujar y sus formas se
         # mueven lento: a 20 Hz sigue viéndose fluido.
+        nivel_fondo = -1 if self.modo_infinito else self.nivel  # fijo en infinito
         if (
             tiempo - self.tiempo_ultimo_fondo >= FRECUENCIA_FONDO
-            or self.nivel != self.nivel_fondo
+            or nivel_fondo != self.nivel_fondo
         ):
-            dibujar_fondo_segmentado(
-                self.fondo_cache, tiempo, self.hue_fondo, WIDTH, HEIGHT, self.nivel
-            )
-            self.nivel_fondo = self.nivel
+            if self.modo_infinito:
+                dibujar_fondo_infinito(self.fondo_cache, tiempo, WIDTH, HEIGHT)
+            else:
+                dibujar_fondo_segmentado(
+                    self.fondo_cache, tiempo, self.hue_fondo, WIDTH, HEIGHT, self.nivel
+                )
+            self.nivel_fondo = nivel_fondo
             self.tiempo_ultimo_fondo = tiempo
 
     def _componer_transicion(self, tiempo):
@@ -607,7 +624,7 @@ class Juego:
         camara = int(round(self.transicion.desplazamiento_camara()))
         dibujar_nivel(
             self.capa_nivel_nuevo, self.fondo_cache, self.plataformas,
-            self.entidades, tiempo, self.nivel,
+            self.entidades, tiempo, self._nivel_estetico(),
         )
         self.escena.blit(self.capa_nivel_anterior, (-camara, 0))
         self.escena.blit(self.capa_nivel_nuevo, (WIDTH - camara, 0))
@@ -627,7 +644,7 @@ class Juego:
         for particula in self.particulas:
             particula.dibujar(escena, tiempo)
         for plataforma in self.plataformas:
-            plataforma.dibujar(escena, tiempo, self.nivel)
+            plataforma.dibujar(escena, tiempo, self._nivel_estetico())
         for entidad in self.entidades:
             entidad.dibujar(escena, tiempo)
         self.jugador.dibujar(escena)
@@ -657,7 +674,7 @@ class Juego:
 
     def _dibujar_opacidad(self):
         """La escena se vuelve progresivamente más opaca al avanzar."""
-        alpha = opacidad_nivel(self.nivel)
+        alpha = opacidad_nivel(self._nivel_estetico())
         if alpha <= 0:
             return
         if alpha != self.opacidad_mostrada:

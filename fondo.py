@@ -817,3 +817,40 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0
         vineta = _obtener_vineta(ancho, alto)
         vineta.set_alpha(int(170 * p))
         superficie.blit(vineta, (0, 0))
+
+# ---------------------------------------------------------------------------
+# Modo infinito
+# El aspecto no cambia con el nivel (sin degradado de color ni caras que se
+# deforman): siempre la misma etapa vibrante. El frenetismo viene del ritmo:
+# todo se mueve más rápido y cruzan estelas de velocidad de color.
+# ---------------------------------------------------------------------------
+
+NIVEL_VISUAL_INFINITO = 1       # nivel "estético" fijo para saturación, opacidad y plataformas
+_NIVEL_FONDO_INFINITO = 5       # etapa fija del fondo (caras hipnóticas, sin viñeta pesada)
+_HUE_FONDO_INFINITO = 0.83      # matiz base fijo (magenta/violeta)
+_VELOCIDAD_FONDO_INFINITO = 2.4 # multiplicador de tiempo del fondo
+_ESTELAS_INFINITO = 16
+
+
+def _dibujar_estelas_velocidad(superficie, ancho, alto, hue_base, tiempo):
+    """Rayas diagonales de color que cruzan la pantalla a gran velocidad."""
+    capa = _obtener_superficie("estelas_infinito", (ancho, alto))
+    for i in range(_ESTELAS_INFINITO):
+        velocidad = 520 + (i * 97) % 420
+        largo = 90 + (i * 53) % 170
+        ciclo = ancho + largo * 2
+        x = (tiempo * velocidad + i * 211) % ciclo - largo
+        y = (i * 67 + math.sin(tiempo * 0.9 + i) * 14) % alto
+        color = _c(hue_base + i / _ESTELAS_INFINITO * 0.5 + tiempo * 0.04, 0.75, 1.0)
+        grosor = 2 + i % 3
+        pygame.draw.line(capa, (*color, 70), (x, y), (x - largo, y + largo * 0.28), grosor)
+    superficie.blit(capa, (0, 0))
+
+
+def dibujar_fondo_infinito(superficie, tiempo, ancho, alto):
+    """Fondo fijo y frenético para el modo infinito (no depende del nivel)."""
+    t = tiempo * _VELOCIDAD_FONDO_INFINITO
+    dibujar_fondo_segmentado(
+        superficie, t, _HUE_FONDO_INFINITO, ancho, alto, nivel=_NIVEL_FONDO_INFINITO
+    )
+    _dibujar_estelas_velocidad(superficie, ancho, alto, _HUE_FONDO_INFINITO, tiempo)

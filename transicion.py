@@ -177,6 +177,15 @@ class TransicionCaricaturesca:
     # Párpados caídos, ojeras, cejas bajas, boca plana y colores opacos.
     NIVEL_CANSANCIO = 30
 
+    # MODO INFINITO: en vez de decaerse, el personaje se va volviendo
+    # cada vez más eufórico y frenético (ojos desorbitados con pupilas
+    # diminutas, risa nerviosa, pelo disparado, vibración, color saturado
+    # que parpadea). Arranca ya con algo de euforia (EUFORIA_MINIMA) y
+    # llega al máximo en NIVEL_EUFORIA_MAXIMA.
+    NIVEL_INICIO_EUFORIA = 1
+    NIVEL_EUFORIA_MAXIMA = 15
+    EUFORIA_MINIMA = 0.35
+
     def __init__(
         self,
         color_origen,
@@ -187,6 +196,7 @@ class TransicionCaricaturesca:
         volumen_efectos=0.8,
         suelo_spawn=None,
         ancho_pantalla=800,
+        modo_infinito=False,
     ):
         """Prepara la transición.
 
@@ -202,6 +212,8 @@ class TransicionCaricaturesca:
                 aterriza el personaje. Si se da, los rebotes ocurren sobre
                 ella; si no, el personaje termina en ``posicion_spawn``.
             ancho_pantalla: ancho de un nivel; es lo que se desliza la cámara.
+            modo_infinito: si es ``True`` no hay tristeza ni cansancio: la
+                cara se pone más eufórica y frenética con cada nivel.
         """
         self.color_origen = color_origen
         self.color_destino = color_destino
@@ -235,6 +247,16 @@ class TransicionCaricaturesca:
             rango = max(1, self.NIVEL_TRISTEZA_MAXIMA - self.NIVEL_INICIO_TRISTEZA)
             self.tristeza = _limitar((nivel - self.NIVEL_INICIO_TRISTEZA) / rango)
             self.cansancio = 0.0
+        # Euforia (0 = nada, 1 = desatada). Solo existe en el modo infinito
+        # y sustituye por completo a la tristeza y al cansancio.
+        self.modo_infinito = modo_infinito
+        self.euforia = 0.0
+        if modo_infinito:
+            self.tristeza = 0.0
+            self.cansancio = 0.0
+            rango = max(1, self.NIVEL_EUFORIA_MAXIMA - self.NIVEL_INICIO_EUFORIA)
+            avance = _limitar((nivel - self.NIVEL_INICIO_EUFORIA) / rango)
+            self.euforia = self.EUFORIA_MINIMA + (1.0 - self.EUFORIA_MINIMA) * avance
         # Falta de energía en la animación (rebotes, sonido, temblor): la
         # tristeza y el cansancio comparten el mismo "volumen bajo".
         self._apatia = max(self.tristeza, self.cansancio * 0.7)
@@ -243,7 +265,7 @@ class TransicionCaricaturesca:
         # se deriva de él (solo cambian saturación y brillo, y además se
         # apagan un poco según la tristeza).
         self.tono = random.random()
-        self.paleta = self._generar_paleta(self.tono, self.tristeza, self.cansancio)
+        self.paleta = self._generar_paleta(self.tono, self.tristeza, self.cansancio, self.euforia)
 
         # Todo lo aleatorio se decide una sola vez para que no titile de
         # un fotograma a otro.
@@ -259,12 +281,19 @@ class TransicionCaricaturesca:
             (1, 95.0, -130.0, 0.06, 1.15),
             (1, 55.0, -175.0, 0.14, 0.75),
         ]
+        if self.euforia > 0.0:
+            # Más sudor (y más rápido) cuando va a mil por hora.
+            self._gotas += [
+                (-1, 120.0, -190.0, 0.03, 0.90),
+                (-1, 60.0, -120.0, 0.10, 0.80),
+                (1, 130.0, -160.0, 0.20, 1.00),
+            ]
         self._estallido = self._crear_estallido()
         self._capa = None
         self._pos_jugador = pygame.Vector2(posicion_origen)
         self._mirada = pygame.Vector2(0, 0)
 
-        self.sonido_sorpresa = self._crear_sonido_sorpresa(self._apatia)
+        self.sonido_sorpresa = self._crear_sonido_sorpresa(self._apatia, self.euforia)
         # El reloj arranca al final: crear el sonido y el estallido tarda
         # unos milisegundos y no queremos "comernos" el inicio de la animación.
         self.inicio = pygame.time.get_ticks()
@@ -279,11 +308,13 @@ class TransicionCaricaturesca:
     # ------------------------------------------------------------------
     # Sonido
     # ------------------------------------------------------------------
-    def _crear_sonido_sorpresa(self, tristeza=0.0):
+    def _crear_sonido_sorpresa(self, tristeza=0.0, euforia=0.0):
         """Genera un "boing" corto de sorpresa sin depender de un archivo.
 
         Con más ``tristeza`` suena más apagado: menos volumen y un tono
-        ligeramente más grave, como un sobresalto sin ánimo.
+        ligeramente más grave, como un sobresalto sin ánimo. Con más
+        ``euforia`` es más agudo, más largo, con un vibrato rapidísimo y un
+        temblor de volumen, como una risita histérica.
 
         Se adapta al mezclador activo (frecuencia y canales); si el formato
         no es de 16 bits con signo devuelve ``None`` en vez de sonar mal.
@@ -294,10 +325,10 @@ class TransicionCaricaturesca:
         if formato != -16:
             return None
 
-        duracion = 0.42
+        duracion = 0.42 * (1.0 + 0.5 * euforia)
         total = int(frecuencia_muestreo * duracion)
-        volumen_max = 0.30 * (1.0 - tristeza * 0.45)
-        factor_tono = 1.0 - tristeza * 0.25
+        volumen_max = 0.30 * (1.0 - tristeza * 0.45) * (1.0 + euforia * 0.35)
+        factor_tono = (1.0 - tristeza * 0.25) * (1.0 + euforia * 0.30)
         muestras = array("h")
         fase = 0.0
 
@@ -310,12 +341,14 @@ class TransicionCaricaturesca:
             else:
                 base = 1160 - 780 * ((progreso - 0.62) / 0.38) ** 1.2
             # Vibrato de resorte que se va apagando.
-            vibrato = 1.0 + 0.045 * math.sin(math.tau * 22 * tiempo) * (1.0 - progreso * 0.6)
+            vibrato = 1.0 + (0.045 + 0.07 * euforia) * math.sin(math.tau * (22 + 38 * euforia) * tiempo) * (1.0 - progreso * 0.6)
             frecuencia = base * vibrato * factor_tono
             # Se acumula la fase: así el barrido de frecuencia es limpio.
             fase += math.tau * frecuencia / frecuencia_muestreo
             envolvente = min(1.0, progreso / 0.03) * (1.0 - progreso) ** 0.7
             onda = math.sin(fase) + 0.22 * math.sin(fase * 2.01)
+            # Temblor de volumen (risita nerviosa) solo con euforia.
+            onda *= 1.0 - 0.4 * euforia * (0.5 + 0.5 * math.sin(math.tau * 34 * tiempo))
             muestra = int(32767 * volumen_max * envolvente * onda)
             muestra = max(-32767, min(32767, muestra))
             for _ in range(canales):
@@ -367,7 +400,7 @@ class TransicionCaricaturesca:
         return tuple(int(a + (b - a) * t) for a, b in zip(color_a[:3], color_b[:3]))
 
     @staticmethod
-    def _generar_paleta(tono, tristeza=0.0, cansancio=0.0):
+    def _generar_paleta(tono, tristeza=0.0, cansancio=0.0, euforia=0.0):
         """Deriva toda la paleta de un único matiz (hue) para lograr el
         look monocromático: solo varían la saturación y el brillo.
 
@@ -379,15 +412,19 @@ class TransicionCaricaturesca:
 
         ``cansancio`` (0 a 1) da un acabado opaco y mate: casi sin
         saturación y sin los tonos más claros, como un color desteñido.
+
+        ``euforia`` (0 a 1) hace lo contrario: colores más saturados y
+        brillantes, casi fluorescentes, y mejillas muy coloradas.
         """
 
         def color(saturacion, valor, alpha=255):
-            saturacion *= (1.0 - tristeza * 0.6) * (1.0 - cansancio * 0.72)
-            valor *= (1.0 - tristeza * 0.35) * (1.0 - cansancio * 0.24)
+            saturacion *= (1.0 - tristeza * 0.6) * (1.0 - cansancio * 0.72) * (1.0 + euforia * 0.45)
+            valor *= (1.0 - tristeza * 0.35) * (1.0 - cansancio * 0.24) * (1.0 + euforia * 0.08)
+            saturacion, valor = min(1.0, saturacion), min(1.0, valor)
             r, g, b = colorsys.hsv_to_rgb(tono, saturacion, valor)
             return (int(r * 255), int(g * 255), int(b * 255), alpha)
 
-        alpha_rubor = int(175 * (1.0 - tristeza * 0.85) * (1.0 - cansancio * 0.9))
+        alpha_rubor = min(255, int(175 * (1.0 - tristeza * 0.85) * (1.0 - cansancio * 0.9) * (1.0 + euforia * 0.3)))
         return {
             "tinta": color(0.62, 0.16),        # contorno grueso, casi negro
             "sombra": color(0.55, 0.42, 150),  # sombreado bajo la cara
@@ -433,35 +470,40 @@ class TransicionCaricaturesca:
         * ``temblor``: intensidad del temblor de susto (0 a 1).
         """
         tri = self._apatia
+        eu = self.euforia
         if ms < self.DURACION_SALIDA:
             u = ms / self.DURACION_SALIDA
             return {
                 # Salta con sobreimpulso; con tristeza el impulso es menor.
-                "escala": self.ESCALA_CARA * self._sale_atras(u, 2.6 * (1.0 - tri * 0.6)),
+                "escala": self.ESCALA_CARA * self._sale_atras(u, 2.6 * (1.0 - tri * 0.6) * (1.0 + eu * 0.6)),
                 # Nace estirada hacia arriba y se relaja.
-                "estirar": 0.30 * (1.0 - u) ** 2 * (1.0 - tri * 0.5),
+                "estirar": 0.30 * (1.0 - u) ** 2 * (1.0 - tri * 0.5) * (1.0 + eu * 0.9),
                 "gesto": self._suave(u),
-                "inclinacion": math.sin(u * math.pi) * 9.0 * (1.0 - tri * 0.5),
+                "inclinacion": math.sin(u * math.pi) * 9.0 * (1.0 - tri * 0.5) * (1.0 + eu * 1.2),
                 "iris": 1.0 - self._suave(u),
-                "temblor": 0.0,
+                "temblor": eu * 0.6,
             }
 
         v = min(1.0, (ms - self.DURACION_SALIDA) / self.DURACION_ENTRADA)
         entrada = self._suave(v)
         # Resorte amortiguado: aplasta, estira, aplasta... cada vez menos.
         # Con tristeza el rebote pierde fuerza: "cae" en su sitio.
-        resorte = math.exp(-5.0 * v) * math.sin(math.tau * 2.2 * v)
+        # Con euforia el resorte tarda más en pararse y vibra más rápido.
+        resorte = math.exp(-(5.0 - 3.3 * eu) * v) * math.sin(math.tau * (2.2 + 3.3 * eu) * v)
         # Al final se desinfla: primero toma un poco de impulso (crece un
         # pelín) y luego se encoge hasta desaparecer.
         salida = (v - 0.62) / 0.38
+        # Risa nerviosa: la boca late entre la "O" y la sonrisa enorme.
+        risa = eu * 0.24 * (0.5 + 0.5 * math.sin(ms * 0.05)) * self._suave((v - 0.2) / 0.2)
         return {
             "escala": self.ESCALA_CARA * (1.0 - self._entra_atras(salida, 1.9 * (1.0 - tri * 0.8))),
-            "estirar": 0.32 * resorte * (1.0 - tri * 0.55),
+            "estirar": 0.32 * resorte * (1.0 - tri * 0.55) * (1.0 + eu * 0.8),
             # Se queda pasmada un instante antes de relajar el gesto.
-            "gesto": 1.0 - self._suave((v - 0.10) / 0.45),
-            "inclinacion": math.sin(entrada * math.pi * 2.2) * (1.0 - entrada) * 14.0 * (1.0 - tri * 0.6),
+            "gesto": _limitar(1.0 - self._suave((v - 0.10) / 0.45) + risa),
+            "inclinacion": math.sin(entrada * math.pi * 2.2) * (1.0 - entrada) * 14.0 * (1.0 - tri * 0.6) * (1.0 + eu)
+            + eu * 4.0 * math.sin(ms * 0.04),
             "iris": self._suave((v - 0.06) / 0.74),
-            "temblor": max(0.0, 1.0 - v / 0.30),
+            "temblor": max(0.0, 1.0 - v / (0.30 + 0.65 * eu)),
         }
 
     # ------------------------------------------------------------------
@@ -529,7 +571,7 @@ class TransicionCaricaturesca:
             fraccion, fuerza = self._IMPACTOS[self._impactos_vistos]
             if t < self.T_VUELO + (self.CAMARA_FIN - self.T_VUELO) * fraccion:
                 break
-            self._impactos_pendientes.append(fuerza * (1.0 - self._apatia * 0.4))
+            self._impactos_pendientes.append(fuerza * (1.0 - self._apatia * 0.4) * (1.0 + self.euforia * 0.9))
             self._impactos_vistos += 1
 
     def recoger_impactos(self):
@@ -610,8 +652,9 @@ class TransicionCaricaturesca:
         tri = self._apatia
         # Temblor de susto (pequeño, rápido y que se apaga).
         intensidad = estado["temblor"] * (1.0 - tri * 0.5)
-        tx = math.sin(ms * 0.11) * 3.0 * intensidad
-        ty = math.cos(ms * 0.13) * 2.0 * intensidad
+        eu = self.euforia
+        tx = math.sin(ms * (0.11 + 0.10 * eu)) * (3.0 + 6.0 * eu) * intensidad
+        ty = math.cos(ms * (0.13 + 0.12 * eu)) * (2.0 + 5.0 * eu) * intensidad
         # Al estirarse la cara "se apoya" en su base en vez de crecer desde
         # el centro (60 %), y un personaje decaído deja caer la cabeza.
         apoyo = (estado["escala"] - sy) * _ALTO * 0.5 * 0.6
@@ -698,7 +741,7 @@ class TransicionCaricaturesca:
         Con tristeza tiene menos puntas: un sobresalto sin alegría.
         """
         paleta = self.paleta
-        puntas = max(6, round(self.NUM_PUNTAS * (1.0 - self._apatia * 0.45)))
+        puntas = max(6, round(self.NUM_PUNTAS * (1.0 - self._apatia * 0.45) * (1.0 + self.euforia * 0.9)))
         n = puntas * 2
         radios = [random.uniform(0.86, 1.0) if i % 2 == 0 else random.uniform(0.56, 0.68) for i in range(n)]
         giro = random.uniform(0, math.tau)
@@ -726,11 +769,12 @@ class TransicionCaricaturesca:
         if fuerza <= 0.02:
             return
         radio_objetivo = _ANCHO * 0.5 * self.ESCALA_ESTALLIDO * estado["escala"]
-        pulso = 1.0 + 0.04 * math.sin(ms * 0.03)
-        escala = radio_objetivo / _RADIO_ESTALLIDO * (0.45 + 0.55 * fuerza) * pulso * (1.0 - tri * 0.2)
+        eu = self.euforia
+        pulso = 1.0 + (0.04 + 0.12 * eu) * math.sin(ms * (0.03 + 0.05 * eu))
+        escala = radio_objetivo / _RADIO_ESTALLIDO * (0.45 + 0.55 * fuerza) * pulso * (1.0 - tri * 0.2) * (1.0 + eu * 0.25)
         if escala <= 0.02:
             return
-        estallido = pygame.transform.rotozoom(self._estallido, ms * 0.03, escala)
+        estallido = pygame.transform.rotozoom(self._estallido, ms * 0.03 * (1.0 + eu * 3.0), escala)
         estallido.set_alpha(int(255 * min(1.0, fuerza * 1.6) * (1.0 - tri * 0.4)))
         superficie.blit(estallido, (centro.x - estallido.get_width() / 2, centro.y - estallido.get_height() / 2))
 
@@ -739,7 +783,13 @@ class TransicionCaricaturesca:
     # ------------------------------------------------------------------
     def _pintar_cara(self, ms, estado, anterior):
         lienzo = self._lienzo
-        paleta = self.paleta
+        eu = self.euforia
+        if eu > 0.0:
+            # El color se desplaza de matiz a toda velocidad: algo no va bien.
+            tono = (self.tono + 0.16 * eu * math.sin(ms * 0.018)) % 1.0
+            paleta = self._generar_paleta(tono, 0.0, 0.0, eu)
+        else:
+            paleta = self.paleta
         tri = self.tristeza
         gesto = _limitar(estado["gesto"])
         c = self._centro_lienzo
@@ -754,11 +804,12 @@ class TransicionCaricaturesca:
         alto_antes = anterior["escala"] * (1.0 + anterior["estirar"])
         arrastre = _limitar((alto_ahora - alto_antes) * 3.0, -1.0, 1.0)
 
+        self._dibujar_vibracion(lienzo, c, ms, paleta, grosor)
         self._dibujar_pelo(lienzo, c, ms, arrastre, paleta)
         self._dibujar_cabeza(lienzo, c, ms, paleta, grosor)
         self._dibujar_mejillas(lienzo, c, paleta, tri)
         self._dibujar_ojos(lienzo, c, ms, gesto, paleta, grosor, tri)
-        self._dibujar_cejas(lienzo, c, gesto, paleta, grosor, tri)
+        self._dibujar_cejas(lienzo, c, gesto, paleta, grosor, tri, ms)
         self._dibujar_nariz(lienzo, c, paleta, grosor)
         self._dibujar_boca(lienzo, c, gesto, paleta, grosor, tri)
         self._dibujar_lagrima(lienzo, c, ms, paleta, tri)
@@ -780,7 +831,7 @@ class TransicionCaricaturesca:
         return puntos
 
     def _dibujar_cabeza(self, lienzo, c, ms, paleta, grosor):
-        fase = self._boil[int(ms / 90) % len(self._boil)]
+        fase = self._boil[int(ms / (90 - 50 * self.euforia)) % len(self._boil)]
         # Contorno grueso, sombreado tipo "cel" (media luna abajo a la
         # derecha) y piel desplazada hacia la luz.
         lienzo.poligono(paleta["tinta"], self._contorno_cabeza(c, fase, expansion=grosor))
@@ -800,27 +851,54 @@ class TransicionCaricaturesca:
         base_y = c.y - _ALTO * 0.42
         posiciones = (-0.22, 0.0, 0.22)
         largos = (0.16, 0.24, 0.14)
+        eu = self.euforia
+        if eu > 0.3:
+            # Con euforia salen dos mechones más, y todos se disparan.
+            posiciones += (-0.36, 0.36)
+            largos += (0.10, 0.11)
         for i, (desplazo, largo) in enumerate(zip(posiciones, largos)):
+            largo *= 1.0 + eu * 0.5
             bx = c.x + _ANCHO * desplazo
-            aleteo = math.sin(ms * 0.028 + i * 1.9) * _ANCHO * 0.022 * (1.0 - self.cansancio * 0.7)
+            by = base_y + (_ALTO * 0.08 if abs(desplazo) > 0.3 else 0.0)
+            aleteo = math.sin(ms * (0.028 + 0.045 * eu) + i * 1.9) * _ANCHO * 0.022 * (1.0 - self.cansancio * 0.7) * (1.0 + eu * 2.2)
             punta_x = bx + _ANCHO * desplazo * 0.45 + aleteo
-            punta_y = base_y - _ALTO * largo * (1.0 - 0.25 * abs(arrastre)) * (1.0 - self.cansancio * 0.4) + arrastre * _ALTO * 0.10
+            punta_y = by - _ALTO * largo * (1.0 - 0.25 * abs(arrastre)) * (1.0 - self.cansancio * 0.4) + arrastre * _ALTO * 0.10
             curva = _ANCHO * 0.035 * (1 if i % 2 == 0 else -1)
-            control = (bx + (punta_x - bx) * 0.2 + curva, base_y + (punta_y - base_y) * 0.55)
-            puntos = self._bezier_cuadratica((bx, base_y), control, (punta_x, punta_y), pasos=9)
+            control = (bx + (punta_x - bx) * 0.2 + curva, by + (punta_y - by) * 0.55)
+            puntos = self._bezier_cuadratica((bx, by), control, (punta_x, punta_y), pasos=9)
             lienzo.trazo(paleta["pelo"], puntos, _ANCHO * 0.10, 2.0)
+
+    def _dibujar_vibracion(self, lienzo, c, ms, paleta, grosor):
+        """Rayitas de vibración alrededor de la cabeza (el recurso clásico
+        del cómic para un personaje que no para quieto). Solo con euforia.
+        Cambian de sitio ~16 veces por segundo para que parpadeen."""
+        eu = self.euforia
+        if eu <= 0.0:
+            return
+        n = round(6 + 8 * eu)
+        cuadro = int(ms / 60)
+        for i in range(n):
+            if (cuadro + i) % 3 == 0:
+                continue  # parpadeo: no todas se ven a la vez
+            a = math.tau * i / n + 0.35 * math.sin(cuadro * 1.7 + i * 2.3)
+            k0 = 1.14 + 0.05 * math.sin(cuadro * 0.9 + i)
+            k1 = k0 + 0.10 + 0.14 * eu
+            ca, sa = math.cos(a), math.sin(a)
+            p0 = (c.x + ca * _ANCHO / 2 * k0, c.y + sa * _ALTO / 2 * k0)
+            p1 = (c.x + ca * _ANCHO / 2 * k1, c.y + sa * _ALTO / 2 * k1)
+            lienzo.trazo(paleta["tinta"], [p0, p1], grosor * 0.55, grosor * 0.2)
 
     def _dibujar_mejillas(self, lienzo, c, paleta, tri):
         # Rubor opaco mezclado con la piel (con ``draw`` sobre SRCALPHA un
         # color con alfa dejaría un agujero transparente en la cara).
-        intensidad = 0.6 * (1.0 - tri * 0.85) * (1.0 - self.cansancio)
+        intensidad = min(1.0, 0.6 * (1.0 - tri * 0.85) * (1.0 - self.cansancio) * (1.0 + self.euforia * 0.7))
         if intensidad <= 0.03:
             return
         color = self._mezclar_color(paleta["piel"], paleta["rubor"], intensidad)
         for lado in (-1, 1):
             lienzo.elipse(color, (c.x + lado * _ANCHO * 0.34, c.y + _ALTO * 0.14), _ANCHO * 0.20, _ALTO * 0.12)
 
-    def _dibujar_cejas(self, lienzo, c, gesto, paleta, grosor, tri):
+    def _dibujar_cejas(self, lienzo, c, gesto, paleta, grosor, tri, ms=0.0):
         # Cejas finas y muy arqueadas, bien separadas de los ojos: el
         # trazo suelto y "en acento circunflejo" típico de Peter
         # Maddocks. Con tristeza, el arco se invierte hacia la clásica
@@ -830,15 +908,19 @@ class TransicionCaricaturesca:
         # Cansada: cejas bajas y casi planas (sin la preocupación de la tristeza).
         y = c.y - _ALTO * 0.31 - gesto * _ALTO * 0.11 + can * _ALTO * 0.06 * (1.0 - gesto)
         largo = _ANCHO * 0.24
-        arco = largo * (0.45 + gesto * 0.35) * (1.0 - tri * 0.55 - can * 0.75 * (1.0 - gesto))
+        eu = self.euforia
+        # Euforia: cejas altísimas, muy arqueadas y cada una por su lado.
+        y -= eu * _ALTO * 0.07
+        arco = largo * (0.45 + gesto * 0.35) * (1.0 - tri * 0.55 - can * 0.75 * (1.0 - gesto)) * (1.0 + eu * 0.4)
         inclinacion_triste = tri * largo * 0.30
         for lado in (-1, 1):
             # Ligera asimetría para que no se vea calcado.
             asimetria = 1.0 if lado < 0 else 1.06
             x = c.x + lado * separacion
-            p0 = (x - lado * largo / 2, y + arco * 0.22 - inclinacion_triste)
-            p1 = (x + lado * largo * 0.05, y - arco * asimetria)
-            p2 = (x + lado * largo * 0.75, y + arco * 0.16 + inclinacion_triste)
+            y_l = y + eu * _ALTO * (0.035 * lado + 0.035 * math.sin(ms * 0.04 + lado * 2.1))
+            p0 = (x - lado * largo / 2, y_l + arco * 0.22 - inclinacion_triste)
+            p1 = (x + lado * largo * 0.05, y_l - arco * asimetria)
+            p2 = (x + lado * largo * 0.75, y_l + arco * 0.16 + inclinacion_triste)
             puntos = self._bezier_cuadratica(p0, p1, p2, pasos=8)
             lienzo.trazo(paleta["tinta"], puntos, grosor * 0.55, grosor * 0.42, panza=0.7)
 
@@ -881,13 +963,15 @@ class TransicionCaricaturesca:
         # Con el susto los ojos se abultan y las pupilas se encogen; luego
         # siguen al jugador. El parpadeo aplasta el ojo verticalmente y el
         # párpado caído de la tristeza es una cuerda inclinada.
-        cierre = self._parpadeo(ms)
+        # Con euforia no parpadea: mirada fija y desorbitada.
+        cierre = self._parpadeo(ms) * (1.0 - 0.9 * self.euforia)
         abierto = 1.0 - 0.94 * cierre
         can = self.cansancio
         desanimo = max(tri, can)
         y = c.y - _ALTO * 0.16 + desanimo * _ALTO * 0.03
         separacion = _ANCHO * 0.25
-        radio_base = _ANCHO * 0.165 * (1.0 + 0.14 * gesto)
+        eu = self.euforia
+        radio_base = _ANCHO * 0.165 * (1.0 + 0.14 * gesto) * (1.0 + 0.12 * eu)
         borde = max(3.0, grosor * 0.45)
         # Un sobresalto se ve igual sea cual sea el humor: el párpado solo
         # actúa cuando ya no hay susto.
@@ -915,16 +999,33 @@ class TransicionCaricaturesca:
             if cierre >= 0.85:
                 continue
 
-            radio_pupila = radio * (0.34 + 0.24 * (1.0 - gesto))
+            if eu > 0.3:
+                # Venitas rojizas que invaden el ojo.
+                venas = _limitar((eu - 0.3) / 0.7)
+                color_vena = self._mezclar_color(blanco, paleta["rubor"], 0.75)
+                for k, ang in enumerate((0.45, 2.35, 3.95, 5.45)):
+                    ang += lado * 0.4 + k * 0.07
+                    p_ini = (x + math.cos(ang) * radio * 0.97, y + math.sin(ang) * radio * 0.97 * abierto)
+                    p_fin = (
+                        x + math.cos(ang + 0.15) * radio * (0.95 - 0.5 * venas),
+                        y + math.sin(ang + 0.15) * radio * (0.95 - 0.5 * venas) * abierto,
+                    )
+                    lienzo.trazo(color_vena, [p_ini, p_fin], max(1.2, grosor * 0.16), 1.0)
+
+            # Pupilas diminutas (mirada de loco) con euforia.
+            radio_pupila = radio * (0.34 + 0.24 * (1.0 - gesto)) * (1.0 - 0.45 * eu)
             desplazo = pygame.Vector2(self._mirada.x, self._mirada.y + tri * 0.9 + can * 0.6)
             largo = desplazo.length()
-            maximo = (radio - radio_pupila) * 0.85
+            maximo = (radio - radio_pupila) * 0.85 * (1.0 - 0.35 * eu)
             if largo > 1.0:
                 desplazo = desplazo / largo
                 largo = 1.0
             desplazo = desplazo * (largo * maximo)
             # Las pupilas vibran un pelín mientras dura el susto.
             desplazo.x += math.sin(ms * 0.13 + lado) * gesto * 0.8
+            # Euforia: cada pupila se sacude por su cuenta, a destiempo.
+            desplazo.x += math.sin(ms * 0.09 + lado * 2.3) * eu * radio * 0.30
+            desplazo.y += math.cos(ms * 0.11 + lado * 1.7) * eu * radio * 0.25
             pupila = (x + desplazo.x + lado * radio * 0.04, y + desplazo.y * abierto)
             lienzo.elipse(paleta["tinta"], pupila, radio_pupila * 2, radio_pupila * 2 * abierto)
             if abierto > 0.6:
@@ -1023,8 +1124,10 @@ class TransicionCaricaturesca:
         y = c.y + _ALTO * (0.27 + apertura * 0.05)
 
         radio_o = _ANCHO * 0.11
-        ancho_boca = _ANCHO * (0.70 * factor_alegre + 0.40 * factor_triste) + radio_o * 2 * apertura
-        alto_boca = _ALTO * (0.36 * factor_alegre + 0.16 * factor_triste) + radio_o * 2 * apertura
+        eu = self.euforia
+        # Sonrisa desencajada: más ancha y más alta con euforia.
+        ancho_boca = _ANCHO * (0.70 * factor_alegre * (1.0 + 0.22 * eu) + 0.40 * factor_triste) + radio_o * 2 * apertura
+        alto_boca = _ALTO * (0.36 * factor_alegre * (1.0 + 0.25 * eu) + 0.16 * factor_triste) + radio_o * 2 * apertura
         # En el puchero la cavidad desaparece: solo queda la línea.
         presencia = min(1.0, (apertura + factor_alegre) * 1.25)
 

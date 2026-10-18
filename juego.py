@@ -44,6 +44,8 @@ from fondo import (
     ParticulaAbstracta,
     dibujar_fondo_infinito,
     dibujar_fondo_segmentado,
+    dibujar_fondo_segmentado_gen,
+    dibujar_fondo_infinito_gen,
 )
 from hud import HUD, Fuentes, PantallaAdvertencia, crear_fuente_boton
 from idioma import texto
@@ -173,6 +175,37 @@ class Juego:
         self.opacidad_mostrada = None
         self.nivel_fondo = None
         self.tiempo_ultimo_fondo = -1.0
+        self.fondo_trasero = pygame.Surface((WIDTH, HEIGHT))
+        self._gen_fondo = None
+        self._nivel_gen = None
+
+    def _actualizar_fondo(self, tiempo):
+        nivel_fondo = -1 if self.modo_infinito else self.nivel
+
+        # Si cambió el nivel a mitad de ciclo, se descarta y se reinicia.
+        if self._gen_fondo is not None and nivel_fondo != self._nivel_gen:
+            self._gen_fondo = None
+
+        if self._gen_fondo is None and (
+            tiempo - self.tiempo_ultimo_fondo >= FRECUENCIA_FONDO
+            or nivel_fondo != self.nivel_fondo
+        ):
+            self._nivel_gen = nivel_fondo
+        if self.modo_infinito:
+            self._gen_fondo = dibujar_fondo_infinito_gen(
+                self.fondo_trasero, tiempo, WIDTH, HEIGHT)
+        else:
+            self._gen_fondo = dibujar_fondo_segmentado_gen(
+                self.fondo_trasero, tiempo, self.hue_fondo, WIDTH, HEIGHT, self.nivel)
+
+        if self._gen_fondo is not None:
+            try:
+                next(self._gen_fondo)
+            except StopIteration:
+                self.fondo_cache, self.fondo_trasero = self.fondo_trasero, self.fondo_cache
+                self.nivel_fondo = self._nivel_gen
+                self.tiempo_ultimo_fondo = tiempo
+                self._gen_fondo = None  
 
     def _crear_menus(self):
         cfg = self.configuracion

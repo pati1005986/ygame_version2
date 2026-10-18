@@ -185,6 +185,9 @@ class TransicionCaricaturesca:
     NIVEL_INICIO_EUFORIA = 1
     NIVEL_EUFORIA_MAXIMA = 15
     EUFORIA_MINIMA = 0.35
+    # En el modo infinito la transición es más corta para no cortar el
+    # ritmo de juego (1.0 = misma duración que en el modo normal).
+    FACTOR_DURACION_INFINITO = 0.55
 
     def __init__(
         self,
@@ -257,6 +260,10 @@ class TransicionCaricaturesca:
             rango = max(1, self.NIVEL_EUFORIA_MAXIMA - self.NIVEL_INICIO_EUFORIA)
             avance = _limitar((nivel - self.NIVEL_INICIO_EUFORIA) / rango)
             self.euforia = self.EUFORIA_MINIMA + (1.0 - self.EUFORIA_MINIMA) * avance
+            # Transición más rápida: se sombrean las duraciones de la clase
+            # (todo lo demás se calcula en fracciones, así escala solo).
+            self.DURACION_SALIDA = int(self.DURACION_SALIDA * self.FACTOR_DURACION_INFINITO)
+            self.DURACION_ENTRADA = int(self.DURACION_ENTRADA * self.FACTOR_DURACION_INFINITO)
         # Falta de energía en la animación (rebotes, sonido, temblor): la
         # tristeza y el cansancio comparten el mismo "volumen bajo".
         self._apatia = max(self.tristeza, self.cansancio * 0.7)
@@ -325,10 +332,16 @@ class TransicionCaricaturesca:
         if formato != -16:
             return None
 
-        duracion = 0.42 * (1.0 + 0.5 * euforia)
+        # Con euforia el sonido es más corto, más grave y más suave (sin
+        # armónicos agudos, con vibrato lento y filtrado) para no cansar
+        # el oído cuando se repite nivel tras nivel.
+        duracion = 0.42 * (1.0 - 0.30 * euforia)
         total = int(frecuencia_muestreo * duracion)
-        volumen_max = 0.30 * (1.0 - tristeza * 0.45) * (1.0 + euforia * 0.35)
-        factor_tono = (1.0 - tristeza * 0.25) * (1.0 + euforia * 0.30)
+        volumen_max = 0.30 * (1.0 - tristeza * 0.45) * (1.0 - euforia * 0.45)
+        factor_tono = (1.0 - tristeza * 0.25) * (1.0 - euforia * 0.18)
+        # Filtro paso bajo de un polo: 1.0 = sin filtro, menor = más suave.
+        suavizado = 1.0 - 0.75 * euforia
+        filtrada = 0.0
         muestras = array("h")
         fase = 0.0
 
@@ -341,15 +354,16 @@ class TransicionCaricaturesca:
             else:
                 base = 1160 - 780 * ((progreso - 0.62) / 0.38) ** 1.2
             # Vibrato de resorte que se va apagando.
-            vibrato = 1.0 + (0.045 + 0.07 * euforia) * math.sin(math.tau * (22 + 38 * euforia) * tiempo) * (1.0 - progreso * 0.6)
+            vibrato = 1.0 + (0.045 + 0.01 * euforia) * math.sin(math.tau * (22 + 6 * euforia) * tiempo) * (1.0 - progreso * 0.6)
             frecuencia = base * vibrato * factor_tono
             # Se acumula la fase: así el barrido de frecuencia es limpio.
             fase += math.tau * frecuencia / frecuencia_muestreo
             envolvente = min(1.0, progreso / 0.03) * (1.0 - progreso) ** 0.7
-            onda = math.sin(fase) + 0.22 * math.sin(fase * 2.01)
-            # Temblor de volumen (risita nerviosa) solo con euforia.
-            onda *= 1.0 - 0.4 * euforia * (0.5 + 0.5 * math.sin(math.tau * 34 * tiempo))
-            muestra = int(32767 * volumen_max * envolvente * onda)
+            onda = math.sin(fase) + 0.22 * (1.0 - 0.85 * euforia) * math.sin(fase * 2.01)
+            # Temblor de volumen muy leve con euforia.
+            onda *= 1.0 - 0.10 * euforia * (0.5 + 0.5 * math.sin(math.tau * 18 * tiempo))
+            filtrada += suavizado * (onda - filtrada)
+            muestra = int(32767 * volumen_max * envolvente * filtrada)
             muestra = max(-32767, min(32767, muestra))
             for _ in range(canales):
                 muestras.append(muestra)

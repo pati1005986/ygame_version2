@@ -1,5 +1,6 @@
 import math
 import random
+import time
 from functools import lru_cache
 
 import pygame
@@ -20,6 +21,25 @@ def color_desde_hue(hue, saturacion, valor):
     repetir la conversión HSV->RGB cientos de veces por redibujo.
     """
     return _color_cuantizado(round((hue % 1.0) * 256) % 256, saturacion, valor)
+
+
+# Poner en True para imprimir cuánto cuesta cada etapa del fondo (A, B, C).
+# Sirve para equilibrar los cortes (los ``yield``) entre fotogramas.
+PERFILAR_FONDO = False
+_PERFIL = {}
+
+
+def _marcar_etapa(nombre, t0):
+    """Acumula el tiempo de una etapa y, si PERFILAR_FONDO, imprime promedios."""
+    if not PERFILAR_FONDO:
+        return
+    acc = _PERFIL.setdefault(nombre, [0.0, 0])
+    acc[0] += time.perf_counter() - t0
+    acc[1] += 1
+    if nombre == "C" and acc[1] % 60 == 0:
+        print("[fondo] " + " | ".join(
+            f"{k}: {v[0] / v[1] * 1000:.1f} ms" for k, v in sorted(_PERFIL.items())
+        ))
 
 
 def _convertir(superficie):
@@ -852,15 +872,33 @@ def _dibujar_fondo_azul(superficie, tiempo, ancho, alto, nivel):
     superficie.blit(c["vineta"], (0, 0))
 
 
-def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0):
-    """Fondo psicodélico que, nivel a nivel, se va llenando de una lluvia de
-    caras pensativas que se deforman progresivamente. Desde el nivel 30 la
-    lluvia desaparece: queda un fondo azul, opaco y quieto, que se siente
-    tranquilo pero con una tensión sutil."""
+def dibujar_fondo_segmentado_gen(
+    superficie, tiempo, hue_fondo, ancho, alto, nivel=0, al_final=None
+):
+    """Versión por etapas de ``dibujar_fondo_segmentado``.
+
+    Es un generador: dibuja el fondo en ``superficie`` repartiendo el trabajo
+    en 3 etapas (A, B y C) y cede el control con ``yield`` entre ellas. Así el
+    juego avanza UNA etapa por fotograma en un buffer trasero y, al terminar,
+    lo intercambia con el fondo visible. El coste del fondo se reparte en
+    ~1/3 por fotograma en vez de concentrarse en un único fotograma de unos
+    26 ms (que era lo que provocaba el p95 alto y los fotogramas perdidos).
+
+    ``al_final`` es un callable opcional ``f(superficie)`` que se ejecuta al
+    terminar la última etapa (lo usa el modo infinito para sus estelas).
+
+    Ojo: mientras un generador está a medias NO hay que arrancar otro,
+    porque las capas auxiliares (``_obtener_superficie``) se reutilizan.
+    """
+    t0 = time.perf_counter()
+
     if nivel >= _NIVEL_AZUL:
         # Con nivel >= 30 esta llamada solo limpia el estado de la lluvia.
         _dibujar_lluvia_de_caras(superficie, ancho, alto, 0.0, nivel, 1.0, tiempo)
+        yield
         _dibujar_fondo_azul(superficie, tiempo, ancho, alto, nivel)
+        if al_final is not None:
+            al_final(superficie)
         return
 
     p = max(0.0, min(1.0, (nivel - 1) / 9.0))  # progreso de la transformación
@@ -869,9 +907,14 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0
     visible = 1.0 - 0.3 * p  # las manchas se atenúan un poco para dar paso a las caras
     brazos = 6 + 2 * int(p * 3.99)  # el caleidoscopio gana brazos: 6, 8, 10, 12
 
+    # ---- Etapa A: cielo y parallax (sobre la superficie de destino) ----
     _fondo_degradado(superficie, ancho, alto, hue_base, tiempo)
     _dibujar_capas_parallax(superficie, ancho, alto, hue_base, tiempo)
+    _marcar_etapa("A", t0)
+    yield
 
+    # ---- Etapa B: capa abstracta (caleidoscopio, halftone, bloques) ----
+    t0 = time.perf_counter()
     capa_abstracta = _obtener_superficie("abstracta", (ancho, alto))
     _dibujar_caleidoscopio(
         capa_abstracta,
@@ -923,7 +966,11 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0
                 tiempo,
                 fase=i * 2.1,
             )
+    _marcar_etapa("B", t0)
+    yield
 
+    # ---- Etapa C: remolinos, composición, lluvia de caras y viñeta ----
+    t0 = time.perf_counter()
     for i in range(3):
         hue = (hue_base + 0.18 + i * 0.16 + tiempo * 0.035) % 1.0
         x = (ancho // 3) * (i + 1) - 80
@@ -939,6 +986,27 @@ def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0
         vineta = _obtener_vineta(ancho, alto)
         vineta.set_alpha(int(170 * p))
         superficie.blit(vineta, (0, 0))
+
+    if al_final is not None:
+        al_final(superficie)
+    _marcar_etapa("C", t0)
+
+
+def dibujar_fondo_segmentado(superficie, tiempo, hue_fondo, ancho, alto, nivel=0):
+    """Fondo psicodélico que, nivel a nivel, se va llenando de una lluvia de
+    caras pensativas que se deforman progresivamente. Desde el nivel 30 la
+    lluvia desaparece: queda un fondo azul, opaco y quieto, que se siente
+    tranquilo pero con una tensión sutil.
+
+    Versión de un solo golpe (mantiene la API original): ejecuta todas las
+    etapas seguidas. Para repartir el coste entre fotogramas usa
+    ``dibujar_fondo_segmentado_gen``.
+    """
+    for _ in dibujar_fondo_segmentado_gen(
+        superficie, tiempo, hue_fondo, ancho, alto, nivel
+    ):
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Modo infinito
@@ -969,10 +1037,25 @@ def _dibujar_estelas_velocidad(superficie, ancho, alto, hue_base, tiempo):
     superficie.blit(capa, (0, 0))
 
 
-def dibujar_fondo_infinito(superficie, tiempo, ancho, alto):
-    """Fondo fijo y frenético para el modo infinito (no depende del nivel)."""
+def dibujar_fondo_infinito_gen(superficie, tiempo, ancho, alto):
+    """Versión por etapas del fondo infinito (ver ``dibujar_fondo_segmentado_gen``).
+
+    Las estelas de velocidad se dibujan al final de la última etapa, así el
+    ciclo sigue siendo de 3 fotogramas.
+    """
     t = tiempo * _VELOCIDAD_FONDO_INFINITO
-    dibujar_fondo_segmentado(
-        superficie, t, _HUE_FONDO_INFINITO, ancho, alto, nivel=_NIVEL_FONDO_INFINITO
+    return dibujar_fondo_segmentado_gen(
+        superficie, t, _HUE_FONDO_INFINITO, ancho, alto,
+        nivel=_NIVEL_FONDO_INFINITO,
+        al_final=lambda s: _dibujar_estelas_velocidad(
+            s, ancho, alto, _HUE_FONDO_INFINITO, tiempo
+        ),
     )
-    _dibujar_estelas_velocidad(superficie, ancho, alto, _HUE_FONDO_INFINITO, tiempo)
+
+
+def dibujar_fondo_infinito(superficie, tiempo, ancho, alto):
+    """Fondo fijo y frenético para el modo infinito (no depende del nivel).
+
+    Versión de un solo golpe (API original)."""
+    for _ in dibujar_fondo_infinito_gen(superficie, tiempo, ancho, alto):
+        pass

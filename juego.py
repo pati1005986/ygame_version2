@@ -12,9 +12,11 @@ Este módulo contiene la clase ``Juego``, que coordina el bucle principal
 * ``eventos``, ``personaje``, ``transicion``... lógica especializada.
 """
 
+import colorsys
 import math
 import random
 import sys
+from pathlib import Path
 
 import pygame
 
@@ -73,6 +75,7 @@ CAMPOS_EVENTOS = (
 )
 
 FRECUENCIA_FONDO = 1 / 20  # el fondo abstracto se redibuja a 20 Hz
+VENTANA_DOBLE_TOQUE_ABAJO_MS = 350
 
 
 class Juego:
@@ -85,6 +88,16 @@ class Juego:
             pygame.mixer.init()
 
         self.configuracion = preparar_configuracion(idioma_inicial)
+        ruta_audio_morado = (
+            Path(__file__).resolve().parent
+            / "assets"
+            / "Hombre morado bailando en 8-bits (HD) - Juanprodest.mp3"
+        )
+        self.sonido_baile_morado = pygame.mixer.Sound(str(ruta_audio_morado))
+        self.sonido_baile_morado.set_volume(self.configuracion["volumen_musica"])
+        self._canal_baile_morado = None
+        self._ultimo_toque_abajo_ms = None
+
         self._crear_ventana()
         self.reloj = pygame.time.Clock()
 
@@ -299,17 +312,70 @@ class Juego:
             ),
             **{campo: getattr(self, campo) for campo in CAMPOS_EVENTOS},
         )
-        procesar_eventos(pygame.event.get(), contexto, self.dependencias_eventos)
+        eventos = pygame.event.get()
+        procesar_eventos(eventos, contexto, self.dependencias_eventos)
 
         self.pantalla.screen = contexto.screen
         self.hud.idioma_mostrado = contexto.idioma_mostrado
         for campo in CAMPOS_EVENTOS:
             setattr(self, campo, getattr(contexto, campo))
 
+        self._procesar_audio_baile_morado(eventos)
+
         if estado_antes == ESTADO_GAME_OVER and self.estado != ESTADO_GAME_OVER:
             self.eventos_visuales.detener_audio_game_over()
         if estado_antes == ESTADO_CREDITOS and self.estado == ESTADO_MENU:
             self._reiniciar_tras_creditos()
+
+    def _procesar_audio_baile_morado(self, eventos):
+        jugador_activo = (
+            self.estado == ESTADO_JUGANDO
+            and self.modo_infinito
+            and self._jugador_es_morado()
+        )
+        if not jugador_activo:
+            self._ultimo_toque_abajo_ms = None
+            if self._canal_baile_morado is not None:
+                self._canal_baile_morado.stop()
+                self._canal_baile_morado = None
+            return
+
+        teclas_abajo = {
+            self.configuracion["controles"]["down"],
+            pygame.K_DOWN,
+        }
+        for evento in eventos:
+            if (
+                evento.type != pygame.KEYDOWN
+                or evento.key not in teclas_abajo
+                or getattr(evento, "repeat", False)
+            ):
+                continue
+
+            ahora = pygame.time.get_ticks()
+            if (
+                self._ultimo_toque_abajo_ms is not None
+                and ahora - self._ultimo_toque_abajo_ms
+                <= VENTANA_DOBLE_TOQUE_ABAJO_MS
+            ):
+                if (
+                    self._canal_baile_morado is None
+                    or not self._canal_baile_morado.get_busy()
+                ):
+                    self.sonido_baile_morado.set_volume(
+                        self.configuracion["volumen_musica"]
+                    )
+                    self._canal_baile_morado = self.sonido_baile_morado.play()
+                self._ultimo_toque_abajo_ms = None
+            else:
+                self._ultimo_toque_abajo_ms = ahora
+
+    def _jugador_es_morado(self):
+        rojo, verde, azul = self.jugador.color[:3]
+        matiz, saturacion, valor = colorsys.rgb_to_hsv(
+            rojo / 255, verde / 255, azul / 255
+        )
+        return saturacion >= 0.35 and valor >= 0.2 and 0.70 <= matiz <= 0.86
 
     def _reiniciar_tras_creditos(self):
         self.eventos_visuales.final_juego_activo = False

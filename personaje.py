@@ -1,8 +1,40 @@
 import math
 import random
 from array import array
+from functools import lru_cache
 
 import pygame
+
+
+# ----------------------------------------------------------------------
+# Cachés de módulo (evitan recalcular o reasignar lo mismo cada frame)
+# ----------------------------------------------------------------------
+@lru_cache(maxsize=64)
+def _tono_cacheado(color_rgb, factor):
+    """Oscurece/aclara un color RGB. Cacheado: la paleta del personaje solo
+    cambia con su color base y con el factor de euforia (pocos valores)."""
+    r, g, b = color_rgb
+    return (
+        max(0, min(255, int(r * factor))),
+        max(0, min(255, int(g * factor))),
+        max(0, min(255, int(b * factor))),
+    )
+
+
+@lru_cache(maxsize=128)
+def _superficie_sombra(ancho, alto, alfa):
+    """Elipse de sombra ya dibujada. Hay pocas combinaciones posibles
+    (dependen de la altura), así que se reutilizan en vez de crear una
+    Surface nueva en cada fotograma. No modificar las superficies devueltas."""
+    sombra = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+    pygame.draw.ellipse(sombra, (0, 0, 0, alfa), sombra.get_rect())
+    return sombra
+
+
+# Muestras de audio ya sintetizadas (bytes), por parámetros y config del
+# mezclador. Cada instancia crea su propio ``Sound`` desde estos bytes
+# (barato), así que el volumen sigue siendo independiente por instancia.
+_CACHE_MUESTRAS = {}
 
 
 class PersonajeHumanoide:
@@ -45,6 +77,9 @@ class PersonajeHumanoide:
     ACEL_SUELO = 1.15
     FRICCION_SUELO = 0.95
     ACEL_AIRE = 0.65
+    # Air control extra: tras usar el doble salto (y hasta aterrizar) la
+    # aceleración en el aire sube ligeramente para permitir micro-ajustes.
+    ACEL_AIRE_DOBLE_SALTO = 0.80
     FRICCION_AIRE = 0.25
     FACTOR_GIRO = 1.8        # al invertir el sentido se frena más rápido
     VEL_AGACHADO = 0.55      # fracción de la velocidad máxima al ir agachado
@@ -54,6 +89,13 @@ class PersonajeHumanoide:
     FACTOR_CAIDA = 1.2           # cae un poco más rápido de lo que sube
     FACTOR_SALTO_CORTO = 2.4     # gravedad extra si se suelta el salto subiendo
     VEL_CAIDA_MAX = 16.0         # velocidad terminal
+    # Caída rápida: al mantener ABAJO mientras cae en el aire, la gravedad
+    # se multiplica al instante y se eleva la velocidad terminal. Subir
+    # VEL_CAIDA_RAPIDA_MAX demasiado puede atravesar plataformas finas
+    # (la colisión no es por barrido): mantenerlo por debajo del grosor de
+    # la plataforma más delgada.
+    FACTOR_CAIDA_RAPIDA = 2.2
+    VEL_CAIDA_RAPIDA_MAX = 22.0
     AJUSTE_ESQUINA = 10          # px de "perdón" al golpear una esquina con la cabeza
     FUERZA_SALTO = -13
     FACTOR_DOBLE_SALTO = 0.88
@@ -163,6 +205,8 @@ class PersonajeHumanoide:
         self.girando = False
         self.angulo_giro = 0.0
         self.velocidad_giro = 28
+        # True desde que se usa el doble salto hasta que se toca suelo.
+        self._doble_salto_activo = False
         self.sonido_doble_salto = self._crear_sonido(620, 0.16, 1.0, 1100)
 
         # --- Dash ---
@@ -208,20 +252,23 @@ class PersonajeHumanoide:
 
         if frecuencia_final is None:
             frecuencia_final = frecuencia
-        cantidad = max(1, int(frecuencia_muestreo * duracion))
-        ataque = max(1, int(frecuencia_muestreo * 0.004))  # evita el "clic" inicial
-        muestras = array("h")
-        fase = 0.0
-        for indice in range(cantidad):
-            t = indice / cantidad
-            envolvente = (1 - t) * min(1.0, indice / ataque)
-            freq = frecuencia + (frecuencia_final - frecuencia) * t
-            fase += 2 * math.pi * freq / frecuencia_muestreo
-            onda = math.sin(fase) * (1 - ruido) + random.uniform(-1, 1) * ruido
-            muestra = int(32767 * volumen * envolvente * onda)
-            for _ in range(canales):
-                muestras.append(muestra)
-        return pygame.mixer.Sound(buffer=muestras.tobytes())
+        clave = (frecuencia, duracion, volumen, frecuencia_final, ruido, config)
+        datos = _CACHE_MUESTRAS.get(clave)
+        if datos is None:
+            cantidad = max(1, int(frecuencia_muestreo * duracion))
+            ataque = max(1, int(frecuencia_muestreo * 0.004))  # evita el "clic" inicial
+            muestras = array("h")
+            fase = 0.0
+            for indice in range(cantidad):
+                t = indice / cantidad
+                envolvente = (1 - t) * min(1.0, indice / ataque)
+                freq = frecuencia + (frecuencia_final - frecuencia) * t
+                fase += 2 * math.pi * freq / frecuencia_muestreo
+                onda = math.sin(fase) * (1 - ruido) + random.uniform(-1, 1) * ruido
+                muestra = int(32767 * volumen * envolvente * onda)
+                muestras.extend([muestra] * canales)
+            datos = _CACHE_MUESTRAS[clave] = muestras.tobytes()
+        return pygame.mixer.Sound(buffer=datos)
 
     def ajustar_volumen_efectos(self, volumen):
         """Ajusta los sonidos del personaje al nivel seleccionado en opciones."""
@@ -280,12 +327,7 @@ class PersonajeHumanoide:
     # Utilidades de color y dibujo
     # ------------------------------------------------------------------
     def _tono(self, factor):
-        r, g, b = self.color[:3]
-        return (
-            max(0, min(255, int(r * factor))),
-            max(0, min(255, int(g * factor))),
-            max(0, min(255, int(b * factor))),
-        )
+        return _tono_cacheado(tuple(self.color[:3]), factor)
 
     def _celda(self, valor):
         """Redondea a la grilla de píxeles."""
@@ -394,8 +436,7 @@ class PersonajeHumanoide:
             factor = max(0.35, 1 - distancia / 320)
         ancho = max(self.pixel, int(34 * factor))
         alto = max(2, int(7 * factor))
-        sombra = pygame.Surface((ancho, alto), pygame.SRCALPHA)
-        pygame.draw.ellipse(sombra, (0, 0, 0, int(60 + 80 * factor)), sombra.get_rect())
+        sombra = _superficie_sombra(ancho, alto, int(60 + 80 * factor))
         superficie.blit(sombra, sombra.get_rect(center=(centro_x, suelo_y + 2)).topleft)
 
     # ------------------------------------------------------------------
@@ -424,6 +465,7 @@ class PersonajeHumanoide:
         self.saltos_restantes = self.saltos_maximos
         self.girando = False
         self.angulo_giro = 0.0
+        self._doble_salto_activo = False
         self.dashes_disponibles = self.dashes_maximos
         self.dash_restante = 0
         self.dash_enfriamiento = 0
@@ -502,9 +544,13 @@ class PersonajeHumanoide:
         else:
             vel_max = self.velocidad * (self.VEL_AGACHADO if self.agachado else 1.0)
             if self.en_suelo:
+                self._doble_salto_activo = False
                 aceleracion, friccion = self.ACEL_SUELO, self.FRICCION_SUELO
             else:
-                aceleracion, friccion = self.ACEL_AIRE, self.FRICCION_AIRE
+                aceleracion = (
+                    self.ACEL_AIRE_DOBLE_SALTO if self._doble_salto_activo else self.ACEL_AIRE
+                )
+                friccion = self.FRICCION_AIRE
             if dir_input != 0:
                 if self.vel_x * dir_input < 0:
                     aceleracion *= self.FACTOR_GIRO
@@ -531,11 +577,16 @@ class PersonajeHumanoide:
         # --- Gravedad: más ligera subiendo, más firme bajando ---
         if not en_dash:
             gravedad = self.gravedad
+            vel_caida_max = self.VEL_CAIDA_MAX
             if self.vel_y > 0:
                 gravedad *= self.FACTOR_CAIDA
+                if quiere_agacharse and not self.en_suelo:
+                    # Caída rápida (fast-fall) al mantener ABAJO en el aire.
+                    gravedad *= self.FACTOR_CAIDA_RAPIDA
+                    vel_caida_max = self.VEL_CAIDA_RAPIDA_MAX
             elif self.vel_y < 0 and not self._salto_sostenido:
                 gravedad *= self.FACTOR_SALTO_CORTO
-            self.vel_y = min(self.vel_y + gravedad, self.VEL_CAIDA_MAX)
+            self.vel_y = min(self.vel_y + gravedad, vel_caida_max)
 
         # --- Eje X ---
         self._resto_x += self.vel_x
@@ -805,8 +856,13 @@ class PersonajeHumanoide:
     # Acciones
     # ------------------------------------------------------------------
     @classmethod
+    @lru_cache(maxsize=None)
     def altura_maxima_salto(cls, gravedad):
-        """Devuelve la altura máxima del salto completo con doble salto."""
+        """Devuelve la altura máxima del salto completo con doble salto.
+
+        Cacheado por (clase, gravedad): la simulación es un doble bucle de
+        120x120 pasos. Si cambias las constantes de clase en ejecución,
+        llama a ``PersonajeHumanoide.altura_maxima_salto.cache_clear()``."""
         altura_maxima = 0.0
         posicion = 0.0
         velocidad = cls.FUERZA_SALTO
@@ -862,6 +918,7 @@ class PersonajeHumanoide:
             self.despegue_ts = pygame.time.get_ticks()
             self.escala_y = 1.15
             self.girando = True
+            self._doble_salto_activo = True
             self.angulo_giro = 0.0
             self._salto_ejecutado_este_frame = True
             self._salto_sostenido = True

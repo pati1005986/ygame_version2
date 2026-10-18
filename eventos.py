@@ -67,14 +67,14 @@ class DependenciasEventos:
 
 
 def _aplicar_modo_pantalla(contexto, dependencias):
-    ancho, alto = dependencias.configuracion["resoluciones"][
-        dependencias.configuracion["resolucion"]
-    ]
-    modo_ventana = (
-        pygame.FULLSCREEN
-        if dependencias.configuracion["pantalla_completa"]
-        else 0
-    )
+    cfg = dependencias.configuracion
+    ancho, alto = cfg["resoluciones"][cfg["resolucion"]]
+    # Si la resolucion elegida no cabe en el monitor, se vuelve a la base.
+    ancho_max, alto_max = pygame.display.get_desktop_sizes()[0]
+    if ancho > ancho_max or alto > alto_max:
+        cfg["resolucion"] = 0
+        ancho, alto = cfg["resoluciones"][0]
+    modo_ventana = pygame.FULLSCREEN if cfg["pantalla_completa"] else 0
     contexto.screen = pygame.display.set_mode((ancho, alto), modo_ventana)
 
 

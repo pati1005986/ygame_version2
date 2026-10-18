@@ -16,7 +16,19 @@ class MenuOpciones:
     reutilizarla al volver al menu.
     """
 
-    RESOLUCIONES = ((800, 600), (640, 480), (480, 360))
+    # Las nuevas resoluciones van al final para que los indices guardados en
+    # configuracion_guardada.json sigan apuntando a la misma resolucion.
+    # Todas son 4:3, igual que el lienzo logico de 800x600.
+    RESOLUCIONES = (
+        (800, 600),
+        (640, 480),
+        (480, 360),
+        (1024, 768),
+        (1280, 960),
+        (1600, 1200),
+    )
+    # Niveles de calidad grafica (indice guardado en "calidad_graficos").
+    CALIDADES_GRAFICAS = ("low", "medium", "high")
     CONTROLES = ("left", "right", "jump", "down", "dash")
     # Valores cicleables del slider de escala de UI: independiente de la
     # resolucion de ventana, multiplica el tamano de fuentes y botones de
@@ -31,6 +43,7 @@ class MenuOpciones:
     DEFAULTS = {
         "resolucion": 0,
         "pantalla_completa": False,
+        "calidad_graficos": 2,
         "idioma": "en",
         "volumen_musica": 0.8,
         "volumen_efectos": 0.8,
@@ -84,11 +97,32 @@ class MenuOpciones:
                     self.configuracion["controles"].setdefault(nombre, tecla)
             else:
                 self.configuracion.setdefault(clave, valor)
+        validas = self.resoluciones_disponibles()
+        if self.configuracion["resolucion"] not in validas:
+            self.configuracion["resolucion"] = validas[0]
         self.tecla_esperada = None
         self._tiempo = 0.0
         self._crear_fuentes()
         self._crear_rectangulos()
         self._formas_abstractas = self._generar_formas_abstractas()
+
+    @classmethod
+    def resoluciones_disponibles(cls):
+        """Indices de las resoluciones que caben en el monitor actual.
+
+        Las que son mas grandes que el escritorio no se ofrecen en el menu.
+        Siempre devuelve al menos la resolucion base (indice 0).
+        """
+        try:
+            ancho_max, alto_max = pygame.display.get_desktop_sizes()[0]
+        except (pygame.error, AttributeError, IndexError):
+            return list(range(len(cls.RESOLUCIONES)))
+        validas = [
+            i
+            for i, (ancho, alto) in enumerate(cls.RESOLUCIONES)
+            if ancho <= ancho_max and alto <= alto_max
+        ]
+        return validas or [0]
 
     def _escala(self):
         """Factor de escala relativo a la resolucion de referencia, con
@@ -122,7 +156,7 @@ class MenuOpciones:
         pantalla siga siendo usable incluso en la resolución más chica
         (480x360) sin que las filas se salgan de la ventana."""
         centro = self.ancho // 2
-        n_generales = 8  # resolucion, idioma, pantalla, dificultad, musica, efectos, escala_ui, reset
+        n_generales = 9  # resolucion, idioma, pantalla, graficos, dificultad, musica, efectos, escala_ui, reset
         n_controles = len(self.CONTROLES)
 
         self.titulo_y = max(30, int(self.alto * 0.09))
@@ -149,6 +183,7 @@ class MenuOpciones:
             "boton_resolucion",
             "boton_idioma",
             "boton_pantalla",
+            "boton_graficos",
             "boton_dificultad",
             "boton_musica",
             "boton_efectos",
@@ -428,12 +463,16 @@ class MenuOpciones:
 
     # ---------- dibujo principal ----------
 
+    def _texto_graficos(self, idioma, clave):
+        return texto(idioma, clave)
+
     def _nombre_tecla(self, nombre):
         return pygame.key.name(self.configuracion["controles"][nombre]).upper()
 
     def _restaurar_por_defecto(self):
         self.configuracion["resolucion"] = self.DEFAULTS["resolucion"]
         self.configuracion["pantalla_completa"] = self.DEFAULTS["pantalla_completa"]
+        self.configuracion["calidad_graficos"] = self.DEFAULTS["calidad_graficos"]
         self.configuracion["idioma"] = self.DEFAULTS["idioma"]
         self.configuracion["volumen_musica"] = self.DEFAULTS["volumen_musica"]
         self._establecer_volumen_general(self.DEFAULTS["volumen_musica"])
@@ -498,6 +537,18 @@ class MenuOpciones:
         self._texto_centrado(
             superficie,
             f"{texto(idioma, 'display_mode')}: {texto(idioma, modo)}",
+            self.fuente,
+            rect_dibujo.center,
+        )
+
+        calidad = self.configuracion.get("calidad_graficos", 2)
+        calidad = max(0, min(len(self.CALIDADES_GRAFICAS) - 1, calidad))
+        hover = self.boton_graficos.collidepoint(posicion_raton)
+        rect_dibujo = self._dibujar_boton_comic(superficie, self.boton_graficos, "", hover)
+        self._texto_centrado(
+            superficie,
+            f"{self._texto_graficos(idioma, 'graphics')}: "
+            f"{self._texto_graficos(idioma, self.CALIDADES_GRAFICAS[calidad])}",
             self.fuente,
             rect_dibujo.center,
         )
@@ -597,13 +648,17 @@ class MenuOpciones:
             return None
 
         if self.boton_resolucion.collidepoint(evento.pos):
-            self.configuracion["resolucion"] = (
-                self.configuracion["resolucion"] + 1
-            ) % len(self.RESOLUCIONES)
+            validas = self.resoluciones_disponibles()
+            siguientes = [i for i in validas if i > self.configuracion["resolucion"]]
+            self.configuracion["resolucion"] = siguientes[0] if siguientes else validas[0]
         elif self.boton_idioma.collidepoint(evento.pos):
             self.configuracion["idioma"] = alternar_idioma(self.configuracion["idioma"])
         elif self.boton_pantalla.collidepoint(evento.pos):
             self.configuracion["pantalla_completa"] = not self.configuracion.get("pantalla_completa", False)
+        elif self.boton_graficos.collidepoint(evento.pos):
+            self.configuracion["calidad_graficos"] = (
+                self.configuracion.get("calidad_graficos", 2) + 1
+            ) % len(self.CALIDADES_GRAFICAS)
         elif self.boton_musica.collidepoint(evento.pos):
             valores = (0.0, 0.25, 0.5, 0.75, 1.0)
             actual = self.configuracion.get("volumen_musica", 0.8)
@@ -645,6 +700,7 @@ def normalizar_configuracion(configuracion):
         "resoluciones": MenuOpciones.RESOLUCIONES,
         "resolucion": 0,
         "pantalla_completa": False,
+        "calidad_graficos": 2,
         "idioma": "en",
         "volumen_musica": 0.8,
         "volumen_efectos": 0.8,
@@ -666,8 +722,24 @@ def normalizar_configuracion(configuracion):
         if clave in configuracion:
             base[clave] = configuracion[clave]
 
-    if "resoluciones" in configuracion and isinstance(configuracion["resoluciones"], (list, tuple)):
-        base["resoluciones"] = tuple(configuracion["resoluciones"])
+    # La lista de resoluciones siempre sale del codigo, nunca del JSON
+    # guardado: asi un archivo viejo no oculta las resoluciones nuevas.
+    base["resoluciones"] = MenuOpciones.RESOLUCIONES
+    indice_res = base["resolucion"]
+    if (
+        isinstance(indice_res, bool)
+        or not isinstance(indice_res, int)
+        or not 0 <= indice_res < len(MenuOpciones.RESOLUCIONES)
+    ):
+        base["resolucion"] = 0
+
+    calidad = base["calidad_graficos"]
+    if (
+        isinstance(calidad, bool)
+        or not isinstance(calidad, int)
+        or not 0 <= calidad < len(MenuOpciones.CALIDADES_GRAFICAS)
+    ):
+        base["calidad_graficos"] = 2
 
     nivel_guardado = base["nivel_guardado"]
     if isinstance(nivel_guardado, bool) or not isinstance(nivel_guardado, int) or nivel_guardado < 1:

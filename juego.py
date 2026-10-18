@@ -75,6 +75,18 @@ CAMPOS_EVENTOS = (
 )
 
 FRECUENCIA_FONDO = 1 / 20  # el fondo abstracto se redibuja a 20 Hz
+
+# Ajustes de calidad grafica (indice = configuracion["calidad_graficos"]).
+#   fondo:      segundos entre redibujados del fondo (None = FRECUENCIA_FONDO)
+#   particulas: cantidad de formas abstractas flotantes
+#   shake:      multiplicador de la sacudida de camara
+#   vineta:     viñeta roja de peligro
+#   grises:     desaturacion progresiva de la escena
+CALIDADES = {
+    0: dict(fondo=1 / 8, particulas=0, shake=0.0, vineta=False, grises=False),
+    1: dict(fondo=1 / 12, particulas=6, shake=0.5, vineta=True, grises=True),
+    2: dict(fondo=None, particulas=12, shake=1.0, vineta=True, grises=True),
+}
 VENTANA_DOBLE_TOQUE_ABAJO_MS = 350
 
 
@@ -131,7 +143,7 @@ class Juego:
         else:
             self.nivel = max(1, int(nivel_inicial))
         self._preparar_partida(self.nivel)
-        self.particulas = [ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(12)]
+        self._aplicar_calidad()
         aplicar_volumen_audio(self.configuracion, self.jugador)
 
         self._crear_menus()
@@ -160,11 +172,31 @@ class Juego:
     # Inicialización
     # ------------------------------------------------------------------
     def _crear_ventana(self):
-        resolucion = MenuOpciones.RESOLUCIONES[self.configuracion["resolucion"]]
+        indice = self.configuracion["resolucion"]
+        if not 0 <= indice < len(MenuOpciones.RESOLUCIONES):
+            indice = self.configuracion["resolucion"] = 0
+        resolucion = MenuOpciones.RESOLUCIONES[indice]
+        # Si la resolucion guardada no cabe en este monitor, se usa la base.
+        ancho_max, alto_max = pygame.display.get_desktop_sizes()[0]
+        if resolucion[0] > ancho_max or resolucion[1] > alto_max:
+            self.configuracion["resolucion"] = 0
+            resolucion = MenuOpciones.RESOLUCIONES[0]
         flags = pygame.FULLSCREEN if self.configuracion["pantalla_completa"] else 0
         self.pantalla = Presentador(WIDTH, HEIGHT, resolucion, flags)
         self.lienzo = self.pantalla.lienzo
         pygame.display.set_caption(texto(self.configuracion["idioma"], "window_title"))
+
+    def _aplicar_calidad(self):
+        """Aplica el preset de calidad grafica elegido en opciones."""
+        nivel = self.configuracion.get("calidad_graficos", 2)
+        if nivel not in CALIDADES:
+            nivel = 2
+        self._calidad_aplicada = self.configuracion.get("calidad_graficos", 2)
+        self.calidad = CALIDADES[nivel]
+        self.frecuencia_fondo = self.calidad["fondo"] or FRECUENCIA_FONDO
+        self.particulas = [
+            ParticulaAbstracta(WIDTH, HEIGHT) for _ in range(self.calidad["particulas"])
+        ]
 
     def _crear_boton_reintentar(self, idioma):
         self.boton_reintentar = pygame.Rect(WIDTH // 2 - 110, HEIGHT // 2 + 45, 220, 52)
@@ -391,6 +423,9 @@ class Juego:
     # Actualización del mundo (un paso de física)
     # ------------------------------------------------------------------
     def _actualizar_mundo(self, dt):
+        # Si cambio la calidad grafica en opciones, se aplica aqui.
+        if self.configuracion.get("calidad_graficos", 2) != self._calidad_aplicada:
+            self._aplicar_calidad()
         # El personaje va eufórico e inquieto durante todo el modo infinito.
         # Se sincroniza en cada paso porque el jugador puede crearse en otro
         # módulo (el de eventos) sin conocer este modo.
@@ -634,7 +669,9 @@ class Juego:
         elif estado == ESTADO_PAUSA:
             self.pausa.dibujar(self.lienzo, self.pantalla.posicion_raton_logica(), dt)
         elif estado == ESTADO_OPCIONES:
-            self.opciones.dibujar(self.lienzo, dt=dt)
+            self.opciones.dibujar(
+                self.lienzo, self.pantalla.posicion_raton_logica(), dt
+            )
         else:
             self._dibujar_partida(tiempo)
 
@@ -694,7 +731,8 @@ class Juego:
             nivel_visual = self.nivel - 1 + self.transicion.progreso_camara()
         if self.modo_infinito:
             nivel_visual = NIVEL_VISUAL_INFINITO
-        escala_grises(self.escena, saturacion_nivel(nivel_visual))
+        if self.calidad["grises"]:
+            escala_grises(self.escena, saturacion_nivel(nivel_visual))
 
         self._volcar_escena_con_shake()
         self._dibujar_vineta_peligro(tiempo)
@@ -709,7 +747,7 @@ class Juego:
         # mueven lento: a 20 Hz sigue viéndose fluido.
         nivel_fondo = -1 if self.modo_infinito else self.nivel  # fijo en infinito
         if (
-            tiempo - self.tiempo_ultimo_fondo >= FRECUENCIA_FONDO
+            tiempo - self.tiempo_ultimo_fondo >= self.frecuencia_fondo
             or nivel_fondo != self.nivel_fondo
         ):
             if self.modo_infinito:
@@ -753,18 +791,19 @@ class Juego:
         self.jugador.dibujar(escena)
 
     def _volcar_escena_con_shake(self):
-        if self.intensidad_shake > 0:
+        intensidad = self.intensidad_shake * self.calidad["shake"]
+        if intensidad > 0:
             self.lienzo.fill((0, 0, 0))
             offset = (
-                random.uniform(-self.intensidad_shake, self.intensidad_shake),
-                random.uniform(-self.intensidad_shake, self.intensidad_shake),
+                random.uniform(-intensidad, intensidad),
+                random.uniform(-intensidad, intensidad),
             )
             self.lienzo.blit(self.escena, offset)
         else:
             self.lienzo.blit(self.escena, (0, 0))
 
     def _dibujar_vineta_peligro(self, tiempo):
-        if self.alerta_enemigos <= 0.02:
+        if not self.calidad["vineta"] or self.alerta_enemigos <= 0.02:
             return
         # Pulso suave: un latido que se acelera con el peligro (el halo del
         # enemigo, en enemigo.py, ya pulsa más rápido cerca; esto lo refuerza

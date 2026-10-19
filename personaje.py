@@ -122,6 +122,20 @@ class PersonajeHumanoide:
         self.velocidad = 6
         self.gravedad = 0.6
         self.fuerza_salto = self.FUERZA_SALTO
+
+        # Agarre: copias de instancia de las constantes de clase, para poder
+        # variarlas por nivel (ver ``aplicar_agarre``). El modo historia no
+        # las toca, así que se comporta igual que antes.
+        self.acel_suelo = self.ACEL_SUELO
+        self.friccion_suelo = self.FRICCION_SUELO
+        self.acel_aire = self.ACEL_AIRE
+        self.acel_aire_doble_salto = self.ACEL_AIRE_DOBLE_SALTO
+        self.friccion_aire = self.FRICCION_AIRE
+        self.factor_giro = self.FACTOR_GIRO
+        # Tambaleo lateral (px/frame²); 0 = desactivado.
+        self.deriva = 0.0
+        self._fase_deriva = random.uniform(0.0, 2 * math.pi)
+        self._frames_deriva = 0
         self.en_suelo = False
         self.plataforma_actual = None  # última plataforma sobre la que aterrizó
 
@@ -449,6 +463,23 @@ class PersonajeHumanoide:
     # ------------------------------------------------------------------
     # Lógica principal
     # ------------------------------------------------------------------
+    def aplicar_agarre(self, parametros):
+        """Ajusta cuánto agarre tiene el personaje (inercia y estabilidad).
+
+        ``parametros`` es el dict de ``dificultad``. Las claves ausentes
+        (curva de historia) vuelven a las constantes de clase.
+        """
+        self.acel_suelo = parametros.get("aceleracion_suelo", self.ACEL_SUELO)
+        self.friccion_suelo = parametros.get("friccion_suelo", self.FRICCION_SUELO)
+        self.acel_aire = parametros.get("aceleracion_aire", self.ACEL_AIRE)
+        # El doble salto conserva su bonus de control sobre el aire base.
+        self.acel_aire_doble_salto = self.acel_aire + (
+            self.ACEL_AIRE_DOBLE_SALTO - self.ACEL_AIRE
+        )
+        self.friccion_aire = parametros.get("friccion_aire", self.FRICCION_AIRE)
+        self.factor_giro = parametros.get("factor_giro", self.FACTOR_GIRO)
+        self.deriva = parametros.get("deriva", 0.0)
+
     def reiniciar_movimiento(self):
         """Elimina el impulso y las acciones pendientes entre niveles."""
         self.vel_x = 0.0
@@ -545,18 +576,31 @@ class PersonajeHumanoide:
             vel_max = self.velocidad * (self.VEL_AGACHADO if self.agachado else 1.0)
             if self.en_suelo:
                 self._doble_salto_activo = False
-                aceleracion, friccion = self.ACEL_SUELO, self.FRICCION_SUELO
+                aceleracion, friccion = self.acel_suelo, self.friccion_suelo
             else:
                 aceleracion = (
-                    self.ACEL_AIRE_DOBLE_SALTO if self._doble_salto_activo else self.ACEL_AIRE
+                    self.acel_aire_doble_salto if self._doble_salto_activo else self.acel_aire
                 )
-                friccion = self.FRICCION_AIRE
+                friccion = self.friccion_aire
             if dir_input != 0:
                 if self.vel_x * dir_input < 0:
-                    aceleracion *= self.FACTOR_GIRO
+                    aceleracion *= self.factor_giro
                 self.vel_x = self._acercar(self.vel_x, dir_input * vel_max, aceleracion)
             else:
                 self.vel_x = self._acercar(self.vel_x, 0.0, friccion)
+
+            # Tambaleo: fuerza lateral suave e irregular (dos senos con
+            # frecuencias distintas), no empujones al azar: se puede leer y
+            # compensar. Quieto en el suelo no actúa, para no sacar al
+            # personaje de la plataforma sin que toque nada.
+            if self.deriva > 0 and (dir_input != 0 or not self.en_suelo):
+                self._frames_deriva += 1
+                t = self._frames_deriva
+                onda = (
+                    math.sin(t * 0.11 + self._fase_deriva)
+                    + 0.7 * math.sin(t * 0.047 + 1.3 * self._fase_deriva)
+                ) / 1.7
+                self.vel_x += onda * self.deriva
 
         # Si hay un salto "guardado" y ya hay forma válida de saltar, se
         # ejecuta ahora en vez de perderse por llegar un instante pronto.

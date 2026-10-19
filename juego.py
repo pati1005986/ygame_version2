@@ -64,6 +64,7 @@ from personaje import PersonajeHumanoide
 from plataformas import color_desde_hue
 from render import Presentador, crear_vineta_peligro
 from transicion import TransicionCaricaturesca
+from vacio import AnimacionVacio
 
 # Atributos de ``Juego`` que ``procesar_eventos`` puede leer y modificar a
 # través de ``EstadoEventos`` (se copian ida y vuelta en cada fotograma).
@@ -121,6 +122,9 @@ class Juego:
         self._crear_capas()
 
         self.eventos_visuales = EventosVisuales(WIDTH, HEIGHT)
+        # Caída al vacío: reemplaza el game over del modo infinito.
+        self.animacion_vacio = None
+        AnimacionVacio.precalentar(self.lienzo)
         self.combo = Combo()
 
         # Estado de la partida
@@ -286,9 +290,22 @@ class Juego:
 
     @property
     def hay_gif_game_over(self):
+        """True si la pantalla de game over tapa toda la escena (gif,
+        animación de despertar o caída al vacío)."""
+        if self.estado != ESTADO_GAME_OVER:
+            return False
+        if self.animacion_vacio is not None:
+            return True
         ev = self.eventos_visuales
-        return self.estado == ESTADO_GAME_OVER and (
-            bool(ev.gif_game_over) or ev.game_over_nivel_alto_activo
+        return bool(ev.gif_game_over) or ev.game_over_nivel_alto_activo
+
+    @property
+    def _vacio_en_curso(self):
+        anim = self.animacion_vacio
+        return (
+            self.estado == ESTADO_GAME_OVER
+            and anim is not None
+            and not anim.terminada
         )
 
     # ------------------------------------------------------------------
@@ -346,6 +363,13 @@ class Juego:
             **{campo: getattr(self, campo) for campo in CAMPOS_EVENTOS},
         )
         eventos = pygame.event.get()
+        if self._vacio_en_curso:
+            # Mientras cae al vacío no se puede reintentar (F11 y cerrar sí).
+            eventos = [
+                e for e in eventos
+                if e.type not in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN)
+                or (e.type == pygame.KEYDOWN and e.key == pygame.K_F11)
+            ]
         procesar_eventos(eventos, contexto, self.dependencias_eventos)
 
         self.pantalla.screen = contexto.screen
@@ -357,6 +381,7 @@ class Juego:
 
         if estado_antes == ESTADO_GAME_OVER and self.estado != ESTADO_GAME_OVER:
             self.eventos_visuales.detener_audio_game_over()
+            self.animacion_vacio = None
         if estado_antes == ESTADO_CREDITOS and self.estado == ESTADO_MENU:
             self._reiniciar_tras_creditos()
 
@@ -536,13 +561,24 @@ class Juego:
     def _iniciar_game_over(self, **opciones):
         """Dispara el game over; ``opciones`` se pasan a ``iniciar_game_over``."""
         self.intensidad_shake = 9.0
-        self.eventos_visuales.iniciar_game_over(
-            self.nivel,
-            pygame.time.get_ticks(),
-            volumen_efectos=self.configuracion["volumen_efectos"],
-            modo_infinito=self.modo_infinito,
-            **opciones,
-        )
+        if self.modo_infinito:
+            # Modo infinito: caída al vacío en vez del game over clásico
+            # (no se llama a iniciar_game_over: evitaría los gifs y gritos).
+            if self.animacion_vacio is None:
+                self.eventos_visuales.detener_audio_game_over()
+                self.animacion_vacio = AnimacionVacio(
+                    self.lienzo,           # último fotograma = captura inicial
+                    self.jugador,
+                    euforico=True,
+                )
+        else:
+            self.eventos_visuales.iniciar_game_over(
+                self.nivel,
+                pygame.time.get_ticks(),
+                volumen_efectos=self.configuracion["volumen_efectos"],
+                modo_infinito=self.modo_infinito,
+                **opciones,
+            )
         self.estado = ESTADO_GAME_OVER
 
     def _pasar_al_siguiente_nivel(self):
@@ -591,6 +627,10 @@ class Juego:
     def _actualizar_game_over(self, dt):
         self.combo.reiniciar()
         self.resumen_expira = 0
+        if self.animacion_vacio is not None:
+            # La escena queda tapada por el vórtice: solo avanza la animación.
+            self.animacion_vacio.actualizar(dt)
+            return
         for plataforma in self.plataformas:
             plataforma.actualizar(dt)
         if self.jugador.muriendo:
@@ -859,9 +899,16 @@ class Juego:
 
     def _dibujar_game_over(self, tiempo):
         cfg = self.configuracion
-        self.eventos_visuales.dibujar_game_over(
-            self.lienzo, self.nivel, pygame.time.get_ticks(), tiempo
-        )
+        anim = self.animacion_vacio
+        if anim is not None:
+            if not anim.terminada:
+                anim.dibujar(self.lienzo)
+                return  # sin puntaje ni botón hasta que acabe la caída
+            self.lienzo.fill((0, 0, 0))
+        else:
+            self.eventos_visuales.dibujar_game_over(
+                self.lienzo, self.nivel, pygame.time.get_ticks(), tiempo
+            )
         if self.modo_infinito:
             self.hud.dibujar_resultado_infinito(
                 self.lienzo,

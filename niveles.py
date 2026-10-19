@@ -157,6 +157,7 @@ def ajustar_dificultad_jugador(jugador, nivel, modo_infinito=False):
     parametros = _parametros(nivel, modo_infinito)
     jugador.velocidad = parametros["velocidad_jugador"]
     jugador.gravedad = parametros["gravedad_jugador"]
+    jugador.aplicar_agarre(parametros)  # sin claves de agarre = valores por defecto
     jugador.actualizar_nivel(nivel)
 
 

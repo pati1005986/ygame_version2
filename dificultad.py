@@ -19,6 +19,8 @@ Cada valor tiene un techo (``min(..., tope)``) para que la dificultad se
 estabilice en partidas muy largas en vez de crecer sin límite.
 """
 
+import math
+
 
 def parametros_dificultad(nivel):
     """Devuelve los parámetros de dificultad para ``nivel``.
@@ -60,14 +62,55 @@ def parametros_dificultad(nivel):
     }
 
 
+def _tiende(progreso, base, limite, k):
+    """Va de ``base`` hacia ``limite`` sin alcanzarlo nunca.
+
+    ``k`` es la "lentitud": con progreso == k ya se recorrió ~63 % del
+    camino. Sirve tanto para subir como para bajar (``limite < base``).
+    """
+    return limite - (limite - base) * math.exp(-progreso / k)
+
+
+def _crece(progreso, base, escala, k):
+    """Crecimiento logarítmico: rápido al inicio y cada vez más lento, pero
+    sin techo duro (el infinito de verdad)."""
+    return base + escala * math.log1p(progreso / k)
+
+
 def parametros_dificultad_infinito(nivel):
-    """Devuelve una curva de dificultad creciente, acotada, para el modo infinito."""
-    progreso = max(0, nivel - 1)
+    """Curva frenética del modo infinito: la dificultad está en controlar.
+
+    * Sube la energía: velocidad máxima y aceleración.
+    * Baja el agarre: se frena y se corrige peor (derrapa más, gira peor,
+      en el aire casi no pierde inercia).
+    * El salto no cambia: la gravedad queda fija, así que ``altura_maxima_salto``
+      y el generador de niveles siguen siendo coherentes.
+    * ``deriva`` es un tambaleo lateral suave (aceleración en px/frame²).
+
+    Las claves de agarre son opcionales para ``aplicar_agarre``: la curva de
+    historia no las define y el personaje usa sus constantes de clase.
+    """
+    p = max(0, nivel - 1)
     return {
-        "velocidad_jugador": min(8.0 + progreso * 0.045, 9.8),
-        "gravedad_jugador": min(0.7 + progreso * 0.008, 0.95),
-        "probabilidad_plataforma_movil": min(0.25 + progreso * 0.012, 0.72),
-        "velocidad_enemigo_patrulla": min(2.0 + progreso * 0.045, 4.0),
-        "velocidad_enemigo_persecucion": min(3.5 + progreso * 0.075, 6.0),
-        "rango_deteccion_enemigo": min(240 + progreso * 3, 420),
+        # --- Energía ---
+        "velocidad_jugador": _tiende(p, 8.0, 15.0, 35),
+        "aceleracion_suelo": _tiende(p, 1.15, 1.9, 40),
+
+        # --- Agarre (valores iniciales = constantes de PersonajeHumanoide) ---
+        "friccion_suelo": _tiende(p, 0.95, 0.22, 30),    # frenada sin input
+        "factor_giro": _tiende(p, 1.8, 1.0, 40),         # frenada al invertir
+        "aceleracion_aire": _tiende(p, 0.65, 0.85, 40),
+        "friccion_aire": _tiende(p, 0.25, 0.08, 40),     # casi no frena en el aire
+
+        # --- Inestabilidad ---
+        "deriva": min(_crece(p, 0.0, 0.16, 25), 0.5),
+
+        # --- Salto: quieto ---
+        "gravedad_jugador": 0.7,
+
+        # --- Mundo ---
+        "probabilidad_plataforma_movil": _tiende(p, 0.25, 0.85, 40),
+        "velocidad_enemigo_patrulla": _crece(p, 2.0, 1.4, 20),
+        "velocidad_enemigo_persecucion": _crece(p, 3.5, 2.4, 20),
+        "rango_deteccion_enemigo": _tiende(p, 240, 480, 40),
     }

@@ -5,7 +5,11 @@ import pygame
  
 # Pantalla lógica (el lienzo se escala a la resolución real al presentarlo)
 WIDTH, HEIGHT = 800, 600
+# Ritmo de la física (paso fijo): la simulación siempre avanza a este ritmo.
 FPS = 60
+# Tope de fotogramas renderizados por segundo. Se puede subir por encima de
+# FPS para renderizar más fluido sin alterar la física (que sigue a FPS Hz).
+FPS_RENDER = 120
  
 # Margen que se resta a la altura máxima de salto al generar plataformas
 MARGEN_SALTO_SEGURO = 20

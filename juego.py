@@ -23,7 +23,7 @@ import pygame
 from ajustes import IDIOMAS_DISPONIBLES, aplicar_volumen_audio, preparar_configuracion
 from catarsis import play_catarsis_animation
 from combo import Combo
-from constantes import FPS, HEIGHT, NIVEL_DESPERTAR, NIVEL_FINAL, POS_SPAWN, WIDTH
+from constantes import FPS, FPS_RENDER, HEIGHT, NIVEL_DESPERTAR, NIVEL_FINAL, POS_SPAWN, WIDTH
 from eventos import (
     ESTADO_ADVERTENCIA,
     ESTADO_CREDITOS,
@@ -296,9 +296,10 @@ class Juego:
     # ------------------------------------------------------------------
     def ejecutar(self):
         while self.jugando:
-            # Limita el avance tras una pausa del sistema; el acumulador hace
-            # varios pasos pequeños si el render no alcanza los 60 FPS.
-            dt = min(self.reloj.tick(FPS) / 1000.0, 0.25)
+            # El render se limita a FPS_RENDER; la física sigue avanzando a
+            # FPS Hz mediante el acumulador (varios pasos pequeños si el
+            # render no alcanza el ritmo objetivo).
+            dt = min(self.reloj.tick(FPS_RENDER) / 1000.0, 0.25)
             self.acumulador_fisica += dt
             tiempo = pygame.time.get_ticks() / 1000.0
 

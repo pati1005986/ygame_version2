@@ -71,38 +71,42 @@ class MenuPausa:
     def _crear_fuentes(self):
         escala = self._escala()
         self.fuente_titulo = pygame.font.SysFont(
-            "comicsansms", max(26, int(56 * escala)), bold=True
+            "comicsansms", max(26, int(52 * escala)), bold=True
         )
         self.fuente_boton = pygame.font.SysFont(
-            "comicsansms", max(14, int(24 * escala)), bold=True
+            "comicsansms", max(13, int(22 * escala)), bold=True
         )
 
     def _crear_rectangulos(self):
         centro = self.ancho // 2
 
         ancho_boton = int(max(190, min(340, self.ancho * 0.4)))
-        alto_boton = int(max(38, min(64, self.alto * 0.1)))
-        espacio = max(8, int(alto_boton * 0.28))
-        bloque_alto = alto_boton * 3 + espacio * 2
+        alto_boton = int(max(34, min(56, self.alto * 0.085)))
+        espacio = max(6, int(alto_boton * 0.22))
+        # Ahora son 4 botones en lugar de 3
+        bloque_alto = alto_boton * 4 + espacio * 3
 
-        titulo_y = max(55, int(self.alto * 0.2))
-        margen_bajo_titulo = titulo_y + int(alto_boton * 0.85)
-        y_maximo = self.alto - bloque_alto - int(self.alto * 0.04)
-        y_inicio = min(max(margen_bajo_titulo, int(self.alto * 0.4)), max(margen_bajo_titulo, y_maximo))
+        titulo_y = max(45, int(self.alto * 0.16))
+        margen_bajo_titulo = titulo_y + int(alto_boton * 0.75)
+        y_maximo = self.alto - bloque_alto - int(self.alto * 0.03)
+        y_inicio = min(max(margen_bajo_titulo, int(self.alto * 0.32)), max(margen_bajo_titulo, y_maximo))
 
         panel_ancho = max(ancho_boton + 86, int(self.ancho * 0.52))
-        panel_alto = bloque_alto + 84
-        panel_top = max(40, y_inicio - 58)
+        panel_alto = bloque_alto + 74
+        panel_top = max(30, y_inicio - 48)
         panel_left = centro - panel_ancho // 2
         self.panel_rect = pygame.Rect(panel_left, panel_top, panel_ancho, panel_alto)
 
         self.titulo_y = titulo_y
         self.boton_continuar = pygame.Rect(centro - ancho_boton // 2, y_inicio, ancho_boton, alto_boton)
         self.boton_opciones = pygame.Rect(
-            centro - ancho_boton // 2, y_inicio + alto_boton + espacio, ancho_boton, alto_boton
+            centro - ancho_boton // 2, y_inicio + (alto_boton + espacio), ancho_boton, alto_boton
+        )
+        self.boton_menu = pygame.Rect(
+            centro - ancho_boton // 2, y_inicio + (alto_boton + espacio) * 2, ancho_boton, alto_boton
         )
         self.boton_salir = pygame.Rect(
-            centro - ancho_boton // 2, y_inicio + (alto_boton + espacio) * 2, ancho_boton, alto_boton
+            centro - ancho_boton // 2, y_inicio + (alto_boton + espacio) * 3, ancho_boton, alto_boton
         )
 
     def actualizar_tamano(self, ancho, alto):
@@ -212,7 +216,7 @@ class MenuPausa:
         centro = (centro[0], centro[1] + bamboleo)
 
         # Rayita tipo arcade con brillo neón.
-        linea = pygame.Rect(self.ancho // 2 - 130, self.titulo_y + 38, 260, 8)
+        linea = pygame.Rect(self.ancho // 2 - 130, self.titulo_y + 34, 260, 8)
         pygame.draw.rect(superficie, (0, 255, 204), linea, border_radius=5)
         pygame.draw.rect(superficie, (255, 214, 51), linea.inflate(-10, -2), border_radius=4)
 
@@ -242,15 +246,7 @@ class MenuPausa:
         relleno = fuente.render(contenido, True, color_relleno)
         superficie.blit(relleno, relleno.get_rect(center=centro))
 
-    def _texto_centrado(self, superficie, contenido, fuente, centro, color):
-        imagen = fuente.render(contenido, True, color)
-        superficie.blit(imagen, imagen.get_rect(center=centro))
-
     def _puntos_garabateados(self, rect, fase, semilla, amplitud=1.4, segmentos=3):
-        """Devuelve los puntos de un rectangulo con bordes "temblorosos" a
-        mano en vez de lineas perfectas: la base del estilo comic
-        independiente/fanzine, con temblor estable por boton pero vivo
-        gracias a la fase (tiempo)."""
         aleatorio = random.Random(semilla)
         esquinas = [
             (rect.left, rect.top),
@@ -283,9 +279,6 @@ class MenuPausa:
         return (centro[0] + dx * cos_a - dy * sin_a, centro[1] + dx * sin_a + dy * cos_a)
 
     def _dibujar_relleno_halftone(self, superficie, puntos, color_base):
-        """Relleno plano tipo poster con una trama de puntos (Ben-Day) hacia
-        la esquina inferior-derecha para sugerir volumen, y un brillo
-        triangular de "sticker" en la esquina superior-izquierda."""
         pygame.draw.polygon(superficie, color_base, puntos)
 
         min_x = min(p[0] for p in puntos)
@@ -321,8 +314,6 @@ class MenuPausa:
         superficie.blit(brillo, interior.topleft)
 
     def _dibujar_esquina_pelada(self, superficie, rect, hover):
-        """Pequeña esquina de sticker despegandose, para el toque
-        "alternativo" de collage de fanzine."""
         tam = 15 if hover else 9
         x, y = rect.right - 2, rect.top + 2
         flap = [(x, y), (x - tam, y), (x, y + tam)]
@@ -331,8 +322,6 @@ class MenuPausa:
         pygame.draw.line(superficie, self.COLOR_TINTA, (x - tam, y), (x, y + tam), 1)
 
     def _dibujar_salpicadura(self, superficie, rect, fase):
-        """Motitas de pintura en aerosol alrededor del boton al pasar el
-        mouse, como un sticker recien pegado en una pared de fanzine."""
         aleatorio = random.Random(f"splash-{rect.x}-{rect.y}-{int(fase * 6)}")
         color = random.Random(f"splashcolor-{rect.x}-{rect.y}").choice(self.PALETA_BOTONES)
         for _ in range(5):
@@ -344,9 +333,6 @@ class MenuPausa:
             pygame.draw.circle(superficie, color, (int(x), int(y)), radio)
 
     def _dibujar_boton_comic(self, superficie, rect, contenido, hover, fase=0.0):
-        """Botón estilo cómic-punk/fanzine: relleno plano con trama de
-        puntos, contorno "dibujado a mano" con temblor, sombra dura de
-        sticker despegado y texto con borde negro para máxima legibilidad."""
         indice_color = (rect.x * 7 + rect.y * 13) % len(self.PALETA_BOTONES)
         color_base = self.PALETA_BOTONES[indice_color]
         if hover:
@@ -400,9 +386,11 @@ class MenuPausa:
         self._dibujar_panel_pausa(superficie)
         self._dibujar_titulo_pausa(superficie)
 
+        # Añadido "menu" para el nuevo botón que regresa a la interfaz principal
         botones = (
             (self.boton_continuar, "continue"),
             (self.boton_opciones, "options"),
+            (self.boton_menu, "main_menu"),
             (self.boton_salir, "exit"),
         )
         posicion_raton = mouse_pos if mouse_pos is not None else pygame.mouse.get_pos()
@@ -421,6 +409,8 @@ class MenuPausa:
             return "continuar"
         if self.boton_opciones.collidepoint(evento.pos):
             return "opciones"
+        if self.boton_menu.collidepoint(evento.pos):
+            return "menu"  # Retorna el estado para volver al menú principal
         if self.boton_salir.collidepoint(evento.pos):
             return "salir"
         return None

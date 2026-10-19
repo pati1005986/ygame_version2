@@ -207,6 +207,8 @@ def procesar_eventos(eventos, contexto, dependencias):
             elif accion_pausa == "opciones":
                 contexto.estado_despues_opciones = ESTADO_PAUSA
                 contexto.estado = ESTADO_OPCIONES
+            elif accion_pausa == "menu":
+                contexto.estado = ESTADO_MENU
             elif accion_pausa == "salir":
                 contexto.jugando = False
         elif contexto.estado == ESTADO_OPCIONES:

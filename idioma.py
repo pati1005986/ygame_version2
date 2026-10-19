@@ -55,6 +55,7 @@ TRADUCCIONES = {
         "thanks_for_playing": "THANKS FOR PLAYING",
         "return_main_menu": "RETURN TO MAIN MENU",
         "window_title": "Procedural Platforms - Abstract Canvas",
+        "main_menu": "MAIN MENU",
     },
     "es": {
         "play": "JUGAR",
@@ -112,6 +113,7 @@ TRADUCCIONES = {
         "thanks_for_playing": "GRACIAS POR JUGAR",
         "return_main_menu": "VOLVER AL MENU PRINCIPAL",
         "window_title": "Plataformas Procedurales - Lienzo Abstracto",
+        "main_menu": "MENU PRINCIPAL",
     },
     "pt": {
         "play": "JOGAR",
@@ -169,6 +171,7 @@ TRADUCCIONES = {
         "thanks_for_playing": "OBRIGADO POR JOGAR",
         "return_main_menu": "VOLTAR AO MENU PRINCIPAL",
         "window_title": "Plataformas Procedurais - Tela Abstrata",
+        "main_menu": "MENU PRINCIPAL",
     },
     "ru": {
         "play": "ИГРАТЬ",
@@ -226,6 +229,7 @@ TRADUCCIONES = {
         "thanks_for_playing": "СПАСИБО ЗА ИГРУ",
         "return_main_menu": "ВЕРНУТЬСЯ В ГЛАВНОЕ МЕНЮ",
         "window_title": "Процедурные платформы - абстрактный холст",
+        "main_menu": "ГЛАВНОЕ МЕНЮ",
     },
 }
 

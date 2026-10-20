@@ -105,6 +105,14 @@ class PersonajeHumanoide:
     # nunca la física. ENERGIA_EUFORIA acelera la caminata y la exagera.
     ENERGIA_EUFORIA = 1.4
 
+    # Squash & stretch: estiramiento máximo en el aire (0.18 = +18 % de
+    # alto). El aplastamiento al aterrizar sale de ``_compresion_aterrizaje``.
+    # Se conserva el volumen: al estirar el cuerpo se afina y al aplastarse
+    # se ensancha (ver ``dibujar``).
+    ESTIRAR_MAX = 0.18
+    ANCHO_SQUASH_MAX = 1.25   # ensanchamiento máximo al aplastarse
+    ANCHO_STRETCH_MIN = 0.85  # afinamiento máximo al estirarse
+
     # Dash
     DASH_FRAMES = 9
     DASH_VELOCIDAD = 15.0
@@ -519,7 +527,6 @@ class PersonajeHumanoide:
 
         centro_previo = self.rect.center
         estaba_en_suelo_frame_anterior = self.en_suelo
-        self._salto_ejecutado_este_frame = False
 
         if self.coyote_restante > 0:
             self.coyote_restante -= 1
@@ -605,7 +612,10 @@ class PersonajeHumanoide:
         # Si hay un salto "guardado" y ya hay forma válida de saltar, se
         # ejecuta ahora en vez de perderse por llegar un instante pronto.
         if self.buffer_salto_restante > 0:
-            if self.en_suelo or self.coyote_restante > 0 or self.saltos_restantes > 0:
+            salto_de_suelo = self.en_suelo or self.coyote_restante > 0
+            if salto_de_suelo or (
+                self.saltos_restantes > 0 and not self._aterrizaje_inminente()
+            ):
                 self.saltar()
                 # Si la tecla ya se soltó mientras esperaba, es un toque corto.
                 self._salto_sostenido = not self._tecla_salto_soltada
@@ -711,6 +721,12 @@ class PersonajeHumanoide:
         ):
             self.coyote_restante = self.COYOTE_FRAMES
 
+        if self.en_suelo:
+            # Pisar suelo anula el margen de coyote pendiente.
+            self.coyote_restante = 0
+        # La bandera ya cumplió su función en la decisión de arriba.
+        self._salto_ejecutado_este_frame = False
+
         if self.en_suelo and self.dash_restante == 0:
             self.dashes_disponibles = self.dashes_maximos
 
@@ -800,9 +816,9 @@ class PersonajeHumanoide:
                 self.escala_y_objetivo = 1.12
             else:
                 self.despegue_ts = None
-                self.escala_y_objetivo = 1.08 if self.vel_y < 0 else 1.04
+                self.escala_y_objetivo = self._estiramiento_aire()
         elif not self.en_suelo:
-            self.escala_y_objetivo = 1.08 if self.vel_y < 0 else 1.04
+            self.escala_y_objetivo = self._estiramiento_aire()
         else:
             if self._euforico:
                 # Rebotecitos impacientes sobre las puntas de los pies.
@@ -864,6 +880,24 @@ class PersonajeHumanoide:
 
         self._actualizar_bufanda(self.rect.centerx - centro_previo[0], self.rect.centery - centro_previo[1])
         self._actualizar_particulas()
+
+    def _estiramiento_aire(self):
+        """Escala vertical en el aire: se estira más cuanto más rápido
+        sube o cae y vuelve a la forma normal en el vértice del salto."""
+        rapidez = min(1.0, abs(self.vel_y) / self.VEL_CAIDA_MAX)
+        return 1.0 + self.ESTIRAR_MAX * rapidez
+
+    def _aterrizaje_inminente(self):
+        """True si, cayendo, el suelo llegará antes de que caduque el
+        buffer de salto. Así una pulsación adelantada se reserva para el
+        salto de suelo en lugar de gastar el doble salto en el aire."""
+        if self.vel_y <= 0 or self.buffer_salto_restante <= 0:
+            return False
+        suelo_y = self._superficie_bajo_los_pies()
+        if suelo_y is None:
+            return False
+        # vel_y solo crece al caer, así que esta estimación es conservadora.
+        return suelo_y - self.rect.bottom <= self.vel_y * self.buffer_salto_restante
 
     def _esquivar_esquina(self, hitbox, plataformas):
         """Corrige un golpe de cabeza por el borde de un bloque empujando
@@ -1095,10 +1129,10 @@ class PersonajeHumanoide:
         lienzo.fill((0, 0, 0, 0))
 
         agachado = self.agachado_animacion
-        alto_torso_normal = round(26 * estirar / p) * p
-        alto_pierna_normal = round(24 / estirar / p) * p if estirar else 24
-        alto_torso = round(self._lerp(alto_torso_normal, 18, agachado) / p) * p
-        alto_pierna = round(self._lerp(alto_pierna_normal, 12, agachado) / p) * p
+        # El squash & stretch se aplica al lienzo completo más abajo, así
+        # que aquí el cuerpo conserva sus proporciones base.
+        alto_torso = round(self._lerp(26, 18, agachado) / p) * p
+        alto_pierna = round(self._lerp(24, 12, agachado) / p) * p
 
         base_y = pie_y - bob
 
@@ -1169,12 +1203,41 @@ class PersonajeHumanoide:
         if self._euforico:
             self._dibujar_chispas(lienzo, cabeza_x, cabeza_y, lado_cabeza, contorno)
 
+        # Ancla sin deformar (halo): el centro del lienzo original.
+        ancla_halo = (centro_x_mundo, pie_y_mundo - (150 - ALTO_LIENZO // 2))
+
+        # --- Squash & stretch con volumen constante, anclado a los pies ---
+        escala_alto = max(0.08, min(1.3, estirar))
+        if self.muriendo:
+            escala_ancho = 1.0
+        else:
+            escala_ancho = max(
+                self.ANCHO_STRETCH_MIN,
+                min(self.ANCHO_SQUASH_MAX, 1.0 / math.sqrt(escala_alto)),
+            )
+        if abs(escala_alto - 1.0) > 0.01 or abs(escala_ancho - 1.0) > 0.01:
+            # ``scale`` (no ``smoothscale``) para no difuminar el pixel art.
+            lienzo = pygame.transform.scale(
+                lienzo,
+                (
+                    max(1, round(ANCHO_LIENZO * escala_ancho)),
+                    max(1, round(ALTO_LIENZO * escala_alto)),
+                ),
+            )
+        alto_deformado = lienzo.get_height()
+
         # --- Giro del doble salto ---
         if self.girando:
             angulo = self.angulo_giro if self.direccion >= 0 else -self.angulo_giro
             lienzo = pygame.transform.rotate(lienzo, angulo)
 
-        ancla_mundo = (centro_x_mundo, pie_y_mundo - (150 - ALTO_LIENZO // 2))
+        # Centro del lienzo ya deformado (la rotación no lo mueve), de modo
+        # que los pies -a 150 px del borde superior del lienzo original,
+        # 150 * escala_alto tras deformarlo- queden siempre sobre el suelo.
+        ancla_mundo = (
+            centro_x_mundo,
+            pie_y_mundo - 150 * (alto_deformado / ALTO_LIENZO) + alto_deformado / 2,
+        )
 
         # --- Rastro del dash: siluetas que se desvanecen detrás ---
         if (
@@ -1212,7 +1275,7 @@ class PersonajeHumanoide:
         self._halo_personaje.set_alpha(int(190 * pulso_halo))
         superficie.blit(
             self._halo_personaje,
-            self._halo_personaje.get_rect(center=ancla_mundo),
+            self._halo_personaje.get_rect(center=ancla_halo),
         )
 
         if self.desesperado or self._euforico:

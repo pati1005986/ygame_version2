@@ -155,7 +155,12 @@ class TransicionCaricaturesca:
     NUM_PUNTAS = 9  # puntas del estallido detrás de la cabeza
     ESCALA_CARA = 1.3  # tamaño de la cara en reposo (1.0 = 200 px de ancho)
     ESCALA_ESTALLIDO = 1.75  # radio del estallido, en radios de cabeza
-    SUPERMUESTREO = 2  # 1 = sin suavizado (más rápido), 2 = recomendado
+    SUPERMUESTREO = 2  # 1 = sin suavizado (más rápido), 2 = recomendado; en equipos lentos prueba 1.5
+    # Cada cuántos ms se repinta la cara y el estallido. 33 ms = 30 repintados
+    # por segundo: es "animar a doses", justo lo que usa el dibujo animado
+    # a mano, y con 60 FPS se paga la mitad. El movimiento, el temblor y la
+    # cámara siguen yendo fluidos a todos los FPS. 0 = repintar siempre.
+    INTERVALO_PINTADO = 33
     USAR_IRIS = True  # False = cortina de color que se desvanece
     ALFA_CORTINA = 200
     RADIO_IRIS_MIN = 120  # radio del foco que sigue al personaje, en píxeles
@@ -297,6 +302,12 @@ class TransicionCaricaturesca:
             ]
         self._estallido = self._crear_estallido()
         self._capa = None
+        self._solido = None
+        # Caché de lo que se repinta a INTERVALO_PINTADO (ver ``dibujar``).
+        self._cara = None
+        self._ajuste_y = 0.0
+        self._estallido_vivo = None
+        self._ms_cara = -10 ** 9
         self._pos_jugador = pygame.Vector2(posicion_origen)
         self._mirada = pygame.Vector2(0, 0)
 
@@ -315,23 +326,59 @@ class TransicionCaricaturesca:
     # ------------------------------------------------------------------
     # Sonido
     # ------------------------------------------------------------------
-    def _crear_sonido_sorpresa(self, tristeza=0.0, euforia=0.0):
-        """Genera un "boing" corto de sorpresa sin depender de un archivo.
+    # Los "boing" ya sintetizados se reutilizan: sintetizarlos es un bucle
+    # de ~20 000 iteraciones en Python puro y, hecho dentro del bucle del
+    # juego, congela la imagen justo al empezar cada transición.
+    _SONIDOS = {}
 
-        Con más ``tristeza`` suena más apagado: menos volumen y un tono
-        ligeramente más grave, como un sobresalto sin ánimo. Con más
-        ``euforia`` es más agudo, más largo, con un vibrato rapidísimo y un
-        temblor de volumen, como una risita histérica.
+    @classmethod
+    def _crear_sonido_sorpresa(cls, tristeza=0.0, euforia=0.0):
+        """Devuelve el "boing" de sorpresa (con caché), o ``None`` si el
+        mezclador no es de 16 bits con signo.
 
-        Se adapta al mezclador activo (frecuencia y canales); si el formato
-        no es de 16 bits con signo devuelve ``None`` en vez de sonar mal.
+        La tristeza y la euforia se redondean a pasos de 0.25: así hay como
+        mucho 9 variantes distintas y casi siempre se reutiliza una ya hecha.
         """
         if not pygame.mixer.get_init():
             return None
         frecuencia_muestreo, formato, canales = pygame.mixer.get_init()
         if formato != -16:
             return None
+        tristeza = round(tristeza * 4) / 4
+        euforia = round(euforia * 4) / 4
+        clave = (frecuencia_muestreo, canales, tristeza, euforia)
+        sonido = cls._SONIDOS.get(clave)
+        if sonido is None:
+            muestras = cls._sintetizar_sonido(frecuencia_muestreo, canales, tristeza, euforia)
+            sonido = pygame.mixer.Sound(buffer=muestras)
+            cls._SONIDOS[clave] = sonido
+        return sonido
 
+    @classmethod
+    def precalentar(cls):
+        """Sintetiza de antemano todas las variantes del sonido.
+
+        Llámalo una vez en la pantalla de carga (tarda de ~0.3 s en un
+        equipo rápido a unos segundos en uno lento). Así ninguna transición
+        tiene que sintetizar nada mientras se juega.
+        """
+        combinaciones = [(t, 0.0) for t in (0.0, 0.25, 0.5, 0.75, 1.0)]
+        combinaciones += [(0.0, e) for e in (0.25, 0.5, 0.75, 1.0)]
+        for tristeza, euforia in combinaciones:
+            cls._crear_sonido_sorpresa(tristeza, euforia)
+
+    @staticmethod
+    def _sintetizar_sonido(frecuencia_muestreo, canales, tristeza=0.0, euforia=0.0):
+        """Genera los bytes de un "boing" corto de sorpresa sin archivos.
+
+        Con más ``tristeza`` suena más apagado: menos volumen y un tono
+        ligeramente más grave, como un sobresalto sin ánimo. Con más
+        ``euforia`` es más agudo, más largo, con un vibrato rapidísimo y un
+        temblor de volumen, como una risita histérica.
+
+        Se adapta a la frecuencia y los canales del mezclador. Es lenta:
+        usa ``_crear_sonido_sorpresa`` (con caché) en vez de llamarla.
+        """
         # Con euforia el sonido es más corto, más grave y más suave (sin
         # armónicos agudos, con vibrato lento y filtrado) para no cansar
         # el oído cuando se repite nivel tras nivel.
@@ -368,7 +415,7 @@ class TransicionCaricaturesca:
             for _ in range(canales):
                 muestras.append(muestra)
 
-        return pygame.mixer.Sound(buffer=muestras.tobytes())
+        return muestras.tobytes()
 
     # ------------------------------------------------------------------
     # Utilidades de easing y color
@@ -649,8 +696,40 @@ class TransicionCaricaturesca:
 
         centro = self._centro_cara(ancho_p, alto_p, dt)
         self._actualizar_mirada(centro, dt)
-        self._dibujar_estallido(superficie, centro, estado, ms)
 
+        # Lo caro (pintar la cara con supermuestreo, reducirla, girarla y
+        # girar el estallido) se rehace solo cada INTERVALO_PINTADO ms. En los
+        # fotogramas intermedios se reutiliza y solo se recoloca.
+        if ms - self._ms_cara >= self.INTERVALO_PINTADO:
+            self._ms_cara = ms
+            self._estallido_vivo = self._preparar_estallido(estado, ms)
+            self._cara, self._ajuste_y = self._preparar_cara(ms, estado)
+
+        estallido = self._estallido_vivo
+        if estallido is not None:
+            superficie.blit(estallido, (centro.x - estallido.get_width() / 2, centro.y - estallido.get_height() / 2))
+
+        cara = self._cara
+        # Temblor de susto (pequeño, rápido y que se apaga). Va por
+        # fotograma: es lo que da sensación de vibración fluida.
+        intensidad = estado["temblor"] * (1.0 - self._apatia * 0.5)
+        eu = self.euforia
+        tx = math.sin(ms * (0.11 + 0.10 * eu)) * (3.0 + 6.0 * eu) * intensidad
+        ty = math.cos(ms * (0.13 + 0.12 * eu)) * (2.0 + 5.0 * eu) * intensidad
+        destino = pygame.Vector2(
+            centro.x + tx - cara.get_width() / 2,
+            centro.y + ty + self._ajuste_y - cara.get_height() / 2,
+        )
+        superficie.blit(cara, destino)
+
+    def _preparar_cara(self, ms, estado):
+        """Pinta la cara y la deja con su tamaño e inclinación finales.
+
+        Returns:
+            ``(superficie, ajuste_y)``: ``ajuste_y`` es lo que hay que bajar
+            la cara al colocarla (se apoya en su base al estirarse y deja
+            caer la cabeza si está decaída).
+        """
         anterior = self._estado(max(0, ms - 45))
         self._pintar_cara(ms, estado, anterior)
 
@@ -663,21 +742,11 @@ class TransicionCaricaturesca:
         if abs(estado["inclinacion"]) > 0.25:
             cara = pygame.transform.rotozoom(cara, estado["inclinacion"], 1.0)
 
-        tri = self._apatia
-        # Temblor de susto (pequeño, rápido y que se apaga).
-        intensidad = estado["temblor"] * (1.0 - tri * 0.5)
-        eu = self.euforia
-        tx = math.sin(ms * (0.11 + 0.10 * eu)) * (3.0 + 6.0 * eu) * intensidad
-        ty = math.cos(ms * (0.13 + 0.12 * eu)) * (2.0 + 5.0 * eu) * intensidad
         # Al estirarse la cara "se apoya" en su base en vez de crecer desde
         # el centro (60 %), y un personaje decaído deja caer la cabeza.
         apoyo = (estado["escala"] - sy) * _ALTO * 0.5 * 0.6
-        caida_cabeza = tri * _ALTO * estado["escala"] * 0.06
-        destino = pygame.Vector2(
-            centro.x + tx - cara.get_width() / 2,
-            centro.y + ty + apoyo + caida_cabeza - cara.get_height() / 2,
-        )
-        superficie.blit(cara, destino)
+        caida_cabeza = self._apatia * _ALTO * estado["escala"] * 0.06
+        return cara, apoyo + caida_cabeza
 
     @staticmethod
     def _suavizar(actual, objetivo, dt, tau):
@@ -718,32 +787,58 @@ class TransicionCaricaturesca:
         La cortina se ajusta con una curva más suave para que no parezca un
         corte seco: el brillo del iris se consume poco a poco, evitando el
         efecto de "parpadeo" que hacía la transición menos natural.
+
+        Coste: antes se rellenaba y mezclaba con alfa por píxel una capa del
+        tamaño de *toda* la pantalla en cada fotograma. Ahora la oscuridad
+        lisa se pega con un bloque de alfa de superficie (mucho más barato)
+        y la capa con alfa por píxel solo cubre el cuadro que rodea al foco.
         """
         if iris >= 0.999:
             return
         ancho, alto = superficie.get_size()
         color = self.paleta["tinta"][:3]
-        if self._capa is None or self._capa.get_size() != (ancho, alto):
+        if self._solido is None or self._solido.get_size() != (ancho, alto):
             self._capa = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+            self._solido = pygame.Surface((ancho, alto))
+            self._solido.fill(color)
 
         if not self.USAR_IRIS:
             alfa = int(self.ALFA_CORTINA * (1.0 - iris))
             if alfa > 0:
-                self._capa.fill((*color, alfa))
-                superficie.blit(self._capa, (0, 0))
+                self._solido.set_alpha(alfa)
+                superficie.blit(self._solido, (0, 0))
             return
 
+        self._solido.set_alpha(self.ALFA_CORTINA)
         # Se mantiene el efecto de seguimiento al personaje, pero la expansión
         # del foco es más gradual para suavizar la transición entre niveles.
         radio = self.RADIO_IRIS_MIN + (math.hypot(ancho, alto) - self.RADIO_IRIS_MIN) * (iris ** 0.85)
-        capa = self._capa
+        r = int(radio) + 6  # el borde suave llega a radio + 4
+        cx, cy = int(centro.x), int(centro.y)
+        visible = pygame.Rect(cx - r, cy - r, 2 * r, 2 * r).clip(pygame.Rect(0, 0, ancho, alto))
+
+        if visible.width <= 0 or visible.height <= 0:
+            superficie.blit(self._solido, (0, 0))  # el foco queda fuera de pantalla
+            return
+
+        # Cuatro bandas lisas alrededor del cuadro del foco.
+        for x, y, w, h in (
+            (0, 0, ancho, visible.top),
+            (0, visible.bottom, ancho, alto - visible.bottom),
+            (0, visible.top, visible.left, visible.height),
+            (visible.right, visible.top, ancho - visible.right, visible.height),
+        ):
+            if w > 0 and h > 0:
+                superficie.blit(self._solido, (x, y), pygame.Rect(0, 0, w, h))
+
+        # Dentro del cuadro: oscuridad + agujero con borde suave (por píxel).
+        capa = self._capa.subsurface(visible)
         capa.fill((*color, self.ALFA_CORTINA))
+        centro_local = (centro.x - visible.x, centro.y - visible.y)
         for desfase, fraccion in ((4, 0.95), (3, 0.72), (2, 0.52), (1, 0.30), (0, 0.18), (-1, 0.0)):
             if radio + desfase >= 1.0:
-                pygame.draw.circle(
-                    capa, (*color, int(self.ALFA_CORTINA * fraccion)), (centro.x, centro.y), radio + desfase
-                )
-        superficie.blit(capa, (0, 0))
+                pygame.draw.circle(capa, (*color, int(self.ALFA_CORTINA * fraccion)), centro_local, radio + desfase)
+        superficie.blit(capa, visible.topleft)
 
     # ------------------------------------------------------------------
     # Estallido detrás de la cabeza
@@ -777,20 +872,22 @@ class TransicionCaricaturesca:
         lienzo.poligono(paleta["rayo"], estrella(0.95))
         return lienzo.reducir((tamano, tamano))
 
-    def _dibujar_estallido(self, superficie, centro, estado, ms):
+    def _preparar_estallido(self, estado, ms):
+        """Estallido ya girado, escalado y con su transparencia, o ``None``
+        si todavía (o ya) no se ve. Se coloca al dibujar, en ``dibujar``."""
         tri = self._apatia
         fuerza = self._suave(estado["gesto"] * 1.25)
         if fuerza <= 0.02:
-            return
+            return None
         radio_objetivo = _ANCHO * 0.5 * self.ESCALA_ESTALLIDO * estado["escala"]
         eu = self.euforia
         pulso = 1.0 + (0.04 + 0.12 * eu) * math.sin(ms * (0.03 + 0.05 * eu))
         escala = radio_objetivo / _RADIO_ESTALLIDO * (0.45 + 0.55 * fuerza) * pulso * (1.0 - tri * 0.2) * (1.0 + eu * 0.25)
         if escala <= 0.02:
-            return
+            return None
         estallido = pygame.transform.rotozoom(self._estallido, ms * 0.03 * (1.0 + eu * 3.0), escala)
         estallido.set_alpha(int(255 * min(1.0, fuerza * 1.6) * (1.0 - tri * 0.4)))
-        superficie.blit(estallido, (centro.x - estallido.get_width() / 2, centro.y - estallido.get_height() / 2))
+        return estallido
 
     # ------------------------------------------------------------------
     # La cara (se pinta en unidades lógicas sobre el lienzo)

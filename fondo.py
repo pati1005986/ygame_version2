@@ -3,6 +3,7 @@ import random
 import time
 from functools import lru_cache
 
+import numpy as np
 import pygame
 
 from plataformas import color_desde_hue as _color_desde_hue_real
@@ -151,37 +152,76 @@ def _trazo_tinta(capa, centro, radio, tiempo, fase, alpha=150, grosor=4):
     pygame.draw.polygon(capa, (18, 14, 28, alpha), pts, grosor)
 
 
-def _puntos_halftone(superficie, ancho, alto, tiempo, hue_base, paso=52, alpha=26):
-    """Textura de puntos estilo cómic/pop-art (halftone), muy sutil, para que
-    el fondo se lea como una lámina impresa en vez de un degradado liso.
+_BUCKETS_HALFTONE = 12
+_GRILLAS_HALFTONE = {}
 
-    Rendimiento: el paso de la grilla se subió de 34 a 52px (menos de la
-    mitad de puntos) y el color solo se recalcula cada pocas columnas en
-    vez de en cada punto individual: la conversión HSV->RGB (``color_desde_hue``)
-    es lo más caro de este bucle y el matiz apenas cambia entre puntos
-    vecinos, así que reutilizarlo es imperceptible mientras ahorra muchas
-    llamadas por fotograma.
+
+def _grilla_halftone(ancho, alto, paso):
+    """Posiciones (cx, cy) de todos los puntos de la rejilla y su "cubeta" de
+    color, como arrays de NumPy. Se calculan una sola vez por tamaño de
+    pantalla: la rejilla es fija, solo cambian los radios y el color."""
+    clave = (ancho, alto, paso)
+    g = _GRILLAS_HALFTONE.get(clave)
+    if g is None:
+        xs = np.arange(-paso, ancho + paso, paso)
+        ys = np.arange(-paso, alto + paso, paso)
+        cx, cy = np.meshgrid(xs, ys)
+        # Las filas impares se desplazan medio paso (patron de tresbolillo).
+        cx = cx + ((np.arange(len(ys)) % 2) * (paso // 2))[:, None]
+        cx = cx.ravel().astype(np.float64)
+        cy = cy.ravel().astype(np.float64)
+        cubeta = np.clip(
+            (cx / ancho * _BUCKETS_HALFTONE).astype(np.int64), 0, _BUCKETS_HALFTONE - 1
+        )
+        g = (cx, cy, cubeta)
+        _GRILLAS_HALFTONE.clear()
+        _GRILLAS_HALFTONE[clave] = g
+    return g
+
+
+@lru_cache(maxsize=512)
+def _sprite_punto(color, radio, alpha):
+    """Un unico sprite por (color, radio): se dibuja una vez y se reutiliza en
+    cada ``blits`` en vez de llamar a ``draw.circle`` cientos de veces."""
+    lado = radio * 2 + 1
+    s = pygame.Surface((lado, lado), pygame.SRCALPHA)
+    pygame.draw.circle(s, (*color, alpha), (radio, radio), radio)
+    return _convertir(s)
+
+
+def _puntos_halftone(superficie, ancho, alto, tiempo, hue_base, paso=52, alpha=26):
+    """Textura de puntos estilo comic/pop-art (halftone), muy sutil.
+
+    Rendimiento: la geometria (radios) se calcula de una vez con NumPy sobre
+    toda la rejilla, el color se resuelve por "cubetas" (12 en lugar de uno
+    por punto) y todos los puntos se pegan con un unico ``Surface.blits``,
+    que ejecuta el bucle en C.
     """
-    # Rendimiento: cambia muy despacio; se redibuja 1 de cada 2 veces
-    # (la mitad que el resto del fondo) y el resto solo se reutiliza.
+    # Cambia muy despacio; se redibuja 1 de cada 2 veces y el resto se reutiliza.
     capa, refrescar = _capa_persistente("halftone", (ancho, alto), cada=2, desfase=1)
     if not refrescar:
         superficie.blit(capa, (0, 0))
         return
-    fila = 0
-    for y in range(-paso, alto + paso, paso):
-        desfase = (paso // 2) if fila % 2 else 0
-        color = None
-        for indice_col, x in enumerate(range(-paso, ancho + paso, paso)):
-            cx = x + desfase
-            cy = y
-            onda = math.sin(cx * 0.01 + tiempo * 0.4) + math.cos(cy * 0.013 - tiempo * 0.3)
-            radio_punto = max(1.5, 3.2 + onda * 1.6)
-            if color is None or indice_col % 3 == 0:
-                hue = (hue_base + (cx / ancho) * 0.15 + tiempo * 0.02) % 1.0
-                color = color_desde_hue(hue, 0.4, 0.4)
-            pygame.draw.circle(capa, (*color, alpha), (cx, cy), int(radio_punto))
-        fila += 1
+
+    cx, cy, cubeta = _grilla_halftone(ancho, alto, paso)
+    onda = np.sin(cx * 0.01 + tiempo * 0.4) + np.cos(cy * 0.013 - tiempo * 0.3)
+    radios = np.maximum(1.5, 3.2 + onda * 1.6).astype(np.int64)
+
+    colores = [
+        color_desde_hue(
+            (hue_base + (b + 0.5) / _BUCKETS_HALFTONE * 0.15 + tiempo * 0.02) % 1.0, 0.4, 0.4
+        )
+        for b in range(_BUCKETS_HALFTONE)
+    ]
+    capa.blits(
+        [
+            (_sprite_punto(colores[b], r, alpha), (x - r, y - r))
+            for b, r, x, y in zip(
+                cubeta.tolist(), radios.tolist(), cx.astype(np.int64).tolist(), cy.astype(np.int64).tolist()
+            )
+        ],
+        doreturn=False,
+    )
     superficie.blit(capa, (0, 0))
 
 
@@ -364,37 +404,41 @@ def _dibujar_remolino(superficie, x, y, radio, hue, tiempo, indice):
     centro = pygame.Vector2(radio, radio)
     pasos = min(70, max(30, int(radio * 0.45)))
 
+    # Vectorizado: la geometria de todos los pasos se calcula de golpe con
+    # NumPy; solo queda en Python el trazo de cada segmento.
+    t = np.arange(pasos + 1) / pasos
+    onda_brazo = np.sin(t * math.tau * 2 + tiempo) * 0.25   # deformacion organica del brazo
+    distancia = 8 + t * (radio - 16) + np.sin(t * 14 + tiempo * 2) * (radio * 0.03)
+    giro_base = t * math.tau * _VUELTAS_REMOLINO + tiempo * (1.3 + indice * 0.4) + onda_brazo
+
     for hilo in range(_HILOS_REMOLINO):
         fase_hilo = hilo * (math.tau / _HILOS_REMOLINO)
-        anterior = None
-        color = None
-        for paso in range(pasos + 1):
-            t = paso / pasos
-            angulo = (
-                t * math.tau * _VUELTAS_REMOLINO
-                + fase_hilo
-                + tiempo * (1.3 + indice * 0.4)
-                + math.sin(t * math.tau * 2 + tiempo) * 0.25  # deformación orgánica del brazo
-            )
-            distancia = 8 + t * (radio - 16) + math.sin(t * 14 + tiempo * 2) * (radio * 0.03)
-            punto = (
-                int(centro.x + math.cos(angulo) * distancia),
-                int(centro.y + math.sin(angulo) * distancia),
-            )
-            if anterior is not None:
-                if color is None or paso % 4 == 0:
-                    color = color_desde_hue(
-                        (hue + t * 0.4 + hilo / _HILOS_REMOLINO * 0.18 + tiempo * 0.05) % 1.0, 0.85, 1.0
-                    )
-                grosor = max(1, int(6 * (1 - t) + 2 * math.sin(tiempo * 3 + hilo)) + 1)
-                pygame.draw.line(capa, (*color, 170), anterior, punto, grosor)
-            anterior = punto
+        angulo = giro_base + fase_hilo
+        px = (centro.x + np.cos(angulo) * distancia).astype(np.int64).tolist()
+        py = (centro.y + np.sin(angulo) * distancia).astype(np.int64).tolist()
+        grosores = np.maximum(
+            1, (6 * (1 - t) + 2 * math.sin(tiempo * 3 + hilo)).astype(np.int64) + 1
+        ).tolist()
 
-        # Gota de pintura al final del brazo, con leve caída animada.
+        colores = {}
+        for paso in range(1, pasos + 1):
+            fuente = 1 if paso < 4 else paso - paso % 4   # el color se refresca cada 4 segmentos
+            color = colores.get(fuente)
+            if color is None:
+                color = colores[fuente] = color_desde_hue(
+                    (hue + fuente / pasos * 0.4 + hilo / _HILOS_REMOLINO * 0.18 + tiempo * 0.05) % 1.0,
+                    0.85, 1.0,
+                )
+            pygame.draw.line(
+                capa, (*color, 170), (px[paso - 1], py[paso - 1]), (px[paso], py[paso]), grosores[paso]
+            )
+
+        # Gota de pintura al final del brazo, con leve caida animada.
         caida = abs(math.sin(tiempo * 0.8 + fase_hilo)) * radio * 0.12
-        gota_pos = (anterior[0], anterior[1] + caida)
         color_gota = color_desde_hue((hue + 0.5 + hilo * 0.1) % 1.0, 0.9, 1.0)
-        pygame.draw.circle(capa, (*color_gota, 150), (int(gota_pos[0]), int(gota_pos[1])), max(2, int(radio * 0.035)))
+        pygame.draw.circle(
+            capa, (*color_gota, 150), (px[-1], int(py[-1] + caida)), max(2, int(radio * 0.035))
+        )
 
     color_nucleo = color_desde_hue(hue, 0.6, 1.0)
     pygame.draw.circle(capa, (*color_nucleo, 170), centro, max(5, int(radio * 0.07)))
@@ -474,13 +518,21 @@ _CARAS_MIN = 6
 _CARAS_MAX = 68
 _GOTAS_MAX = 170
 
+_CLAVES_CARA = ("x", "y", "vy", "fase", "sprite", "tam")
+_ENTERAS_CARA = ("sprite", "tam")
+
+# Estructura de arrays (SoA): cada propiedad de las caras vive en un array de
+# NumPy, en vez de una lista de diccionarios. Asi el movimiento y el balanceo
+# de las ~68 caras son operaciones vectorizadas, no un bucle de Python.
 _LLUVIA = {
     "dim": None,
     "estilo": -1,
     "etapa_distorsion": -1,
     "sprites": [],
-    "caras": [],
-    "gotas": [],
+    "tablas": None,   # (frames, anchos, altos) de los sprites actuales
+    "arr": None,      # dict de arrays con las caras
+    "gotas": None,    # dict de arrays con los hilos de lluvia
+    "tiras": None,    # superficies reutilizables para gotas y estelas
     "t": None,
 }
 _CACHE_VINETA = {}
@@ -684,12 +736,65 @@ def _nueva_cara(ancho, alto, desde_arriba):
 
 
 def _crear_gotas(ancho, alto):
-    """Hilos finos de lluvia de colores que acompañan a las caras."""
-    return [
-        (random.uniform(0, ancho), random.uniform(0, alto), random.uniform(260, 520),
-         random.randint(14, 34), random.randrange(12))
-        for _ in range(_GOTAS_MAX)
+    """Hilos finos de lluvia de colores que acompanan a las caras (arrays)."""
+    datos = np.array(
+        [
+            (random.uniform(0, ancho), random.uniform(0, alto), random.uniform(260, 520),
+             random.randint(14, 34), random.randrange(12))
+            for _ in range(_GOTAS_MAX)
+        ],
+        dtype=np.float64,
+    )
+    return {
+        "x": datos[:, 0], "y0": datos[:, 1], "vel": datos[:, 2],
+        "largo": datos[:, 3], "k": datos[:, 4].astype(np.int64),
+    }
+
+
+def _caras_a_arrays(lista):
+    return {
+        k: np.array([c[k] for c in lista], dtype=np.int64 if k in _ENTERAS_CARA else np.float64)
+        for k in _CLAVES_CARA
+    }
+
+
+def _tablas_sprites(sprites):
+    """Tablas de tamanos (sprite x frame) para colocar todas las caras por
+    indexado de arrays, sin llamar a get_rect() una por una."""
+    frames = [f for _, f in sprites]
+    anchos = np.array([[s.get_width() for s in fr] for fr in frames], dtype=np.int64)
+    altos = np.array([[s.get_height() for s in fr] for fr in frames], dtype=np.int64)
+    # Versiones a media resolucion para la capa de eco (se hacen una vez por
+    # etapa de distorsion, no por fotograma).
+    mitades = [
+        [pygame.transform.scale(s, (max(1, s.get_width() // 2), max(1, s.get_height() // 2)))
+         for s in fr]
+        for fr in frames
     ]
+    anchos_m = np.array([[s.get_width() for s in fr] for fr in mitades], dtype=np.int64)
+    altos_m = np.array([[s.get_height() for s in fr] for fr in mitades], dtype=np.int64)
+    return frames, anchos, altos, mitades, anchos_m, altos_m
+
+
+def _tiras_lluvia(e, paleta, h_estela):
+    """Tiras de color reutilizadas: una por color para las gotas y otra para las
+    estelas. Se pegan recortadas con ``blits`` (area) en lugar de trazar un
+    ``draw.line`` por gota/cara en cada fotograma. Como ambas son rectas con
+    pendiente constante, recortar la tira larga da exactamente la misma linea."""
+    t = e["tiras"]
+    if t is None or t["h_estela"] != h_estela:
+        t = {
+            "h_estela": h_estela,
+            "gota": [pygame.Surface((8, 36), pygame.SRCALPHA) for _ in range(12)],
+            "estela": [pygame.Surface((2, h_estela), pygame.SRCALPHA) for _ in range(12)],
+        }
+        e["tiras"] = t
+    for k, color in enumerate(paleta):
+        g = t["gota"][k]
+        g.fill((0, 0, 0, 0))
+        pygame.draw.line(g, (*color, 110), (6, 0), (1, 34), 2)   # pendiente -0.15 como antes
+        t["estela"][k].fill((*color, 70))
+    return t["gota"], t["estela"]
 
 
 def _obtener_vineta(ancho, alto):
@@ -709,10 +814,49 @@ def _obtener_vineta(ancho, alto):
     return v
 
 
+# Eco: capa a media resolucion que NO se borra, solo se desvanece. Las caras
+# dejan un rastro que se derrite; cuanto mayor es el nivel, mas dura el rastro.
+_ECO_P_MIN = 0.25   # progreso a partir del cual aparece (nivel ~4)
+
+
+def _eco_caras(superficie, ancho, alto, p, dt, tablas, sprite, tam, xi, yi, cuadro):
+    mitades, anchos_m, altos_m = tablas
+    tam_m = (ancho // 2, alto // 2)
+    eco = _CACHE_FONDO.get("eco")
+    if eco is None or eco.get_size() != tam_m:
+        eco = pygame.Surface(tam_m, pygame.SRCALPHA)
+        _CACHE_FONDO["eco"] = eco
+        _CACHE_FONDO.pop("eco_full", None)
+
+    frac = min(1.0, (p - _ECO_P_MIN) / (1.0 - _ECO_P_MIN))
+    # Persistencia por segundo (no por fotograma): independiente de los FPS.
+    tau = 0.10 + 0.30 * frac
+    persistencia = int(255 * math.exp(-dt / tau))
+    # (255, 255, 255, a) multiplica solo el alpha: el rastro se desvanece sin oscurecerse.
+    eco.fill((255, 255, 255, persistencia), special_flags=pygame.BLEND_RGBA_MULT)
+
+    orden = np.argsort(tam, kind="stable")
+    s, f = sprite[orden], cuadro[orden]
+    izq = xi[orden] // 2 - anchos_m[s, f] // 2
+    arriba = yi[orden] // 2 - altos_m[s, f] // 2
+    eco.blits(
+        [(mitades[a][b], (px, py)) for a, b, px, py in zip(s.tolist(), f.tolist(), izq.tolist(), arriba.tolist())],
+        doreturn=False,
+    )
+
+    completo = _CACHE_FONDO.get("eco_full")
+    if completo is None or completo.get_size() != (ancho, alto):
+        completo = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+        _CACHE_FONDO["eco_full"] = completo
+    pygame.transform.scale(eco, (ancho, alto), completo)   # escala en un buffer reutilizado
+    completo.set_alpha(int(110 + 100 * frac))
+    superficie.blit(completo, (0, 0))
+
+
 def _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo):
     e = _LLUVIA
     if e["dim"] != (ancho, alto):
-        e.update(dim=(ancho, alto), caras=[], gotas=_crear_gotas(ancho, alto), t=None)
+        e.update(dim=(ancho, alto), arr=None, gotas=_crear_gotas(ancho, alto), tiras=None, t=None)
 
     objetivo = (
         0
@@ -720,8 +864,10 @@ def _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo
         else int(_CARAS_MIN + p * (_CARAS_MAX - _CARAS_MIN))
     )
     if objetivo == 0:
-        e["caras"].clear()
+        e["arr"] = None
         e["t"] = None
+        _CACHE_FONDO.pop("eco", None)
+        _CACHE_FONDO.pop("eco_full", None)
         if nivel < 1:
             _sprites_etapa(0, 0)  # precalienta las caras del nivel 1
         return
@@ -729,53 +875,95 @@ def _dibujar_lluvia_de_caras(superficie, ancho, alto, hue_base, nivel, p, tiempo
     # Las caras se transforman en el sitio al cambiar de etapa.
     estilo = _estilo_de(p)
     etapa_distorsion = round(p * 9)
-    if e["estilo"] != estilo or e["etapa_distorsion"] != etapa_distorsion:
-        # Normalmente ya está lista (se precalentó en redibujos anteriores);
-        # si no, se termina de construir ahora, como antes.
+    if e["estilo"] != estilo or e["etapa_distorsion"] != etapa_distorsion or e["tablas"] is None:
         e["sprites"] = _sprites_etapa(estilo, etapa_distorsion, pasos=10**6)
+        e["tablas"] = _tablas_sprites(e["sprites"])
         e["estilo"] = estilo
         e["etapa_distorsion"] = etapa_distorsion
     _mantener_sprites(estilo, etapa_distorsion, p)
+    frames, anchos, altos, mitades, anchos_m, altos_m = e["tablas"]
 
-    caras = e["caras"]
-    primera = not caras
-    while len(caras) < objetivo:
-        caras.append(_nueva_cara(ancho, alto, desde_arriba=not primera))
-    del caras[objetivo:]
+    # Ajustar la cantidad de caras al objetivo del nivel.
+    arr = e["arr"]
+    actual = 0 if arr is None else len(arr["x"])
+    if actual < objetivo:
+        nuevas = _caras_a_arrays(
+            [_nueva_cara(ancho, alto, desde_arriba=actual > 0) for _ in range(objetivo - actual)]
+        )
+        arr = nuevas if arr is None else {k: np.concatenate((arr[k], nuevas[k])) for k in _CLAVES_CARA}
+    elif actual > objetivo:
+        arr = {k: v[:objetivo] for k, v in arr.items()}
+    e["arr"] = arr
 
     dt = 1 / 60 if e["t"] is None else max(0.0, min(0.1, tiempo - e["t"]))
     e["t"] = tiempo
 
+    # ---- Movimiento vectorizado de todas las caras ----
+    arr["y"] += arr["vy"] * dt
+    alto_sprite = altos[:, 2][arr["sprite"]]
+    caidas = np.nonzero(arr["y"] - alto_sprite / 2 > alto)[0]
+    for i in caidas.tolist():                      # normalmente 0-2 por fotograma
+        nueva = _nueva_cara(ancho, alto, desde_arriba=True)
+        for k in _CLAVES_CARA:
+            arr[k][i] = nueva[k]
+    if caidas.size:
+        alto_sprite = altos[:, 2][arr["sprite"]]
+
+    xi = (arr["x"] + np.sin(tiempo * 1.1 + arr["fase"]) * 10).astype(np.int64)
+    yi = arr["y"].astype(np.int64)
+
+    # Cuadro de giro de cada cara (lo usan el eco y el dibujo final).
+    giro = (np.sin(tiempo * 1.5 + arr["fase"]) + 1) / 2
+    cuadro = (giro * (len(_ANGULOS_CARA) - 1) + 0.5).astype(np.int64)
+
+    # ---- Eco: rastro que se derrite (solo a partir de cierto nivel) ----
+    if p >= _ECO_P_MIN:
+        _eco_caras(superficie, ancho, alto, p, dt, (mitades, anchos_m, altos_m),
+                   arr["sprite"], arr["tam"], xi, yi, cuadro)
+    else:
+        _CACHE_FONDO.pop("eco", None)
+        _CACHE_FONDO.pop("eco_full", None)
+
+    # ---- Lluvia de hilos + estelas, en UNA lista para blits ----
     paleta = [_c(hue_base + k / 12 + tiempo * 0.05, 0.8, 1.0) for k in range(12)]
-    capa = _obtener_superficie("lluvia", (ancho, alto))
+    h_estela = int(altos[:, 2].max() * 0.95) + 2
+    tiras_gota, tiras_estela = _tiras_lluvia(e, paleta, h_estela)
 
-    # Hilos finos de lluvia psicodélica (más densos con el nivel).
-    n_gotas = int(_GOTAS_MAX * (0.25 + 0.75 * p))
-    for x, y0, vel, largo, k in e["gotas"][:n_gotas]:
-        y = (y0 + vel * tiempo) % (alto + largo) - largo
-        pygame.draw.line(capa, (*paleta[k], 110), (x, y), (x - largo * 0.15, y + largo), 2)
+    g = e["gotas"]
+    ng = int(_GOTAS_MAX * (0.25 + 0.75 * p))
+    largo = g["largo"][:ng]
+    gy = ((g["y0"][:ng] + g["vel"][:ng] * tiempo) % (alto + largo) - largo).astype(np.int64)
+    largo_i = largo.astype(np.int64)
+    lista = [
+        (tiras_gota[k], (x - 6, y), (0, 0, 8, l))
+        for k, x, y, l in zip(
+            g["k"][:ng].tolist(), g["x"][:ng].astype(np.int64).tolist(), gy.tolist(), largo_i.tolist()
+        )
+    ]
 
-    # Estela luminosa tras cada cara + actualización de posición.
-    for cara in caras:
-        cara["y"] += cara["vy"] * dt
-        tam, frames = e["sprites"][cara["sprite"]]
-        alto_sprite = frames[2].get_height()
-        if cara["y"] - alto_sprite / 2 > alto:
-            cara.update(_nueva_cara(ancho, alto, desde_arriba=True))
-            continue
-        x = cara["x"] + math.sin(tiempo * 1.1 + cara["fase"]) * 10
-        color = paleta[cara["sprite"] % 12]
-        pygame.draw.line(capa, (*color, 70), (x, cara["y"] - alto_sprite * 1.4),
-                         (x, cara["y"] - alto_sprite * 0.45), 2)
-    superficie.blit(capa, (0, 0))
+    sprite = arr["sprite"]
+    lista += [
+        (tiras_estela[k], (x - 1, y), (0, 0, 2, l))
+        for k, x, y, l in zip(
+            (sprite % 12).tolist(),
+            xi.tolist(),
+            (arr["y"] - alto_sprite * 1.4).astype(np.int64).tolist(),
+            (alto_sprite * 0.95).astype(np.int64).tolist(),
+        )
+    ]
 
-    # Caras: las lejanas primero para que las cercanas queden delante.
-    for cara in sorted(caras, key=lambda c: c["tam"]):
-        _, frames = e["sprites"][cara["sprite"]]
-        giro = (math.sin(tiempo * 1.5 + cara["fase"]) + 1) / 2
-        img = frames[int(giro * (len(frames) - 1) + 0.5)]
-        x = cara["x"] + math.sin(tiempo * 1.1 + cara["fase"]) * 10
-        superficie.blit(img, img.get_rect(center=(int(x), int(cara["y"]))))
+    # ---- Caras: las lejanas primero (orden estable por tamano) ----
+    orden = np.argsort(arr["tam"], kind="stable")
+    s, f = sprite[orden], cuadro[orden]
+    izq = xi[orden] - anchos[s, f] // 2
+    arriba = yi[orden] - altos[s, f] // 2
+    lista += [
+        (frames[a][b], (px, py))
+        for a, b, px, py in zip(s.tolist(), f.tolist(), izq.tolist(), arriba.tolist())
+    ]
+
+    # Un unico blits: el bucle de dibujo corre en C, directo sobre la pantalla.
+    superficie.blits(lista, doreturn=False)
 
 
 # ---------------------------------------------------------------------------
@@ -872,6 +1060,30 @@ def _dibujar_fondo_azul(superficie, tiempo, ancho, alto, nivel):
     superficie.blit(c["vineta"], (0, 0))
 
 
+_ANILLOS_P_MIN = 0.15   # progreso a partir del cual aparece el tunel (nivel ~3)
+
+
+def _dibujar_anillos(capa, ancho, alto, hue_base, tiempo, p):
+    """Anillos concentricos que nacen en el centro y se expanden, como un
+    tunel hipnotico. Su opacidad crece con el nivel; en niveles bajos ni se dibujan."""
+    intensidad = (p - _ANILLOS_P_MIN) / (1.0 - _ANILLOS_P_MIN)
+    if intensidad <= 0:
+        return
+    n = 8 + int(4 * intensidad)
+    centro = (ancho // 2, alto // 2)
+    radio_max = math.hypot(ancho, alto) * 0.5
+    for i in range(n):
+        u = (tiempo * 0.30 + i / n) % 1.0              # 0 = nace, 1 = sale de pantalla
+        alpha = int(90 * intensidad * math.sin(u * math.pi))   # aparece y se disuelve
+        if alpha < 4:
+            continue
+        radio = int(radio_max * u ** 1.5)               # aceleran al alejarse (profundidad)
+        if radio < 4:
+            continue
+        color = color_desde_hue(hue_base + u * 0.45 + tiempo * 0.05, 0.85, 1.0)
+        pygame.draw.circle(capa, (*color, alpha), centro, radio, 2 + int(4 * u))
+
+
 def dibujar_fondo_segmentado_gen(
     superficie, tiempo, hue_fondo, ancho, alto, nivel=0, al_final=None
 ):
@@ -903,7 +1115,9 @@ def dibujar_fondo_segmentado_gen(
 
     p = max(0.0, min(1.0, (nivel - 1) / 9.0))  # progreso de la transformación
     # El vaivén de color se intensifica con el nivel (más "viaje").
-    hue_base = (hue_fondo + math.sin(tiempo * 0.35) * (0.05 + 0.07 * p)) % 1.0
+    # Ademas del vaiven, el matiz deriva cada vez mas rapido con el nivel (el
+    # color deja de estar quieto): coste cero, los colores ya se cachean.
+    hue_base = (hue_fondo + math.sin(tiempo * 0.35) * (0.05 + 0.07 * p) + p * tiempo * 0.02) % 1.0
     visible = 1.0 - 0.3 * p  # las manchas se atenúan un poco para dar paso a las caras
     brazos = 6 + 2 * int(p * 3.99)  # el caleidoscopio gana brazos: 6, 8, 10, 12
 
@@ -927,25 +1141,32 @@ def dibujar_fondo_segmentado_gen(
         brazos=brazos,
     )
     _puntos_halftone(capa_abstracta, ancho, alto, tiempo, hue_base)
+    _dibujar_anillos(capa_abstracta, ancho, alto, hue_base, tiempo, p)
 
     for i in range(6):
         hue = (hue_base + i / 6 + tiempo * 0.025) % 1.0
         color = color_desde_hue(hue, 0.75, 0.85)
         color_pop = color_desde_hue((hue + 0.5) % 1.0, 0.85, 0.95)
-        radio = 150 + i * 42
+        radio_base = 150 + i * 42
+        # Respiracion: cada forma late a su propio ritmo (nunca sincronizadas).
+        # La superficie se dimensiona con el radio base + holgura para no
+        # recrearla en cada fotograma.
+        radio = radio_base * (1 + 0.05 * p * math.sin(tiempo * (0.4 + i * 0.09) + i * 1.9))
         centro_x = ancho * (0.18 + (i % 3) * 0.24)
         centro_y = alto * (0.22 + (i % 2) * 0.28)
 
-        margen = 26
-        tam = (radio * 2 + margen * 2, radio * 2 + margen * 2)
+        margen = 26 + int(radio_base * 0.05)
+        tam = (radio_base * 2 + margen * 2, radio_base * 2 + margen * 2)
         capa = _obtener_superficie(("bloque", i), tam)
-        centro_local = (radio + margen, radio + margen)
+        centro_local = (radio_base + margen, radio_base + margen)
 
         _mancha_organica(capa, centro_local, radio, color, int(58 * visible), tiempo, i * 1.7, puntos=24, asimetria=0.18)
         _trazo_contorno(capa, centro_local, radio, color_pop, int(80 * visible), tiempo, i * 1.7, grosor=3)
         _trazo_tinta(capa, centro_local, radio, tiempo, i * 1.7, alpha=int(110 * visible), grosor=5)
 
-        rect_local = pygame.Rect(margen, margen, radio * 2, radio * 2)
+        rect_local = pygame.Rect(
+            int(centro_local[0] - radio), int(centro_local[1] - radio), int(radio * 2), int(radio * 2)
+        )
         pygame.draw.arc(
             capa,
             (*color_pop, int(130 * visible)),
@@ -954,7 +1175,7 @@ def dibujar_fondo_segmentado_gen(
             math.radians(190 + i * 18 + tiempo * 14),
             12,
         )
-        capa_abstracta.blit(capa, (centro_x - radio - margen, centro_y - radio - margen))
+        capa_abstracta.blit(capa, (centro_x - radio_base - margen, centro_y - radio_base - margen))
 
         if i % 2 == 0:
             _dibujar_goteo(

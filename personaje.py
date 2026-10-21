@@ -113,6 +113,11 @@ class PersonajeHumanoide:
     ANCHO_SQUASH_MAX = 1.25   # ensanchamiento máximo al aplastarse
     ANCHO_STRETCH_MIN = 0.85  # afinamiento máximo al estirarse
 
+    # Animación de locomoción (solo visual; no toca la física)
+    FRAMES_GIRO = 5          # cuadros de aplastamiento al invertir la dirección
+    GIRO_ANCHO_MIN = 0.72    # ancho relativo mínimo en ese aplastamiento
+    INCLINACION_MAX = 7.0    # inclinación máxima del torso (px)
+
     # Dash
     DASH_FRAMES = 9
     DASH_VELOCIDAD = 15.0
@@ -181,6 +186,12 @@ class PersonajeHumanoide:
         self.tiempo_idle = 0.0
         self.amplitud_paso = 0.0   # 0 quieto -> 1 corriendo a tope
         self.pose_aire = 0.0       # 0 en suelo -> 1 en el aire (suavizado)
+        self._derrapando = False
+        self._acel_x = 0.0         # aceleración horizontal suavizada
+        self._vel_x_prev = 0.0
+        self.cabeza_retraso = 0.0  # la cabeza se rezaga al acelerar (follow-through)
+        self._dir_prev = 1
+        self._giro_frames = 0      # cuadros restantes del aplastamiento al girar
 
         # Squash & stretch al saltar/aterrizar
         self.escala_y = 1.0
@@ -510,6 +521,11 @@ class PersonajeHumanoide:
         self.dash_enfriamiento = 0
         self.dash_ejecutado_este_frame = False
         self.rastro.clear()
+        self._derrapando = False
+        self._acel_x = 0.0
+        self._vel_x_prev = 0.0
+        self.cabeza_retraso = 0.0
+        self._giro_frames = 0
 
     def mover(self, plataformas, controles=None):
         """Lee el teclado, aplica física y resuelve colisiones.
@@ -742,6 +758,10 @@ class PersonajeHumanoide:
                 self.girando = False
 
         # --- Animación suavizada ---
+        # Aceleración horizontal suavizada: alimenta la inclinación y el
+        # retraso de la cabeza.
+        self._acel_x = self._lerp(self._acel_x, self.vel_x - self._vel_x_prev, 0.35)
+        self._vel_x_prev = self.vel_x
         caminando = abs(self.vel_x) > 0.4 and self.en_suelo
         intensidad = min(1.0, abs(self.vel_x) / self.velocidad)
         if caminando:
@@ -763,12 +783,29 @@ class PersonajeHumanoide:
             objetivo_inclinacion = 9.0 * self.dash_direccion
         elif caminando or not self.en_suelo:
             objetivo_inclinacion = max(-1.3, min(1.3, self.vel_x / self.velocidad)) * 3.5
+            # Se echa hacia donde acelera y hacia atrás al frenar o derrapar.
+            objetivo_inclinacion += max(-1.5, min(1.5, self._acel_x)) * 1.8
+            if self._derrapando:
+                objetivo_inclinacion -= 2.0 if self.vel_x > 0 else -2.0
+            limite = self.INCLINACION_MAX
+            objetivo_inclinacion = max(-limite, min(limite, objetivo_inclinacion))
         elif self._euforico:
             # Quieto pero sin poder estarse quieto: se balancea de lado a lado.
             objetivo_inclinacion = math.sin(pygame.time.get_ticks() * 0.014) * 2.5
         else:
             objetivo_inclinacion = 0.0
         self.inclinacion_actual = self._lerp(self.inclinacion_actual, objetivo_inclinacion, 0.15)
+
+        # Cabeza con retraso: se rezaga al acelerar y se adelanta al frenar.
+        objetivo_retraso = max(-8.0, min(8.0, -self._acel_x * 3.0))
+        self.cabeza_retraso = self._lerp(self.cabeza_retraso, objetivo_retraso, 0.2)
+
+        # Giro: al invertir la dirección el cuerpo se aplasta unos cuadros.
+        if self.direccion != self._dir_prev:
+            self._dir_prev = self.direccion
+            self._giro_frames = self.FRAMES_GIRO
+        elif self._giro_frames > 0:
+            self._giro_frames -= 1
 
         self.tiempo_idle = self.tiempo_idle + 0.05 if (not caminando and self.en_suelo) else 0.0
 
@@ -827,7 +864,9 @@ class PersonajeHumanoide:
                 self.escala_y_objetivo = 1.0 + math.sin(self.tiempo_idle) * 0.015
         self.escala_y = self._lerp(self.escala_y, self.escala_y_objetivo, 0.35)
 
-        if not caminando:
+        # La fase se conserva mientras la zancada se apaga: resetearla al
+        # instante hacía "chasquear" las piernas al soltar la tecla.
+        if not caminando and self.amplitud_paso < 0.03:
             self.tiempo_animacion = 0.0
 
         # --- Pasos (más frecuentes cuanto más rápido) y derrape ---
@@ -843,6 +882,7 @@ class PersonajeHumanoide:
         derrapando = self.en_suelo and (
             (dir_input != 0 and self.vel_x * dir_input < -2.5) or (dir_input == 0 and abs(self.vel_x) > 4.5)
         )
+        self._derrapando = derrapando
         if derrapando:
             self._contador_derrape += 1
             if self._contador_derrape % 3 == 0:
@@ -1142,9 +1182,20 @@ class PersonajeHumanoide:
         elevar_izq = max(0.0, paso) * self.amplitud_paso * 8
         elevar_der = max(0.0, -paso) * self.amplitud_paso * 8
         desfase_pierna = balanceo // 2
+        # Impulso vertical continuo (1 subiendo rápido, -1 cayendo rápido):
+        # la pose en el aire cambia gradualmente en vez de saltar en el vértice.
+        impulso = max(-1.0, min(1.0, -self.vel_y / 10.0))
         if aire > 0.05:
-            elevar_izq = elevar_der = aire * (7 if subiendo else 2)
-            desfase_pierna = int(aire * (2 if subiendo else 5))
+            elevar_izq = elevar_der = aire * (4.5 + 2.5 * impulso)
+            desfase_pierna = int(aire * (3.5 - 1.5 * impulso))
+        else:
+            # Aterrizaje/despegue (cuerpo comprimido) y derrape: base más ancha.
+            if self.escala_y < 0.93 and not self.muriendo:
+                desfase_pierna += p
+            if self._derrapando:
+                desfase_pierna += p
+        # En el dash las piernas quedan estiradas hacia atrás.
+        retroceso = -self.dash_direccion * p if en_dash else 0
 
         pierna_y = base_y - alto_pierna
         # La puntera del pie apunta hacia donde mira.
@@ -1152,6 +1203,10 @@ class PersonajeHumanoide:
         for lado, elevar in ((-1, elevar_izq), (1, elevar_der)):
             alto_i = max(p, round((alto_pierna - elevar) / p) * p)
             pierna_x = centro_x - 12 - desfase_pierna if lado < 0 else centro_x + 3 + desfase_pierna
+            pierna_x += retroceso
+            if elevar > 3 and aire <= 0.05:
+                # La pierna que avanza da el paso hacia delante.
+                pierna_x += self.direccion * p
             self._bloque_contorneado(lienzo, pierna_x, pierna_y, 9, alto_i, oscuro, contorno)
             self._bloque_contorneado(
                 lienzo, pierna_x + punta_izq, pierna_y + alto_i - p, 13, p, muy_oscuro, contorno
@@ -1170,14 +1225,25 @@ class PersonajeHumanoide:
         # --- Brazos: se balancean al correr, suben en el aire y se echan
         # hacia atrás en el dash. ---
         brazo_alto = round(self._lerp(20, 14, agachado) / p) * p
-        levantar = int(aire * (6 if subiendo else 10))
+        levantar = int(aire * (8 - 2 * impulso))
+        if aire <= 0.05:
+            if self._derrapando:
+                levantar += p  # brazos abiertos para frenar
+            elif (
+                self.amplitud_paso < 0.05
+                and not self._euforico
+                and math.sin(self.tiempo_idle * 1.3) > 0.55
+            ):
+                levantar -= p  # respiración: los hombros caen al exhalar
         balanceo_brazos = balanceo
         if self._euforico:
             # Brazos medio alzados y agitándose todo el tiempo.
             balanceo_brazos += round(math.sin(pygame.time.get_ticks() * 0.022) * 6 * (1.0 - 0.6 * self.amplitud_paso))
             levantar += p
-        brazo_izq_y = torso_y + 2 - balanceo_brazos + int(agachado * 6) - levantar
-        brazo_der_y = torso_y + 2 + balanceo_brazos + int(agachado * 6) - levantar
+        # Brazos en contrafase con las piernas: la pierna que avanza se
+        # acompaña del brazo contrario (antes subían del mismo lado).
+        brazo_izq_y = torso_y + 2 + balanceo_brazos + int(agachado * 6) - levantar
+        brazo_der_y = torso_y + 2 - balanceo_brazos + int(agachado * 6) - levantar
         brazo_desplazamiento = int(agachado * 5) * self.direccion
         if en_dash:
             brazo_desplazamiento -= self.dash_direccion * 6
@@ -1189,6 +1255,8 @@ class PersonajeHumanoide:
         # --- Cabeza (con retraso respecto al torso: follow-through) ---
         lado_cabeza = round(self._lerp(26, 22, agachado) / p) * p
         cabeza_x = torso_x
+        if not self.muriendo:
+            cabeza_x += round(self.cabeza_retraso / p) * p
         cabeza_y = torso_y - lado_cabeza - (bob_cabeza - bob)
         self._bloque_contorneado(
             lienzo, cabeza_x - lado_cabeza // 2, cabeza_y, lado_cabeza, lado_cabeza, claro, contorno
@@ -1215,6 +1283,8 @@ class PersonajeHumanoide:
                 self.ANCHO_STRETCH_MIN,
                 min(self.ANCHO_SQUASH_MAX, 1.0 / math.sqrt(escala_alto)),
             )
+        if self._giro_frames > 0 and not self.muriendo:
+            escala_ancho *= 1.0 - (1.0 - self.GIRO_ANCHO_MIN) * self._giro_frames / self.FRAMES_GIRO
         if abs(escala_alto - 1.0) > 0.01 or abs(escala_ancho - 1.0) > 0.01:
             # ``scale`` (no ``smoothscale``) para no difuminar el pixel art.
             lienzo = pygame.transform.scale(

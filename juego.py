@@ -177,14 +177,14 @@ class Juego:
     # ------------------------------------------------------------------
     def _crear_ventana(self):
         indice = self.configuracion["resolucion"]
-        if not 0 <= indice < len(MenuOpciones.RESOLUCIONES):
+        resoluciones = self.configuracion["resoluciones"]
+        if not 0 <= indice < len(resoluciones):
             indice = self.configuracion["resolucion"] = 0
-        resolucion = MenuOpciones.RESOLUCIONES[indice]
+        resolucion = resoluciones[indice]
         # Si la resolucion guardada no cabe en este monitor, se usa la base.
-        ancho_max, alto_max = pygame.display.get_desktop_sizes()[0]
-        if resolucion[0] > ancho_max or resolucion[1] > alto_max:
+        if indice not in MenuOpciones.resoluciones_disponibles():
             self.configuracion["resolucion"] = 0
-            resolucion = MenuOpciones.RESOLUCIONES[0]
+            resolucion = resoluciones[0]
         flags = pygame.FULLSCREEN if self.configuracion["pantalla_completa"] else 0
         self.pantalla = Presentador(WIDTH, HEIGHT, resolucion, flags)
         self.lienzo = self.pantalla.lienzo

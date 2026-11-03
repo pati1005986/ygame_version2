@@ -15,14 +15,22 @@ def preparar_configuracion(idioma_inicial):
     """Lee la configuración guardada y la deja validada y completa."""
     guardada = cargar_configuracion()
     configuracion = normalizar_configuracion(guardada)
-    configuracion["resoluciones"] = MenuOpciones.RESOLUCIONES
+    resoluciones = MenuOpciones.resoluciones_configuracion()
+    configuracion["resoluciones"] = resoluciones
+    indice_resolucion = configuracion["resolucion"]
+    if indice_resolucion >= len(resoluciones):
+        try:
+            escritorio = pygame.display.get_desktop_sizes()[0]
+        except (pygame.error, AttributeError, IndexError):
+            escritorio = None
+        configuracion["resolucion"] = (
+            resoluciones.index(escritorio)
+            if escritorio in resoluciones
+            else 0
+        )
 
     idioma = configuracion.get("idioma", idioma_inicial)
     configuracion["idioma"] = idioma if idioma in IDIOMAS_DISPONIBLES else idioma_inicial
-
-    configuracion["resolucion"] = _limitar(
-        configuracion.get("resolucion", 0), 0, len(MenuOpciones.RESOLUCIONES) - 1
-    )
     configuracion["pantalla_completa"] = bool(
         configuracion.get("pantalla_completa", False)
     )

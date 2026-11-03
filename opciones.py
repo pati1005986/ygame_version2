@@ -110,19 +110,33 @@ class MenuOpciones:
     def resoluciones_disponibles(cls):
         """Indices de las resoluciones que caben en el monitor actual.
 
-        Las que son mas grandes que el escritorio no se ofrecen en el menu.
+        Tambien ofrece la resolucion actual del escritorio si no esta en la
+        lista fija.
         Siempre devuelve al menos la resolucion base (indice 0).
         """
+        resoluciones = cls.resoluciones_configuracion()
         try:
             ancho_max, alto_max = pygame.display.get_desktop_sizes()[0]
         except (pygame.error, AttributeError, IndexError):
-            return list(range(len(cls.RESOLUCIONES)))
+            return list(range(len(resoluciones)))
         validas = [
             i
-            for i, (ancho, alto) in enumerate(cls.RESOLUCIONES)
+            for i, (ancho, alto) in enumerate(resoluciones)
             if ancho <= ancho_max and alto <= alto_max
         ]
         return validas or [0]
+
+    @classmethod
+    def resoluciones_configuracion(cls):
+        """Devuelve los tamaños fijos y, si hace falta, el del escritorio."""
+        resoluciones = list(cls.RESOLUCIONES)
+        try:
+            escritorio = pygame.display.get_desktop_sizes()[0]
+        except (pygame.error, AttributeError, IndexError):
+            return resoluciones
+        if escritorio not in resoluciones:
+            resoluciones.append(escritorio)
+        return resoluciones
 
     def _escala(self):
         """Factor de escala relativo a la resolucion de referencia, con
@@ -505,12 +519,19 @@ class MenuOpciones:
             grosor=3,
         )
 
-        resolucion = self.configuracion["resoluciones"][self.configuracion["resolucion"]]
+        indice_resolucion = self.configuracion["resolucion"]
+        resolucion = self.configuracion["resoluciones"][indice_resolucion]
+        etiqueta_resolucion = (
+            f"{texto(idioma, 'max_resolution')}: "
+            if indice_resolucion == len(self.RESOLUCIONES)
+            else ""
+        )
         hover = self.boton_resolucion.collidepoint(posicion_raton)
         rect_dibujo = self._dibujar_boton_comic(superficie, self.boton_resolucion, "", hover)
         self._texto_centrado(
             superficie,
-            f"{texto(idioma, 'resolution')}: {resolucion[0]} X {resolucion[1]}",
+            f"{texto(idioma, 'resolution')}: {etiqueta_resolucion}"
+            f"{resolucion[0]} X {resolucion[1]}",
             self.fuente,
             rect_dibujo.center,
         )
@@ -729,7 +750,7 @@ def normalizar_configuracion(configuracion):
     if (
         isinstance(indice_res, bool)
         or not isinstance(indice_res, int)
-        or not 0 <= indice_res < len(MenuOpciones.RESOLUCIONES)
+        or not 0 <= indice_res <= len(MenuOpciones.RESOLUCIONES)
     ):
         base["resolucion"] = 0
 

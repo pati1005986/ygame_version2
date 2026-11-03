@@ -527,14 +527,15 @@ class PersonajeHumanoide:
         self.cabeza_retraso = 0.0
         self._giro_frames = 0
 
-    def mover(self, plataformas, controles=None):
+    def mover(self, plataformas, controles=None, estado_teclas=None):
         """Lee el teclado, aplica física y resuelve colisiones.
 
         ``plataformas`` debe contener objetos con atributo ``rect`` (y
         opcionalmente ``rect_colision()``). ``controles`` admite las
         claves ``left``, ``right``, ``down`` y, opcionalmente, ``jump``
         (una tecla o varias) para el salto variable sin tocar el bucle
-        de eventos.
+        de eventos. ``estado_teclas`` permite inyectar un estado de teclas
+        compatible con ``pygame.key.get_pressed()`` para animaciones.
         """
         self._plataformas = plataformas
         if self.muriendo:
@@ -556,7 +557,11 @@ class PersonajeHumanoide:
         if self.dash_enfriamiento > 0:
             self.dash_enfriamiento -= 1
 
-        teclas = pygame.key.get_pressed()
+        teclas = (
+            pygame.key.get_pressed()
+            if estado_teclas is None
+            else estado_teclas
+        )
         controles = controles or {
             "left": pygame.K_a,
             "right": pygame.K_d,

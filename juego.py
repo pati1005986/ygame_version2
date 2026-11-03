@@ -28,6 +28,7 @@ from eventos import (
     ESTADO_ADVERTENCIA,
     ESTADO_CREDITOS,
     ESTADO_GAME_OVER,
+    ESTADO_INTRO_INFINITO,
     ESTADO_JUGANDO,
     ESTADO_MENU,
     ESTADO_OPCIONES,
@@ -51,6 +52,7 @@ from fondo import (
 )
 from hud import HUD, Fuentes, PantallaAdvertencia, crear_fuente_boton
 from idioma import texto
+from intro import IntroInfinito
 from menu import MenuInicio
 from niveles import (
     ajustar_dificultad_jugador,
@@ -131,6 +133,7 @@ class Juego:
         self.estado = ESTADO_ADVERTENCIA
         self.jugando = True
         self.modo_infinito = False
+        self.intro_infinito = None
         self.puntaje = 0
         self.transicion = None
         self.despertar_mostrado = False
@@ -384,6 +387,14 @@ class Juego:
             self.animacion_vacio = None
         if estado_antes == ESTADO_CREDITOS and self.estado == ESTADO_MENU:
             self._reiniciar_tras_creditos()
+        if self.estado == ESTADO_INTRO_INFINITO and estado_antes != self.estado:
+            self.intro_infinito = IntroInfinito(
+                self.jugador.color,
+                self.configuracion["volumen_efectos"],
+                texto(self.configuracion["idioma"], "infinite"),
+            )
+        elif estado_antes == ESTADO_INTRO_INFINITO and self.estado != estado_antes:
+            self.intro_infinito = None
 
     def _procesar_audio_baile_morado(self, eventos):
         jugador_activo = (
@@ -458,7 +469,14 @@ class Juego:
         self.jugador.euforico = self.modo_infinito
         self._decaer_efectos()
 
-        if self.estado == ESTADO_JUGANDO:
+        if self.estado == ESTADO_INTRO_INFINITO:
+            intro = self.intro_infinito
+            assert intro is not None
+            intro.actualizar(dt)
+            if intro.terminada:
+                self.intro_infinito = None
+                self.estado = ESTADO_JUGANDO
+        elif self.estado == ESTADO_JUGANDO:
             self._actualizar_jugando()
         elif self.estado == ESTADO_GAME_OVER:
             self._actualizar_game_over(dt)
@@ -707,6 +725,10 @@ class Juego:
             self.menu.dibujar(self.lienzo, self.pantalla.posicion_raton_logica())
         elif estado == ESTADO_CREDITOS:
             self._dibujar_creditos()
+        elif estado == ESTADO_INTRO_INFINITO:
+            intro = self.intro_infinito
+            assert intro is not None
+            intro.dibujar(self.lienzo)
         elif estado == ESTADO_PAUSA:
             self.pausa.dibujar(self.lienzo, self.pantalla.posicion_raton_logica(), dt)
         elif estado == ESTADO_OPCIONES:

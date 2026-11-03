@@ -18,6 +18,7 @@ ESTADO_ADVERTENCIA = "advertencia"
 ESTADO_OPCIONES = "opciones"
 ESTADO_PAUSA = "pausa"
 ESTADO_JUGANDO = "jugando"
+ESTADO_INTRO_INFINITO = "intro_infinito"
 ESTADO_TRANSICION = "transicion"
 ESTADO_GAME_OVER = "game_over"
 ESTADO_CREDITOS = "creditos"
@@ -92,7 +93,12 @@ def _evento_con_posicion_logica(evento, contexto, dependencias):
 
 
 def _iniciar_juego(
-    contexto, dependencias, nivel, modo_infinito, reiniciar_progreso=False
+    contexto,
+    dependencias,
+    nivel,
+    modo_infinito,
+    reiniciar_progreso=False,
+    iniciar_intro=False,
 ):
     contexto.nivel = nivel
     contexto.modo_infinito = modo_infinito
@@ -117,7 +123,9 @@ def _iniciar_juego(
         contexto.jugador, contexto.nivel, modo_infinito
     )
     contexto.transicion = None
-    contexto.estado = ESTADO_JUGANDO
+    contexto.estado = (
+        ESTADO_INTRO_INFINITO if iniciar_intro else ESTADO_JUGANDO
+    )
 
 
 def _reiniciar_juego(contexto, dependencias):
@@ -164,7 +172,9 @@ def procesar_eventos(eventos, contexto, dependencias):
                 accion_menu == "infinito"
                 and dependencias.configuracion.get("juego_completado")
             ):
-                _iniciar_juego(contexto, dependencias, 1, True)
+                _iniciar_juego(
+                    contexto, dependencias, 1, True, iniciar_intro=True
+                )
             elif accion_menu == "opciones":
                 contexto.estado_despues_opciones = ESTADO_MENU
                 contexto.estado = ESTADO_OPCIONES

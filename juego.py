@@ -553,6 +553,8 @@ class Juego:
 
     def _mover_enemigos(self):
         for entidad in self.entidades:
+            if hasattr(entidad, "sincronizar_jugador"):
+                entidad.sincronizar_jugador(self.jugador)
             entidad.mover(self.plataformas, self.jugador.rect)
         self.entidades = [entidad for entidad in self.entidades if entidad.activa]
         self.alerta_enemigos = max(

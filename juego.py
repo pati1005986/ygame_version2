@@ -543,7 +543,9 @@ class Juego:
                 if not entidad.activa or not entidad.rect.colliderect(jugador.rect):
                     continue
                 agarrar_jugador = getattr(entidad, "agarrar_jugador", None)
-                if callable(agarrar_jugador) and agarrar_jugador(jugador):
+                if callable(agarrar_jugador) and agarrar_jugador(
+                    jugador, modo_infinito=self.modo_infinito
+                ):
                     continue
                 if self.modo_infinito:
                     direccion = (
@@ -573,6 +575,13 @@ class Juego:
             if hasattr(entidad, "sincronizar_jugador"):
                 entidad.sincronizar_jugador(self.jugador)
             entidad.mover(self.plataformas, self.jugador.rect)
+        powerups_otorgados = sum(
+            getattr(entidad, "powerup_otorgado", False)
+            for entidad in self.entidades
+        )
+        for _ in range(powerups_otorgados):
+            self.combo.registrar(pygame.time.get_ticks())
+            self.intensidad_shake = max(self.intensidad_shake, 5.0)
         self.entidades = [entidad for entidad in self.entidades if entidad.activa]
         self.alerta_enemigos = max(
             self.alerta_enemigos,

@@ -210,7 +210,9 @@ class PerseguidorSepia:
         self._desfase_inicio_x = 0
         self._desfase_inicio_pies = 0
         self._fase_trepamiento = 0.0
+        self._agarre_modo_infinito = False
         self.agarre_expirado = False
+        self.powerup_otorgado = False
 
     @property
     def rect(self):
@@ -239,13 +241,18 @@ class PerseguidorSepia:
         desquiciada y anularía la expresión de desesperación del clon.
         """
         clon = self.personaje
-        clon.velocidad = jugador.velocidad
+        factor_persecucion = (
+            0.82 if getattr(jugador, "potenciador_infinito", False) else 1.0
+        )
+        clon.velocidad = jugador.velocidad * factor_persecucion
         clon.gravedad = jugador.gravedad
         clon.fuerza_salto = jugador.fuerza_salto
-        clon.acel_suelo = jugador.acel_suelo
+        clon.acel_suelo = jugador.acel_suelo * factor_persecucion
         clon.friccion_suelo = jugador.friccion_suelo
-        clon.acel_aire = jugador.acel_aire
-        clon.acel_aire_doble_salto = jugador.acel_aire_doble_salto
+        clon.acel_aire = jugador.acel_aire * factor_persecucion
+        clon.acel_aire_doble_salto = (
+            jugador.acel_aire_doble_salto * factor_persecucion
+        )
         clon.friccion_aire = jugador.friccion_aire
         clon.factor_giro = jugador.factor_giro
 
@@ -329,6 +336,12 @@ class PerseguidorSepia:
                 clon.rect.bottom = jugador.rect.top + 16 + round(
                     math.sin(self._frames_agarre * 0.22) * 2
                 )
+            if self._frames_trepamiento == 0 and self._agarre_modo_infinito:
+                jugador.activar_potenciador_infinito()
+                self.powerup_otorgado = True
+                self.soltar_jugador()
+                self.activa = False
+                return
             self._frames_agarre -= 1
             if self._frames_agarre <= 0:
                 self.agarre_expirado = True
@@ -445,7 +458,7 @@ class PerseguidorSepia:
     def nivel_alerta(self):
         return 1.0 if self._jugador_agarrado is not None else 0.0
 
-    def agarrar_jugador(self, jugador):
+    def agarrar_jugador(self, jugador, modo_infinito=False):
         if (
             not self.activa
             or self._reaparicion_frames > 0
@@ -463,10 +476,11 @@ class PerseguidorSepia:
         self._desfase_inicio_x = self.rect.centerx - jugador.rect.centerx
         self._desfase_inicio_pies = self.rect.bottom - jugador.rect.bottom
         self._fase_trepamiento = 0.0
+        self._agarre_modo_infinito = modo_infinito
         self.agarre_expirado = False
         self.personaje._trepamiento_progreso = 0.0
         self.personaje._fase_trepamiento = 0.0
-        jugador.pesado = True
+        jugador.pesado = not modo_infinito
         self.personaje.vel_x = 0.0
         self.personaje.vel_y = 0
         return True
@@ -478,6 +492,7 @@ class PerseguidorSepia:
         self._frames_agarre = 0
         self._frames_trepamiento = 0
         self.agarre_expirado = False
+        self._agarre_modo_infinito = False
         self.personaje._trepamiento_progreso = 1.0
 
     def derrotar(self, direccion):

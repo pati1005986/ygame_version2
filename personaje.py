@@ -125,6 +125,9 @@ class PersonajeHumanoide:
     RASTRO_FRAMES = 8
     FACTOR_PESO_MOVIMIENTO = 0.52
     FACTOR_PESO_SALTO = 0.72
+    DURACION_POTENCIADOR_INFINITO = 480
+    FACTOR_VELOCIDAD_POTENCIADA = 1.4
+    FACTOR_DASH_POTENCIADO = 1.6
 
     def __init__(self, x, y, color, volumen_efectos=1.0, dash_habilitado=False):
         # Tamaño aumentado ~25% respecto a la versión original (32x56 -> 40x70)
@@ -138,6 +141,8 @@ class PersonajeHumanoide:
         self.gravedad = 0.6
         self.fuerza_salto = self.FUERZA_SALTO
         self.pesado = False
+        self.potenciador_infinito = False
+        self.potenciador_infinito_frames = 0
 
         # Agarre: copias de instancia de las constantes de clase, para poder
         # variarlas por nivel (ver ``aplicar_agarre``). El modo historia no
@@ -505,6 +510,8 @@ class PersonajeHumanoide:
     def reiniciar_movimiento(self):
         """Elimina el impulso y las acciones pendientes entre niveles."""
         self.pesado = False
+        self.potenciador_infinito = False
+        self.potenciador_infinito_frames = 0
         self.vel_x = 0.0
         self.vel_y = 0
         self._resto_x = 0.0
@@ -545,6 +552,11 @@ class PersonajeHumanoide:
         if self.muriendo:
             self._actualizar_particulas()
             return
+
+        if self.potenciador_infinito_frames > 0:
+            self.potenciador_infinito_frames -= 1
+            if self.potenciador_infinito_frames == 0:
+                self.potenciador_infinito = False
 
         centro_previo = self.rect.center
         estaba_en_suelo_frame_anterior = self.en_suelo
@@ -597,19 +609,40 @@ class PersonajeHumanoide:
             self.direccion = dir_input
 
         if en_dash:
-            self.vel_x = self.dash_direccion * self.DASH_VELOCIDAD
+            factor_dash = (
+                self.FACTOR_DASH_POTENCIADO
+                if self.potenciador_infinito
+                else 1.0
+            )
+            self.vel_x = self.dash_direccion * self.DASH_VELOCIDAD * factor_dash
             self.vel_y = 0
             self.dash_restante -= 1
             if self.dash_restante == 0:
                 # Sale del dash conservando algo de impulso.
-                self.vel_x = self.dash_direccion * self.velocidad * 1.3
-                self.dash_enfriamiento = self.DASH_ENFRIAMIENTO
+                factor_velocidad = (
+                    self.FACTOR_VELOCIDAD_POTENCIADA
+                    if self.potenciador_infinito
+                    else 1.0
+                )
+                self.vel_x = (
+                    self.dash_direccion * self.velocidad * 1.3 * factor_velocidad
+                )
+                self.dash_enfriamiento = round(
+                    self.DASH_ENFRIAMIENTO
+                    * (0.65 if self.potenciador_infinito else 1.0)
+                )
         else:
             factor_peso = self.FACTOR_PESO_MOVIMIENTO if self.pesado else 1.0
+            factor_velocidad = (
+                self.FACTOR_VELOCIDAD_POTENCIADA
+                if self.potenciador_infinito
+                else 1.0
+            )
             vel_max = (
                 self.velocidad
                 * (self.VEL_AGACHADO if self.agachado else 1.0)
                 * factor_peso
+                * factor_velocidad
             )
             if self.en_suelo:
                 self._doble_salto_activo = False
@@ -1097,7 +1130,12 @@ class PersonajeHumanoide:
         ):
             return
         self.dashes_disponibles -= 1
-        self.dash_restante = self.DASH_FRAMES
+        factor_dash = (
+            self.FACTOR_DASH_POTENCIADO
+            if self.potenciador_infinito
+            else 1.0
+        )
+        self.dash_restante = round(self.DASH_FRAMES * factor_dash)
         self.dash_ejecutado_este_frame = True
         self.dash_direccion = self.direccion
         self.vel_y = 0
@@ -1110,6 +1148,16 @@ class PersonajeHumanoide:
         )
         if self.sonido_dash:
             self.sonido_dash.play()
+
+    def activar_potenciador_infinito(self):
+        """Acelera al jugador y fortalece su dash temporalmente."""
+        self.potenciador_infinito = True
+        self.potenciador_infinito_frames = self.DURACION_POTENCIADOR_INFINITO
+        self.dashes_disponibles = self.dashes_maximos
+        self.dash_enfriamiento = 0
+        self._emitir_particulas(
+            18, self.rect.centerx, self.rect.centery, dispersion=18
+        )
 
     def iniciar_engullido(self, plataforma):
         """Activa la animación de muerte por trampa."""

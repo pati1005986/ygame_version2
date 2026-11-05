@@ -123,6 +123,8 @@ class PersonajeHumanoide:
     DASH_VELOCIDAD = 15.0
     DASH_ENFRIAMIENTO = 24
     RASTRO_FRAMES = 8
+    FACTOR_PESO_MOVIMIENTO = 0.52
+    FACTOR_PESO_SALTO = 0.72
 
     def __init__(self, x, y, color, volumen_efectos=1.0, dash_habilitado=False):
         # Tamaño aumentado ~25% respecto a la versión original (32x56 -> 40x70)
@@ -135,6 +137,7 @@ class PersonajeHumanoide:
         self.velocidad = 6
         self.gravedad = 0.6
         self.fuerza_salto = self.FUERZA_SALTO
+        self.pesado = False
 
         # Agarre: copias de instancia de las constantes de clase, para poder
         # variarlas por nivel (ver ``aplicar_agarre``). El modo historia no
@@ -501,6 +504,7 @@ class PersonajeHumanoide:
 
     def reiniciar_movimiento(self):
         """Elimina el impulso y las acciones pendientes entre niveles."""
+        self.pesado = False
         self.vel_x = 0.0
         self.vel_y = 0
         self._resto_x = 0.0
@@ -601,7 +605,12 @@ class PersonajeHumanoide:
                 self.vel_x = self.dash_direccion * self.velocidad * 1.3
                 self.dash_enfriamiento = self.DASH_ENFRIAMIENTO
         else:
-            vel_max = self.velocidad * (self.VEL_AGACHADO if self.agachado else 1.0)
+            factor_peso = self.FACTOR_PESO_MOVIMIENTO if self.pesado else 1.0
+            vel_max = (
+                self.velocidad
+                * (self.VEL_AGACHADO if self.agachado else 1.0)
+                * factor_peso
+            )
             if self.en_suelo:
                 self._doble_salto_activo = False
                 aceleracion, friccion = self.acel_suelo, self.friccion_suelo
@@ -610,6 +619,8 @@ class PersonajeHumanoide:
                     self.acel_aire_doble_salto if self._doble_salto_activo else self.acel_aire
                 )
                 friccion = self.friccion_aire
+            aceleracion *= factor_peso
+            friccion *= factor_peso
             if dir_input != 0:
                 if self.vel_x * dir_input < 0:
                     aceleracion *= self.factor_giro
@@ -652,6 +663,8 @@ class PersonajeHumanoide:
         # --- Gravedad: más ligera subiendo, más firme bajando ---
         if not en_dash:
             gravedad = self.gravedad
+            if self.pesado:
+                gravedad *= 1.25
             vel_caida_max = self.VEL_CAIDA_MAX
             if self.vel_y > 0:
                 gravedad *= self.FACTOR_CAIDA
@@ -1024,7 +1037,10 @@ class PersonajeHumanoide:
         doble salto con giro si ya está en el aire y le queda uno."""
         if self.en_suelo or self.coyote_restante > 0:
             self.escala_y = 0.82  # compresión instantánea al despegar
-            self.vel_y = self.fuerza_salto
+            fuerza_salto = self.fuerza_salto
+            if self.pesado:
+                fuerza_salto *= self.FACTOR_PESO_SALTO
+            self.vel_y = fuerza_salto
             self.saltos_restantes = self.saltos_maximos - 1
             self.coyote_restante = 0
             self.despegue_ts = pygame.time.get_ticks()
@@ -1037,7 +1053,10 @@ class PersonajeHumanoide:
                 self.sonido_salto.play()
         elif self.saltos_restantes > 0:
             self.saltos_restantes -= 1
-            self.vel_y = self.fuerza_salto * self.FACTOR_DOBLE_SALTO
+            fuerza_salto = self.fuerza_salto
+            if self.pesado:
+                fuerza_salto *= self.FACTOR_PESO_SALTO
+            self.vel_y = fuerza_salto * self.FACTOR_DOBLE_SALTO
             self.despegue_ts = pygame.time.get_ticks()
             self.escala_y = 1.15
             self.girando = True

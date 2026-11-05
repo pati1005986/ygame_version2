@@ -521,27 +521,44 @@ class Juego:
         if not self.eventos_visuales.evento_flashback_especial_activo:
             self._mover_enemigos()
 
+        agarre_expirado = any(
+            getattr(entidad, "agarre_expirado", False)
+            for entidad in self.entidades
+        )
+        if agarre_expirado:
+            if jugador.rect.centerx >= WIDTH:
+                self._pasar_al_siguiente_nivel()
+                return
+            self._iniciar_game_over()
+            self.combo.reiniciar()
+            return
+
         if jugador.en_suelo and en_aire_antes:
             self.intensidad_shake = max(self.intensidad_shake, 3.5)
 
         self._comprobar_trampa()
 
-        if self.estado == ESTADO_JUGANDO and self.modo_infinito:
+        if self.estado == ESTADO_JUGANDO:
             for entidad in self.entidades:
-                if entidad.activa and entidad.rect.colliderect(jugador.rect):
+                if not entidad.activa or not entidad.rect.colliderect(jugador.rect):
+                    continue
+                agarrar_jugador = getattr(entidad, "agarrar_jugador", None)
+                if callable(agarrar_jugador) and agarrar_jugador(jugador):
+                    continue
+                if self.modo_infinito:
                     direccion = (
                         1 if entidad.rect.centerx >= jugador.rect.centerx else -1
                     )
                     if entidad.derrotar(direccion):
                         self.combo.registrar(ahora)
                         self.intensidad_shake = max(self.intensidad_shake, 5.0)
-        elif (
-            self.estado == ESTADO_JUGANDO
-            and not dash_activo
-            and any(e.rect.colliderect(jugador.rect) for e in self.entidades)
-        ):
-            self._iniciar_game_over()
-            self.combo.reiniciar()
+                elif not dash_activo:
+                    self._iniciar_game_over()
+                    self.combo.reiniciar()
+                    break
+
+        if self.estado != ESTADO_JUGANDO:
+            return
 
         salio_por_la_derecha = jugador.rect.centerx >= WIDTH
         salio_por_otro_borde = jugador.rect.top > HEIGHT or jugador.rect.right < 0
@@ -580,6 +597,10 @@ class Juego:
 
     def _iniciar_game_over(self, **opciones):
         """Dispara el game over; ``opciones`` se pasan a ``iniciar_game_over``."""
+        for entidad in self.entidades:
+            soltar_jugador = getattr(entidad, "soltar_jugador", None)
+            if callable(soltar_jugador):
+                soltar_jugador()
         self.intensidad_shake = 9.0
         if self.modo_infinito:
             # Modo infinito: caída al vacío en vez del game over clásico
@@ -620,6 +641,10 @@ class Juego:
             self.capa_nivel_anterior, self.fondo_cache, self.plataformas,
             self.entidades, tiempo_mundo, self._nivel_estetico(),
         )
+        for entidad in self.entidades:
+            soltar_jugador = getattr(entidad, "soltar_jugador", None)
+            if callable(soltar_jugador):
+                soltar_jugador()
         self.nivel += 1
         if not self.modo_infinito:
             self.eventos_visuales.entrar_nivel(self.nivel, tiempo_mundo)

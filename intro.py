@@ -1,24 +1,598 @@
-"""Animación de entrada del modo infinito.
+
+"""Animación de entrada del modo infinito (todo en un solo archivo).
 
 - A color (la paleta del pasillo cambia de tono sin parar).
 - El pasillo y la carrera continúan hasta que termina la secuencia.
-- Siempre en modo desenfreno (``euforico = True``).
+- Protagonista: ``PersonajeLoco``, de frente a la cámara y corriendo como
+  loco; el pasillo se aleja detrás de él.
+- Efecto grunge de película sucia (``EfectoGrunge``) sobre todo el fotograma.
 - Secuencia: apertura en iris, título que rebota, zoom y barras de cine.
 
 La clase ``IntroInfinito`` dibuja en una superficie existente y no toma
-control de la ventana ni del bucle principal.
+control de la ventana ni del bucle principal. Este archivo reúne lo que
+antes estaba en intro.py, personaje_loco.py y grunge.py.
+
+Preview: ``python intro.py`` (R reinicia, G alterna el grunge, Espacio brinca).
 """
 import colorsys
 import math
+import os
 import random
+from functools import lru_cache
 
 import pygame
 
-from personaje import PersonajeHumanoide
+
+
+# ----------------------------------------------------------------------
+# Efecto grunge: postproceso de película sucia y castigada
+# ----------------------------------------------------------------------
+
+class EfectoGrunge:
+    CUADROS_ESTADO = 3
+
+    def __init__(self, ancho=640, alto=480, intensidad=1.0, semilla=None):
+        self.ancho, self.alto = ancho, alto
+        self.intensidad = max(0.0, intensidad)
+        self._rnd = random.Random(semilla)
+        self._cuadro = 0
+        self._estado = {}
+        k = min(1.5, self.intensidad)
+        self.grano_claro = [self._textura_grano(38 * k) for _ in range(4)]
+        self.grano_oscuro = [self._textura_grano(46 * k) for _ in range(4)]
+        self.suciedad = self._crear_suciedad(k)
+        self.borde = self._crear_borde(k)
+        self._nuevo_estado()
+
+    # ------------------------------------------------------------------
+    # Texturas (se generan una sola vez)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _convertir(superficie):
+        return superficie.convert() if pygame.display.get_surface() else superficie
+
+    def _textura_grano(self, tope):
+        """Ruido gris a media resolución, ampliado (grano grueso)."""
+        w, h = self.ancho // 2, self.alto // 2
+        tabla = bytes(int(tope * (v / 255.0) ** 1.5) for v in range(256))
+        datos = os.urandom(w * h).translate(tabla)
+        buf = bytearray(w * h * 3)
+        buf[0::3] = datos
+        buf[1::3] = datos
+        buf[2::3] = datos
+        pequena = pygame.image.frombuffer(bytes(buf), (w, h), "RGB")
+        return self._convertir(pygame.transform.scale(pequena, (self.ancho, self.alto)))
+
+    def _crear_suciedad(self, k):
+        """Textura que se MULTIPLICA sobre la imagen: manchas, chorreras y
+        un tinte cálido-sucio."""
+        w, h, rnd = self.ancho, self.alto, self._rnd
+        base = pygame.Surface((w, h))
+        base.fill((255, 255, 255))
+        capa = pygame.Surface((w, h), pygame.SRCALPHA)
+        for _ in range(150):
+            r = rnd.randint(8, 90)
+            x, y = rnd.randint(0, w), rnd.randint(0, h)
+            g = rnd.randint(40, 170)
+            alfa = rnd.randint(5, 12) * k
+            blob = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA)
+            for anillo in range(4):  # centro más opaco: bordes suaves
+                radio = max(1, int(r * (1 - anillo * 0.25)))
+                pygame.draw.circle(
+                    blob, (g, int(g * 0.9), int(g * 0.7), int(alfa * (anillo + 1))),
+                    (r, r), radio,
+                )
+            capa.blit(blob, (x - r, y - r))
+        for _ in range(45):  # chorreras de mugre que bajan
+            x = rnd.randint(0, w)
+            largo = rnd.randint(40, 320)
+            pygame.draw.line(
+                capa, (60, 45, 30, int(rnd.randint(18, 50) * k)),
+                (x, 0), (x + rnd.randint(-6, 6), largo), rnd.randint(1, 3),
+            )
+        base.blit(capa, (0, 0))
+        base.fill((246, 238, 216), special_flags=pygame.BLEND_RGB_MULT)
+        return self._convertir(base)
+
+    def _crear_borde(self, k):
+        """Marco oscuro con el contorno interior rasgado."""
+        w, h, rnd = self.ancho, self.alto, self._rnd
+        degradado = pygame.Surface((w, h), pygame.SRCALPHA)
+        for i in range(34):
+            pygame.draw.rect(
+                degradado, (0, 0, 0, int(120 * (1 - i / 34) ** 2)),
+                (i, i, w - 2 * i, h - 2 * i), 1,
+            )
+        marco = pygame.Surface((w, h), pygame.SRCALPHA)
+        marco.fill((18, 12, 14, 240))
+
+        def paseo(largo, inicio):
+            prof, pos = inicio, 0
+            while pos <= largo:
+                prof = max(2, min(22, prof + rnd.randint(-5, 5)))
+                yield pos, prof
+                pos += rnd.randint(5, 16)
+
+        puntos = []
+        puntos += [(x, d) for x, d in paseo(w, 8)]
+        puntos += [(w - d, y) for y, d in paseo(h, 8)]
+        puntos += [(w - x, h - d) for x, d in paseo(w, 8)]
+        puntos += [(d, h - y) for y, d in paseo(h, 8)]
+        pygame.draw.polygon(marco, (0, 0, 0, 0), puntos)
+        degradado.blit(marco, (0, 0))
+        degradado.set_alpha(int(255 * min(1.0, k)))
+        return degradado
+
+    # ------------------------------------------------------------------
+    # Estado aleatorio que se renueva cada pocos fotogramas
+    # ------------------------------------------------------------------
+    def _nuevo_estado(self):
+        r, w, h = self._rnd, self.ancho, self.alto
+        k = min(1.5, self.intensidad)
+        sacudida = 7 if r.random() < 0.06 else 2
+        glitch = None
+        if r.random() < 0.10 * k:
+            alto = r.randint(12, 44)
+            glitch = (r.randint(0, h - alto), alto, r.choice((-1, 1)) * r.randint(8, 40))
+        rayas = [
+            (
+                r.randint(0, w), r.randint(0, h - 120), r.randint(90, 420),
+                r.random() < 0.7, r.randint(1, 2),
+            )
+            for _ in range(r.choice((0, 0, 1, 1, 2, 3)))
+        ]
+        polvo = [
+            (r.randint(0, w), r.randint(0, h), r.randint(1, 3), r.random() < 0.55)
+            for _ in range(int(r.randint(8, 22) * k))
+        ]
+        pelos = []
+        if r.random() < 0.25:
+            x, y = r.randint(40, w - 40), r.randint(40, h - 40)
+            pts = [(x, y)]
+            for _ in range(5):
+                x += r.randint(-14, 14)
+                y += r.randint(-10, 18)
+                pts.append((x, y))
+            pelos.append(pts)
+        self._estado = {
+            "grano": (r.randrange(4), r.randrange(4)),
+            "sacudida": (r.randint(-sacudida, sacudida), r.randint(-sacudida, sacudida)),
+            "aberracion": max(1, int(round(k * (2 + r.random() * 1.6)))) + (4 if r.random() < 0.10 else 0),
+            "glitch": glitch,
+            "parpadeo": r.choice((0, 0, 0, 0, 0, 6, 10, 16, -8)),
+            "rayas": rayas,
+            "polvo": polvo,
+            "pelos": pelos,
+        }
+
+    # ------------------------------------------------------------------
+    # Aplicación
+    # ------------------------------------------------------------------
+    def aplicar(self, frame, t=0.0):
+        """Aplica el efecto sobre ``frame`` (debe medir ancho x alto)."""
+        if self.intensidad <= 0 or frame.get_size() != (self.ancho, self.alto):
+            return frame
+        if self._cuadro % self.CUADROS_ESTADO == 0:
+            self._nuevo_estado()
+        self._cuadro += 1
+        e = self._estado
+        k = min(1.5, self.intensidad)
+        w, h = self.ancho, self.alto
+
+        # 1. Temblor del proyector y franja desplazada
+        frame.scroll(*e["sacudida"])
+        if e["glitch"]:
+            y0, alto, dx = e["glitch"]
+            franja = frame.subsurface((0, y0, w, alto)).copy()
+            frame.blit(franja, (dx, y0))
+
+        # 2. Colores medio desteñidos
+        if hasattr(pygame.transform, "grayscale"):
+            gris = pygame.transform.grayscale(frame)
+            gris.set_alpha(int(105 * min(1.0, k)))
+            frame.blit(gris, (0, 0))
+
+        # 3. Aberración cromática
+        dx = e["aberracion"]
+        rojo = frame.copy()
+        rojo.fill((255, 0, 0), special_flags=pygame.BLEND_RGB_MULT)
+        cian = frame.copy()
+        cian.fill((0, 255, 255), special_flags=pygame.BLEND_RGB_MULT)
+        frame.fill((0, 0, 0))
+        frame.blit(cian, (-dx, 0), special_flags=pygame.BLEND_RGB_ADD)
+        frame.blit(rojo, (dx, 0), special_flags=pygame.BLEND_RGB_ADD)
+
+        # 4. Sombras aplastadas (más contraste)
+        oscuro = frame.copy()
+        oscuro.blit(frame, (0, 0), special_flags=pygame.BLEND_RGB_MULT)
+        oscuro.set_alpha(int(100 * min(1.0, k)))
+        frame.blit(oscuro, (0, 0))
+
+        # 5. Mugre fija sobre la lente
+        frame.blit(self.suciedad, (0, 0), special_flags=pygame.BLEND_RGB_MULT)
+
+        # 6. Grano de película
+        frame.blit(self.grano_claro[e["grano"][0]], (0, 0), special_flags=pygame.BLEND_RGB_ADD)
+        frame.blit(self.grano_oscuro[e["grano"][1]], (0, 0), special_flags=pygame.BLEND_RGB_SUB)
+
+        # 7. Parpadeo de exposición
+        v = e["parpadeo"]
+        if v > 0:
+            frame.fill((v, v, v), special_flags=pygame.BLEND_RGB_ADD)
+        elif v < 0:
+            frame.fill((-v, -v, -v), special_flags=pygame.BLEND_RGB_SUB)
+
+        # 8. Rayones, polvo y pelos
+        rnd = self._rnd
+        for x, y0, largo, clara, grosor in e["rayas"]:
+            color = (225, 215, 190) if clara else (25, 18, 16)
+            puntos = [(x + rnd.randint(-1, 1), y) for y in range(y0, y0 + largo, 40)]
+            if len(puntos) > 1:
+                pygame.draw.lines(frame, color, False, puntos, grosor)
+        for x, y, tam, claro in e["polvo"]:
+            color = (235, 230, 215) if claro else (20, 15, 15)
+            pygame.draw.rect(frame, color, (x, y, tam, tam))
+        for pts in e["pelos"]:
+            pygame.draw.lines(frame, (18, 14, 12), False, pts, 1)
+
+        # 9. Borde quemado y rasgado
+        frame.blit(self.borde, (0, 0))
+        return frame
+
+
+# ----------------------------------------------------------------------
+# Personaje frontal y desquiciado (independiente de personaje.py)
+# ----------------------------------------------------------------------
+
+BLANCO_OJO = (245, 245, 245)
+ROJO_VENA = (205, 35, 45)
+INTERIOR_BOCA = (110, 16, 40)
+LENGUA = (236, 86, 120)
+SUDOR = (205, 238, 255)
+
+
+@lru_cache(maxsize=64)
+def _tono(color_rgb, factor):
+    """Oscurece/aclara un color RGB (cacheado: hay pocos valores)."""
+    r, g, b = color_rgb
+    return (
+        max(0, min(255, int(r * factor))),
+        max(0, min(255, int(g * factor))),
+        max(0, min(255, int(b * factor))),
+    )
+
+
+class PersonajeLoco:
+    ANCHO, ALTO = 220, 260          # lienzo interno
+    CENTRO_X, PIE_Y = 110, 230      # ancla de los pies dentro del lienzo
+    PIXEL = 4
+
+    CADENCIA_QUIETO = 7.0           # rad/s de la fase de zancada
+    CADENCIA_CARRERA = 20.0
+    HERVIDO = 1 / 12                # el pelo y las pupilas "hierven" a 12 Hz
+
+    def __init__(self, color):
+        self.color = tuple(color[:3])
+        self.corre = False
+        self.ritmo = 0.0            # 0 quieto -> 1 a toda velocidad
+        self.bob_actual = 0.0       # rebote vertical (px), útil para la cámara
+        self.t = 0.0
+        self.fase = 0.0
+        self.espasmo = 0.0          # segundos restantes del ataque de locura
+        self._prox_espasmo = 1.0
+        self.salto = 0.0            # altura del brinco (px)
+        self._v_salto = 0.0
+        self.particulas = []
+        self._acum_part = 0.0
+        self._reloj_hervido = 0.0
+        self._semilla = 0
+        self._lienzos = [
+            pygame.Surface((self.ANCHO, self.ALTO), pygame.SRCALPHA) for _ in range(2)
+        ]
+        self._turno = 0
+        self._cabeza = pygame.Surface((96, 96), pygame.SRCALPHA)
+
+    # ------------------------------------------------------------------
+    # Lógica
+    # ------------------------------------------------------------------
+    def brincar(self):
+        """Un brinco de loco (opcional, para pruebas o interacción)."""
+        if self.salto <= 0:
+            self._v_salto = 520.0
+            self.salto = 0.001
+
+    def actualizar(self, dt):
+        dt = max(0.0, min(dt, 0.1))
+        self.t += dt
+        objetivo = 1.0 if self.corre else 0.0
+        self.ritmo += (objetivo - self.ritmo) * min(1.0, dt * 6.0)
+
+        cadencia = self.CADENCIA_QUIETO + (
+            self.CADENCIA_CARRERA - self.CADENCIA_QUIETO
+        ) * self.ritmo
+        # Cadencia irregular: se desboca y se atranca.
+        cadencia *= 1.0 + 0.18 * self.ritmo * math.sin(self.t * 3.7)
+        self.fase += dt * cadencia
+        vib = 0.3 + 0.7 * self.ritmo
+        self.bob_actual = abs(math.sin(self.fase)) * 4.0 * vib
+
+        if self.salto > 0:
+            self._v_salto -= 1900.0 * dt
+            self.salto += self._v_salto * dt
+            if self.salto <= 0:
+                self.salto = 0.0
+                self._v_salto = 0.0
+
+        if self.espasmo > 0:
+            self.espasmo = max(0.0, self.espasmo - dt)
+        elif self.ritmo > 0.6 and self.t >= self._prox_espasmo:
+            self.espasmo = random.uniform(0.3, 0.55)
+            self._prox_espasmo = self.t + random.uniform(0.7, 1.6)
+
+        self._reloj_hervido += dt
+        if self._reloj_hervido >= self.HERVIDO:
+            self._reloj_hervido = 0.0
+            self._semilla = random.randint(0, 1_000_000)
+
+        # Sudor y saliva disparados desde la cabeza.
+        self._acum_part += dt * (6 + 40 * self.ritmo)
+        while self._acum_part >= 1.0:
+            self._acum_part -= 1.0
+            lado = random.choice((-1, 1))
+            self.particulas.append(
+                {
+                    "x": self.CENTRO_X + lado * random.uniform(14, 24),
+                    "y": self.PIE_Y - 72 - self.salto + random.uniform(-12, 10),
+                    "vx": lado * random.uniform(60, 260),
+                    "vy": random.uniform(-240, -20),
+                    "vida": 0.55,
+                }
+            )
+        vivas = []
+        for q in self.particulas:
+            q["x"] += q["vx"] * dt
+            q["y"] += q["vy"] * dt
+            q["vy"] += 900.0 * dt
+            q["vida"] -= dt
+            if q["vida"] > 0:
+                vivas.append(q)
+        self.particulas = vivas
+
+    # ------------------------------------------------------------------
+    # Primitivas de dibujo (bloques sobre la grilla, contorno grueso)
+    # ------------------------------------------------------------------
+    def _bloque(self, s, x, y, w, h, color):
+        p = self.PIXEL
+        pygame.draw.rect(
+            s, color,
+            (round(x / p) * p, round(y / p) * p,
+             max(p, round(w / p) * p), max(p, round(h / p) * p)),
+        )
+
+    def _bloque_c(self, s, x, y, w, h, color, contorno):
+        p = self.PIXEL
+        rx, ry = round(x / p) * p, round(y / p) * p
+        rw, rh = max(p, round(w / p) * p), max(p, round(h / p) * p)
+        g = p // 2
+        pygame.draw.rect(s, contorno, (rx - g, ry - g, rw + 2 * g, rh + 2 * g))
+        pygame.draw.rect(s, color, (rx, ry, rw, rh))
+
+    def _cadena(self, s, origen, segmentos, ancho, color, contorno):
+        """Miembro hecho de sellos cuadrados a lo largo de segmentos.
+        Cada segmento es (ángulo en grados medido desde "hacia abajo",
+        positivo hacia la derecha de la pantalla; largo). Devuelve el
+        extremo final."""
+        p = self.PIXEL
+        x, y = origen
+        sellos = []
+        for ang, largo in segmentos:
+            a = math.radians(ang)
+            dx, dy = math.sin(a), math.cos(a)
+            pasos = max(1, int(largo / 2))
+            for i in range(pasos):
+                sellos.append((x + dx * largo * i / pasos, y + dy * largo * i / pasos))
+            x += dx * largo
+            y += dy * largo
+        sellos.append((x, y))
+        g = p // 2
+        posiciones = [
+            (round((sx - ancho / 2) / p) * p, round((sy - ancho / 2) / p) * p)
+            for sx, sy in sellos
+        ]
+        for rx, ry in posiciones:
+            pygame.draw.rect(s, contorno, (rx - g, ry - g, ancho + 2 * g, ancho + 2 * g))
+        for rx, ry in posiciones:
+            pygame.draw.rect(s, color, (rx, ry, ancho, ancho))
+        return x, y
+
+    # ------------------------------------------------------------------
+    # Dibujo
+    # ------------------------------------------------------------------
+    def dibujar(self, superficie, centro_x=None, pie_y=None):
+        """Dibuja al personaje con los pies en (centro_x, pie_y)."""
+        if centro_x is None:
+            centro_x = self.CENTRO_X
+        if pie_y is None:
+            pie_y = self.PIE_Y
+        actual = self._lienzos[self._turno]
+        previo = self._lienzos[1 - self._turno]
+        actual.set_alpha(255)
+        actual.fill((0, 0, 0, 0))
+        self._pintar(actual)
+
+        dx, dy = centro_x - self.CENTRO_X, pie_y - self.PIE_Y
+        if self.ritmo > 0.05:
+            # Fantasma del fotograma anterior: sensación de velocidad.
+            previo.set_alpha(int(95 * self.ritmo))
+            superficie.blit(previo, (dx, dy))
+        superficie.blit(actual, (dx, dy))
+        self._turno = 1 - self._turno
+
+    def _pintar(self, l):
+        p = self.PIXEL
+        t, f = self.t, self.fase
+        rnd = random.Random(self._semilla)
+        vib = 0.3 + 0.7 * self.ritmo
+        espasmo = self.espasmo > 0
+
+        # Paleta monocromática; el color "chisporrotea" en 3 pasos.
+        m = 1.10 + 0.05 * (int(t * 11) % 3)
+        brillo = _tono(self.color, 1.75 * m)
+        claro = _tono(self.color, 1.45 * m)
+        base = _tono(self.color, 1.0 * m)
+        medio = _tono(self.color, 0.8 * m)
+        oscuro = _tono(self.color, 0.62)
+        muy_oscuro = _tono(self.color, 0.35)
+        contorno = _tono(self.color, 0.16)
+
+        cx = self.CENTRO_X
+        base_y = self.PIE_Y - round(self.salto)
+        bob = round(self.bob_actual)
+        cadera_y = base_y - 26 - bob
+
+        # --- Sombra de contacto (se queda en el suelo al brincar) ---
+        ancho_s = max(24, int(72 - self.salto * 0.35 - bob * 2))
+        sombra = pygame.Surface((ancho_s, 12), pygame.SRCALPHA)
+        pygame.draw.ellipse(sombra, (0, 0, 0, 100), sombra.get_rect())
+        l.blit(sombra, sombra.get_rect(center=(cx, self.PIE_Y + 2)))
+
+        # --- Piernas: levantan la rodilla hacia la cámara, una y una ---
+        for lado in (-1, 1):
+            s = math.sin(f + (0.0 if lado < 0 else math.pi))
+            levanta = 1.0 if self.salto > 0 else max(0.0, s)
+            a1 = lado * (6 + 55 * levanta + (12 if espasmo else 0))
+            a2 = lado * (6 - 65 * levanta)
+            ex, ey = self._cadena(
+                l, (cx + lado * 9, cadera_y), ((a1, 10), (a2, 10)), 8, oscuro, contorno
+            )
+            ancho_pie = 12 + 8 * levanta  # más grande cuanto más cerca de la cámara
+            self._bloque_c(l, ex - ancho_pie / 2, ey - 2, ancho_pie, 8, muy_oscuro, contorno)
+
+        # --- Torso ---
+        tx = cx + round(math.sin(f) * 5 * vib)
+        torso_y = cadera_y - 28
+        self._bloque_c(l, tx - 18, torso_y, 36, 28, base, contorno)
+        self._bloque(l, tx + 10, torso_y, 8, 28, oscuro)
+        for i in range(4):  # franja en zigzag, a lo punk
+            self._bloque(l, tx - 16 + i * 8, torso_y + 8 + (4 if i % 2 else 0), 8, 4, muy_oscuro)
+        self._bloque(l, tx - 18, cadera_y - 4, 36, 4, muy_oscuro)
+        self._bloque(l, tx - 4, cadera_y - 4, 8, 4, brillo)
+
+        # --- Brazos: bombean al correr; en el espasmo giran como molino ---
+        for lado in (-1, 1):
+            desfase = 0.0 if lado < 0 else math.pi
+            if espasmo:
+                a1 = math.degrees(t * 12 * lado) + (0 if lado < 0 else 180)
+                a2 = a1 + lado * 25 * math.sin(t * 30)
+            else:
+                a1 = lado * (70 + 60 * vib * math.sin(f + desfase)) + rnd.uniform(-8, 8) * vib
+                a2 = a1 + lado * (-30 + 60 * vib * math.sin(2 * f + desfase + 1.0))
+            hx, hy = self._cadena(
+                l, (tx + lado * 19, torso_y + 8), ((a1, 12), (a2, 12)), 8, claro, contorno
+            )
+            self._bloque_c(l, hx - 6, hy - 6, 12, 12, claro, contorno)
+
+        # --- Cabeza (con cuello fijo al torso y sacudidas propias) ---
+        cabeza = self._pintar_cabeza(rnd, claro, brillo, medio, contorno)
+        angulo = math.sin(t * 21) * 6 * vib + math.sin(f) * 5 * vib + rnd.uniform(-3, 3) * vib
+        if espasmo:
+            angulo += math.sin(t * 38) * 16
+        rad = math.radians(angulo)
+        cuello_x = tx
+        cuello_y = torso_y + 4 + round(math.sin(t * 26) * 2 * vib)
+        centro = (cuello_x - 24 * math.sin(rad), cuello_y - 24 * math.cos(rad))
+        rot = pygame.transform.rotate(cabeza, angulo)
+        l.blit(rot, rot.get_rect(center=(round(centro[0]), round(centro[1]))))
+
+        # --- Sudor y saliva ---
+        for q in self.particulas:
+            self._bloque_c(l, q["x"], q["y"], p, p, SUDOR, contorno)
+
+    def _pintar_cabeza(self, rnd, claro, brillo, medio, contorno):
+        p = self.PIXEL
+        t = self.t
+        h = self._cabeza
+        h.fill((0, 0, 0, 0))
+        hx, hy, hw, hh = 26, 36, 44, 36
+        cxh = hx + hw // 2
+        espasmo = self.espasmo > 0
+
+        self._bloque_c(h, hx, hy, hw, hh, claro, contorno)
+        self._bloque(h, hx + 4, hy + 4, 8, 4, brillo)
+
+        # Pelo electrizado: 9 mechones que se abren hacia fuera.
+        for i in range(9):
+            alto = 2 + (4 - abs(i - 4)) // 2 + rnd.randint(0, 3)
+            for nivel in range(alto):
+                dx = round((i - 4) * nivel * 0.9)
+                self._bloque(h, hx + 4 + 4 * i + dx, hy - (nivel + 1) * p, p, p, contorno)
+
+        # Ojos de distinto tamaño, con venas, y la mirada clavada en cámara.
+        ojos = ((hx + 4, hy + 8, 12), (hx + hw - 4 - 16, hy + 6, 16))
+        for idx, (ex, ey, w) in enumerate(ojos):
+            self._bloque_c(h, ex, ey, w, w, BLANCO_OJO, contorno)
+            for vx, vy in ((0, 4), (w - 4, w - 8), (4, w - 4)):
+                self._bloque(h, ex + vx, ey + vy, 4, 4, ROJO_VENA)
+            self._bloque(h, ex, ey + w, w, p, medio)  # ojera
+            if espasmo:  # bizco
+                dx, dy = (p if idx == 0 else -p), 0
+            elif rnd.random() < 0.3:  # tic: la pupila se escapa un instante
+                dx, dy = rnd.choice((-p, 0, p)), rnd.choice((-p, 0, p))
+            else:
+                dx = dy = 0
+            self._bloque(h, ex + (w - p) // 2 + dx, ey + (w - p) // 2 + dy, p, p, contorno)
+
+            # Cejas furiosas, inclinadas hacia el centro, que saltan.
+            sube = rnd.choice((0, 0, p))
+            for k in range(w // 4 + 1):
+                bx = ex - 2 + 4 * k if idx == 0 else ex + w + 2 - 4 - 4 * k
+                self._bloque(h, bx, ey - 8 - sube + 2 * k, p, p, contorno)
+
+        # Boca: carcajada enorme con dientes, lengua y baba.
+        mw = 28
+        mx = cxh - mw // 2
+        my = hy + hh - 10
+        abierta = int(t * 9) % 2 == 0
+        mh = 16 if espasmo else (12 if abierta else 8)
+        self._bloque_c(h, mx, my, mw, mh, INTERIOR_BOCA, contorno)
+        self._bloque(h, mx + 2, my, mw - 4, 4, BLANCO_OJO)
+        self._bloque(h, mx + 4, my + 4, 4, 4, BLANCO_OJO)
+        self._bloque(h, mx + mw - 8, my + 4, 4, 4, BLANCO_OJO)
+        if mh >= 12:
+            self._bloque(h, mx + 6, my + mh - 4, mw - 12, 4, BLANCO_OJO)
+            lengua_x = mx + 8 + round(math.sin(t * 20) * 4)
+            self._bloque_c(h, lengua_x, my + mh - 8, 12, 12, LENGUA, contorno)
+        self._bloque(h, mx - 4, my - 4, 4, 4, contorno)        # hoyuelos
+        self._bloque(h, mx + mw, my - 4, 4, 4, contorno)
+        baba = 4 + 4 * int(2 + 2 * math.sin(t * 5))
+        self._bloque_c(h, mx + mw - 6, my + mh, 4, baba, SUDOR, contorno)
+
+        # Rayitas de vibración alrededor de la cabeza.
+        cuadro = int(t * 14)
+        for i, grados in enumerate((-165, -135, -45, -15, 15, 165, 135, 45)):
+            if (cuadro + i) % 3 == 0:
+                continue
+            a = math.radians(grados)
+            r = hw / 2 + 6 + p * ((cuadro + i) % 2)
+            x = cxh + math.cos(a) * r
+            y = hy + hh / 2 + math.sin(a) * r * 0.9
+            if abs(math.cos(a)) > abs(math.sin(a)):
+                self._bloque(h, x - p, y, p * 2, p, contorno)
+            else:
+                self._bloque(h, x, y - p, p, p * 2, contorno)
+        return h
+
+
+# ----------------------------------------------------------------------
+# Intro
+# ----------------------------------------------------------------------
 
 ANCHO, ALTO = 640, 480
 FPS = 60
-ESCALA_PERSONAJE = 2.0
+ESCALA_PERSONAJE = 2.3
+# -1: el personaje corre hacia la cámara y el pasillo se aleja;
+#  1: la cámara avanza por el pasillo (como antes).
+SENTIDO_PASILLO = -1
 PIE_Y = 440
 
 N_SEGMENTOS = 24
@@ -46,21 +620,6 @@ ALTO_BARRA = 58
 # ----------------------------------------------------------------------
 # Utilidades
 # ----------------------------------------------------------------------
-class _Suelo:
-    def __init__(self, rect):
-        self.rect = rect
-
-
-class _TeclasAutomaticas:
-    """Sustituye al teclado: mantiene D pulsada cuando el personaje corre."""
-
-    def __init__(self):
-        self.corre = False
-
-    def __getitem__(self, tecla):
-        return self.corre and tecla == pygame.K_d
-
-
 def hsv(h, s, v):
     r, g, b = colorsys.hsv_to_rgb(h % 1.0, s, v)
     return (int(r * 255), int(g * 255), int(b * 255))
@@ -118,6 +677,9 @@ class Pasillo:
         while self.avance >= 1.0:
             self.avance -= 1.0
             self.cuenta += 1
+        while self.avance < 0.0:
+            self.avance += 1.0
+            self.cuenta -= 1
 
     def dibujar(self, s, cx, cy, semilla, pal):
         puntos = []
@@ -237,17 +799,17 @@ class IntroInfinito:
     CENTRO_MINI_X = 110
     DURACION = T_BARRAS[1] + 0.2
 
-    def __init__(self, color=COLOR_PERSONAJE, volumen_efectos=0.8, titulo="INFINITE"):
+    def __init__(self, color=COLOR_PERSONAJE, volumen_efectos=0.8, titulo="INFINITE",
+                 grunge=True, intensidad_grunge=1.0):
         self.color = color
-        self.volumen_efectos = volumen_efectos
+        self.volumen_efectos = volumen_efectos  # se conserva por compatibilidad
         self.titulo = titulo
+        self.grunge = EfectoGrunge(ANCHO, ALTO, intensidad_grunge) if grunge else None
         self.superficie_personaje = pygame.Surface(
             (self.MINI_W, self.MINI_H), pygame.SRCALPHA
         )
-        self.suelo = _Suelo(pygame.Rect(-4000, self.SUELO_Y, 9000, 80))
         self.vineta = crear_vineta()
         self.lienzo = pygame.Surface((ANCHO, ALTO))
-        self.teclas = _TeclasAutomaticas()
         self.fuente_titulo = pygame.font.Font(None, 64)
         self.fuente_titulo.set_bold(True)
         while self.fuente_titulo.size(self.titulo)[0] > ANCHO - 80:
@@ -268,21 +830,15 @@ class IntroInfinito:
         self.cuadro = 0
         self.semilla = 0
         self.pasillo = Pasillo()
-        self.jugador = PersonajeHumanoide(
-            90, 100, self.color, volumen_efectos=self.volumen_efectos
-        )
-        self.jugador.euforico = True
+        self.jugador = PersonajeLoco(self.color)
 
     def actualizar(self, dt):
         if self.terminada:
             return
         self.tiempo += max(0.0, dt)
-        self.teclas.corre = self.tiempo >= T_ARRANQUE
-        self.jugador.euforico = True
-        self.jugador.mover([self.suelo], estado_teclas=self.teclas)
-        self.jugador.rect.centerx = self.CENTRO_MINI_X
-        ritmo = abs(self.jugador.vel_x) / self.jugador.velocidad
-        self.pasillo.avanzar(0.085 * ritmo)
+        self.jugador.corre = self.tiempo >= T_ARRANQUE
+        self.jugador.actualizar(dt)
+        self.pasillo.avanzar(SENTIDO_PASILLO * 0.085 * self.jugador.ritmo)
         if self.cuadro % CUADROS_HERVIDO == 0:
             self.semilla = random.randint(0, 10_000)
         self.cuadro += 1
@@ -290,7 +846,7 @@ class IntroInfinito:
     def dibujar(self, superficie):
         t = self.tiempo
         jugador = self.jugador
-        ritmo = abs(jugador.vel_x) / jugador.velocidad
+        ritmo = jugador.ritmo
         cx = ANCHO / 2 + math.sin(t * 5.3) * 14 * ritmo
         cy = ALTO * 0.40 - jugador.bob_actual * 2.5 + math.sin(t * 9.0) * 4 * ritmo
 
@@ -299,7 +855,7 @@ class IntroInfinito:
         lineas_de_velocidad(self.lienzo, cx, cy, ritmo)
 
         self.superficie_personaje.fill((0, 0, 0, 0))
-        jugador.dibujar(self.superficie_personaje)
+        jugador.dibujar(self.superficie_personaje, self.CENTRO_MINI_X, self.SUELO_Y)
         tam = (
             int(self.MINI_W * ESCALA_PERSONAJE),
             int(self.MINI_H * ESCALA_PERSONAJE),
@@ -342,6 +898,8 @@ class IntroInfinito:
 
         barras(cuadro, t)
         iris(cuadro, t)
+        if self.grunge is not None:
+            self.grunge.aplicar(cuadro, t)
         if superficie.get_size() == (ANCHO, ALTO):
             superficie.blit(cuadro, (0, 0))
         else:
@@ -366,9 +924,10 @@ def main():
             elif evento.type == pygame.KEYDOWN and evento.key == pygame.K_r:
                 intro.reiniciar()
             elif evento.type == pygame.KEYDOWN and evento.key == pygame.K_SPACE:
-                intro.jugador.solicitar_salto()
-            elif evento.type == pygame.KEYUP and evento.key == pygame.K_SPACE:
-                intro.jugador.soltar_salto()
+                intro.jugador.brincar()
+            elif evento.type == pygame.KEYDOWN and evento.key == pygame.K_g:
+                # Alterna el grunge para comparar.
+                intro.grunge = None if intro.grunge else EfectoGrunge(ANCHO, ALTO)
         intro.actualizar(dt)
         intro.dibujar(pantalla)
         pygame.display.flip()

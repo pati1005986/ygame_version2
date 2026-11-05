@@ -6,6 +6,7 @@ entornados con ojeras, sudor y temblor). Corre encorvado y de vez en
 cuando el negativo parpadea, como un fallo de imagen.
 """
 
+import colorsys
 import math
 import random
 
@@ -39,6 +40,11 @@ class _ClonNegativo(PersonajeHumanoide):
         self._glitch_frames = 0
         self._glitch_dx = 0
         self._proximo_glitch = pygame.time.get_ticks() + random.randint(1500, 3000)
+        self._estela_ecos = []
+        self._contador_estela = 0
+        self._progreso_reaparicion = 1.0
+        self._trepamiento_progreso = 1.0
+        self._fase_trepamiento = 0.0
 
     # ------------------------------------------------------------------
     # Negativo: se invierte cada color de la paleta ya sombreada, así que
@@ -62,6 +68,13 @@ class _ClonNegativo(PersonajeHumanoide):
     # ------------------------------------------------------------------
     def mover(self, plataformas, controles=None, estado_teclas=None):
         super().mover(plataformas, controles, estado_teclas)
+
+        estela_viva = []
+        for imagen, ancla, vida in self._estela_ecos:
+            vida -= 1
+            if vida > 0:
+                estela_viva.append((imagen, ancla, vida))
+        self._estela_ecos = estela_viva
 
         # Postura encorvada al correr; erguido en reposo y en el aire.
         caminando = abs(self.vel_x) > 0.4 and self.en_suelo
@@ -95,26 +108,79 @@ class _ClonNegativo(PersonajeHumanoide):
             self.cabeza_retraso,
             self.agachado_animacion,
             self.rect.x,
+            self.pose_aire,
+            self.amplitud_paso,
+            self.tiempo_animacion,
         )
         sentido = self._sentido()
         try:
+            for imagen, ancla, vida in self._estela_ecos:
+                imagen.set_alpha(105 * vida // 7)
+                superficie.blit(imagen, imagen.get_rect(center=ancla))
+
             # Se echa hacia delante, con la cabeza adelantada.
             self.inclinacion_actual += sentido * self.amplitud_paso * 3.0
             self.cabeza_retraso += sentido * self.amplitud_paso * 4
             self.agachado_animacion = max(self.agachado_animacion, self._encorvado)
+            if self._trepamiento_progreso < 1.0:
+                brace = math.sin(self._fase_trepamiento)
+                self.inclinacion_actual += sentido * (6 + 2 * brace)
+                self.cabeza_retraso += sentido * 5
+                self.pose_aire = max(
+                    self.pose_aire, 0.72 + 0.12 * math.sin(self._fase_trepamiento * 2)
+                )
+                self.amplitud_paso = max(self.amplitud_paso, 0.55)
+                self.tiempo_animacion = self._fase_trepamiento
             self.rect.x += self._glitch_dx
-            super().dibujar(superficie)
+            clip_original = superficie.get_clip()
+            if self._progreso_reaparicion < 1.0:
+                alto_visible = round(
+                    self.rect.height * self._progreso_reaparicion
+                )
+                zona_visible = pygame.Rect(
+                    self.rect.centerx - 70,
+                    self.rect.bottom - alto_visible,
+                    140,
+                    max(1, alto_visible),
+                )
+                superficie.set_clip(clip_original.clip(zona_visible))
+            try:
+                super().dibujar(superficie)
+            finally:
+                superficie.set_clip(clip_original)
+            if abs(self.vel_x) > 1.5 or abs(self.vel_y) > 3.0:
+                self._contador_estela += 1
+                if self._contador_estela >= 3 and self._lienzo is not None:
+                    self._contador_estela = 0
+                    silueta = pygame.mask.from_surface(self._lienzo).to_surface(
+                        setcolor=(*self._tono(1.45), 255),
+                        unsetcolor=(0, 0, 0, 0),
+                    )
+                    self._estela_ecos.append(
+                        (silueta, (self.rect.centerx, self.rect.bottom - 60), 7)
+                    )
+                    if len(self._estela_ecos) > 4:
+                        self._estela_ecos.pop(0)
+            else:
+                self._contador_estela = 0
         finally:
             (
                 self.inclinacion_actual,
                 self.cabeza_retraso,
                 self.agachado_animacion,
                 self.rect.x,
+                self.pose_aire,
+                self.amplitud_paso,
+                self.tiempo_animacion,
             ) = guardado
 
 
 class PerseguidorSepia:
-    """Clon del jugador (en negativo y desesperado) que lo persigue."""
+    """Clon que persigue al jugador, deja ecos al moverse y reaparece al caer."""
+
+    DURACION_REAPARICION = 24
+    DURACION_AGARRE = 180
+    DURACION_TREPAMIENTO = 42
 
     # Color de respaldo: en cuanto se llama a ``sincronizar_jugador`` el
     # clon adopta el color del jugador (y lo muestra en negativo).
@@ -136,6 +202,15 @@ class PerseguidorSepia:
         self._destino_salto = None
         self._posicion_inicial = self.personaje.rect.topleft
         self._plataforma_inicial = None
+        self._reaparicion_frames = 0
+        self._capa_reaparicion = pygame.Surface((160, 180), pygame.SRCALPHA)
+        self._jugador_agarrado = None
+        self._frames_agarre = 0
+        self._frames_trepamiento = 0
+        self._desfase_inicio_x = 0
+        self._desfase_inicio_pies = 0
+        self._fase_trepamiento = 0.0
+        self.agarre_expirado = False
 
     @property
     def rect(self):
@@ -227,6 +302,50 @@ class PerseguidorSepia:
         if not self.activa:
             return
 
+        if self._jugador_agarrado is not None:
+            jugador = self._jugador_agarrado
+            clon = self.personaje
+            clon.vel_x = 0.0
+            clon.vel_y = 0
+            clon.en_suelo = True
+            if self._frames_trepamiento > 0:
+                self._frames_trepamiento -= 1
+                progreso = 1 - self._frames_trepamiento / self.DURACION_TREPAMIENTO
+                suave = progreso * progreso * (3 - 2 * progreso)
+                inicio_x = jugador.rect.centerx + self._desfase_inicio_x
+                final_x = jugador.rect.centerx - jugador.direccion * 5
+                inicio_pies = jugador.rect.bottom + self._desfase_inicio_pies
+                final_pies = jugador.rect.top + 16
+                vaiven = math.sin(self._fase_trepamiento) * 3 * (1 - suave)
+                clon.rect.centerx = round(inicio_x + (final_x - inicio_x) * suave + vaiven)
+                clon.rect.bottom = round(
+                    inicio_pies + (final_pies - inicio_pies) * suave
+                )
+                clon._trepamiento_progreso = progreso
+                self._fase_trepamiento += 0.32
+                clon._fase_trepamiento = self._fase_trepamiento
+            else:
+                clon.rect.centerx = jugador.rect.centerx - jugador.direccion * 5
+                clon.rect.bottom = jugador.rect.top + 16 + round(
+                    math.sin(self._frames_agarre * 0.22) * 2
+                )
+            self._frames_agarre -= 1
+            if self._frames_agarre <= 0:
+                self.agarre_expirado = True
+            return
+
+        if self._reaparicion_frames > 0:
+            self._reaparicion_frames -= 1
+            clon = self.personaje
+            clon._progreso_reaparicion = (
+                1 - self._reaparicion_frames / self.DURACION_REAPARICION
+            )
+            teclas_vacias = _EstadoTeclas(set())
+            clon.mover(plataformas, self.CONTROLES, estado_teclas=teclas_vacias)
+            if self._reaparicion_frames == 0:
+                clon._progreso_reaparicion = 1.0
+            return
+
         clon = self.personaje
         if (
             clon.en_suelo
@@ -308,18 +427,63 @@ class PerseguidorSepia:
             estado_teclas=_EstadoTeclas(teclas_pulsadas),
         )
         if clon.rect.top >= HEIGHT - 40:
+            clon._emitir_particulas(
+                7, clon.rect.centerx, clon.rect.bottom - 8, dispersion=10
+            )
             clon.rect.topleft = self._posicion_inicial
             clon.reiniciar_movimiento()
             clon.plataforma_actual = self._plataforma_inicial
             clon.en_suelo = True
+            clon._emitir_particulas(
+                12, clon.rect.centerx, clon.rect.bottom - 20, dispersion=18
+            )
             self._manteniendo_salto = False
             self._destino_salto = None
+            self._reaparicion_frames = self.DURACION_REAPARICION
+            clon._progreso_reaparicion = 0.0
 
     def nivel_alerta(self):
-        return 0.0
+        return 1.0 if self._jugador_agarrado is not None else 0.0
+
+    def agarrar_jugador(self, jugador):
+        if (
+            not self.activa
+            or self._reaparicion_frames > 0
+            or jugador.dash_restante > 0
+        ):
+            return False
+        if self._jugador_agarrado is jugador:
+            return True
+        if self._jugador_agarrado is not None:
+            return False
+
+        self._jugador_agarrado = jugador
+        self._frames_agarre = self.DURACION_AGARRE
+        self._frames_trepamiento = self.DURACION_TREPAMIENTO
+        self._desfase_inicio_x = self.rect.centerx - jugador.rect.centerx
+        self._desfase_inicio_pies = self.rect.bottom - jugador.rect.bottom
+        self._fase_trepamiento = 0.0
+        self.agarre_expirado = False
+        self.personaje._trepamiento_progreso = 0.0
+        self.personaje._fase_trepamiento = 0.0
+        jugador.pesado = True
+        self.personaje.vel_x = 0.0
+        self.personaje.vel_y = 0
+        return True
+
+    def soltar_jugador(self):
+        if self._jugador_agarrado is not None:
+            self._jugador_agarrado.pesado = False
+        self._jugador_agarrado = None
+        self._frames_agarre = 0
+        self._frames_trepamiento = 0
+        self.agarre_expirado = False
+        self.personaje._trepamiento_progreso = 1.0
 
     def derrotar(self, direccion):
         if not self.activa:
+            return False
+        if self._jugador_agarrado is not None:
             return False
         self.activa = False
         return True
@@ -327,6 +491,93 @@ class PerseguidorSepia:
     def dibujar(self, superficie, tiempo):
         if self.activa:
             self.personaje.dibujar(superficie)
+            if self._reaparicion_frames > 0:
+                progreso = self.personaje._progreso_reaparicion
+                capa = self._capa_reaparicion
+                capa.fill((0, 0, 0, 0))
+                centro = (80, 90)
+                pulso = 0.5 + 0.5 * math.sin(tiempo * 22)
+                intensidad = 0.55 + 0.45 * math.sin(math.pi * progreso)
+                alfa = int(220 * intensidad * (1 - 0.3 * progreso))
+                fase = tiempo * 5 + progreso * math.tau
+
+                def color_espectral(desfase):
+                    rgb = colorsys.hsv_to_rgb(
+                        (tiempo * 0.3 + progreso * 0.7 + desfase) % 1,
+                        0.88,
+                        1.0,
+                    )
+                    return tuple(round(componente * 255) for componente in rgb)
+
+                radio_base = 43 + round(8 * pulso)
+                for indice in range(3):
+                    color = color_espectral(indice / 3)
+                    radio = radio_base + indice * 11
+                    cuadro = pygame.Rect(
+                        centro[0] - radio,
+                        centro[1] - radio,
+                        radio * 2,
+                        radio * 2,
+                    )
+                    inicio = fase * (1.2 if indice % 2 == 0 else -0.9)
+                    pygame.draw.arc(
+                        capa,
+                        (*color, alfa),
+                        cuadro,
+                        inicio,
+                        inicio + math.pi * (1.0 + 0.25 * pulso),
+                        2 + indice % 2,
+                    )
+
+                for brazo in range(3):
+                    puntos = []
+                    for paso in range(34):
+                        fraccion = paso / 33
+                        angulo = fase * (-1 if brazo % 2 else 1)
+                        angulo += fraccion * math.tau * 1.4 + brazo * math.tau / 3
+                        radio = 5 + fraccion * (49 + 5 * pulso)
+                        puntos.append(
+                            (
+                                round(centro[0] + math.cos(angulo) * radio),
+                                round(centro[1] + math.sin(angulo) * radio),
+                            )
+                        )
+                    pygame.draw.lines(
+                        capa,
+                        (*color_espectral(brazo / 3 + 0.16), alfa),
+                        False,
+                        puntos,
+                        2,
+                    )
+
+                for orbita in range(8):
+                    angulo = fase * (1.5 if orbita % 2 else -1.2)
+                    angulo += orbita * math.tau / 8
+                    radio = 57 + 6 * math.sin(fase + orbita)
+                    punto = (
+                        round(centro[0] + math.cos(angulo) * radio),
+                        round(centro[1] + math.sin(angulo) * radio),
+                    )
+                    color = color_espectral(orbita / 8)
+                    tamano = 2 + orbita % 3
+                    pygame.draw.rect(
+                        capa,
+                        (*color, alfa),
+                        (punto[0] - tamano, punto[1] - tamano, tamano * 2, tamano * 2),
+                    )
+
+                if 0 < progreso < 1:
+                    linea_y = centro[1] + 35 - round(
+                        self.personaje.rect.height * progreso
+                    )
+                    color = color_espectral(progreso * 0.5)
+                    pygame.draw.line(
+                        capa, (*color, alfa), (26, linea_y), (134, linea_y), 2
+                    )
+                superficie.blit(
+                    capa,
+                    (self.rect.centerx - centro[0], self.rect.centery - centro[1]),
+                )
 
 
 def crear_perseguidor(plataforma, punto_a_perseguir):

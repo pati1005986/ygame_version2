@@ -1,4 +1,3 @@
-
 """Animación de entrada del modo infinito (todo en un solo archivo).
 
 - A color (la paleta del pasillo cambia de tono sin parar).
@@ -7,6 +6,11 @@
   loco; el pasillo se aleja detrás de él.
 - Efecto grunge de película sucia (``EfectoGrunge``) sobre todo el fotograma.
 - Secuencia: apertura en iris, título que rebota, zoom y barras de cine.
+- Empalme con el fondo del modo infinito: detrás de la intro corre el
+  MISMO fondo que usa el juego (``fondo.dibujar_fondo_infinito_gen``), el
+  pasillo se desvanece con la distancia hasta abrirse a ese fondo, y al
+  final pasillo, personaje, viñeta y grunge se funden con él, de modo que
+  el último fotograma de la intro es el primero del juego (sin corte).
 
 La clase ``IntroInfinito`` dibuja en una superficie existente y no toma
 control de la ventana ni del bucle principal. Este archivo reúne lo que
@@ -21,6 +25,13 @@ import random
 from functools import lru_cache
 
 import pygame
+
+# Fondo real del modo infinito. Si no se puede importar (p. ej. al previsualizar
+# este archivo solo, sin ``plataformas``), se usa un degradado del mismo color.
+try:
+    import fondo as _fondo
+except Exception:  # noqa: BLE001 - cualquier fallo de import cae al respaldo
+    _fondo = None
 
 
 
@@ -605,7 +616,13 @@ CUADROS_HERVIDO = 5             # las líneas "hierven" a 12 Hz; el movimiento v
 
 COLOR_PERSONAJE = (238, 108, 60)
 NIEBLA = (255, 246, 214)
+NIEBLA_PASILLO = (226, 160, 255)   # tinte lila de la lejanía (casa con el fondo)
 CONTORNO = (22, 10, 36)
+
+# Valores del fondo del modo infinito (se leen de fondo.py para no desincronizarse).
+HUE_FONDO = getattr(_fondo, "_HUE_FONDO_INFINITO", 0.83)
+VEL_FONDO = getattr(_fondo, "_VELOCIDAD_FONDO_INFINITO", 2.4)
+NIVEL_FONDO = getattr(_fondo, "_NIVEL_FONDO_INFINITO", 5)
 
 # Línea de tiempo de la intro (segundos)
 T_ARRANQUE = 0.5      # el personaje empieza a correr
@@ -615,6 +632,8 @@ T_SALIDA = 0.8        # duración de la salida del título
 T_ZOOM = 4.5          # fin del zoom inicial
 T_BARRAS = (3.8, 4.8)  # las barras de cine se retiran
 ALTO_BARRA = 58
+T_DISOLVER = (3.6, 4.8)  # pasillo, personaje y viñeta se funden con el fondo
+T_LIMPIEZA = (3.8, 4.9)  # el grunge se retira (el fondo del juego no lo lleva)
 
 
 # ----------------------------------------------------------------------
@@ -631,6 +650,20 @@ def mezclar(c1, c2, f):
         int(c1[1] + (c2[1] - c1[1]) * f),
         int(c1[2] + (c2[2] - c1[2]) * f),
     )
+
+
+def pixelar_superficie(superficie, factor=2):
+    """Baja resolución para reforzar el look de pixel art y la vuelve a escalar."""
+    if factor <= 1:
+        return superficie
+    ancho, alto = superficie.get_size()
+    if ancho <= 1 or alto <= 1:
+        return superficie
+    mini_ancho = max(1, ancho // factor)
+    mini_alto = max(1, alto // factor)
+    mini = pygame.Surface((mini_ancho, mini_alto), pygame.SRCALPHA)
+    pygame.transform.scale(superficie, (mini_ancho, mini_alto), mini)
+    return pygame.transform.scale(mini, (ancho, alto))
 
 
 def suave(x):
@@ -654,9 +687,29 @@ def _jitter(a, b, semilla):
     return dx, dy
 
 
+def hue_del_fondo(t):
+    """Matiz base del fondo del modo infinito en el instante ``t`` (la misma
+    fórmula que usa ``fondo.dibujar_fondo_segmentado_gen``)."""
+    tt = t * VEL_FONDO
+    p = max(0.0, min(1.0, (NIVEL_FONDO - 1) / 9.0))
+    return (HUE_FONDO + math.sin(tt * 0.35) * (0.05 + 0.07 * p) + p * tt * 0.02) % 1.0
+
+
+def _fondo_respaldo(s, t):
+    """Degradado vertical con los colores del cielo del fondo (solo si falta fondo.py)."""
+    h = hue_del_fondo(t)
+    arriba, abajo = hsv(h - 0.04, 0.40, 0.97), hsv(h + 0.05, 0.30, 0.80)
+    franjas = 48
+    alto_franja = math.ceil(ALTO / franjas) + 1
+    for i in range(franjas):
+        f = i / (franjas - 1)
+        pygame.draw.rect(s, mezclar(arriba, abajo, f), (0, int(f * ALTO), ANCHO, alto_franja))
+
+
 def paleta(t):
-    """Colores del pasillo; el tono gira solo, así que nunca se repite igual."""
-    h = (t * 0.06) % 1.0
+    """Colores del pasillo, anclados al matiz del fondo del modo infinito: el
+    tono oscila con él, así que pasillo y fondo siempre son de la misma familia."""
+    h = hue_del_fondo(t)
     return {
         "pared": (hsv(h, 0.55, 0.98), hsv(h, 0.62, 0.64)),
         "techo": (hsv(h + 0.12, 0.50, 0.92), hsv(h + 0.12, 0.58, 0.62)),
@@ -699,33 +752,34 @@ class Pasillo:
                 lados.append(linea)
             puntos.append(lados)
 
-        lejos = puntos[N_SEGMENTOS]
-        pygame.draw.polygon(
-            s, (255, 252, 230),
-            [lejos[0][0], lejos[1][0], lejos[1][FILAS], lejos[0][FILAS]],
-        )
-
+        # ``s`` es una superficie con alfa por píxel. Ya no hay muro de fondo ni
+        # niebla crema: con la distancia el pasillo se vuelve transparente y se
+        # abre al fondo psicodélico del modo infinito. (pygame.draw escribe el
+        # RGBA tal cual, sin mezclar, y se pinta de lejos a cerca.)
         for k in range(N_SEGMENTOS - 1, -1, -1):
             gk = k + self.cuenta
-            niebla = (k / N_SEGMENTOS) ** 1.5 * 0.75
+            lejania = (k / N_SEGMENTOS) ** 1.15
+            niebla = lejania * 0.45
+            alfa = int(255 * (1.0 - 0.97 * lejania))
+            tinta = (*CONTORNO, alfa)
             a, b = puntos[k], puntos[k + 1]
 
-            c = mezclar(pal["techo"][gk % 2], NIEBLA, niebla)
+            c = (*mezclar(pal["techo"][gk % 2], NIEBLA_PASILLO, niebla), alfa)
             quad = [a[0][0], b[0][0], b[1][0], a[1][0]]
             pygame.draw.polygon(s, c, quad)
-            pygame.draw.polygon(s, CONTORNO, quad, 2)
+            pygame.draw.polygon(s, tinta, quad, 2)
 
-            c = mezclar(pal["suelo"][gk % 2], NIEBLA, niebla)
+            c = (*mezclar(pal["suelo"][gk % 2], NIEBLA_PASILLO, niebla), alfa)
             quad = [a[0][FILAS], b[0][FILAS], b[1][FILAS], a[1][FILAS]]
             pygame.draw.polygon(s, c, quad)
-            pygame.draw.polygon(s, CONTORNO, quad, 2)
+            pygame.draw.polygon(s, tinta, quad, 2)
 
             for lado in (0, 1):
                 for r in range(FILAS):
-                    c = mezclar(pal["pared"][(gk + r) % 2], NIEBLA, niebla)
+                    c = (*mezclar(pal["pared"][(gk + r) % 2], NIEBLA_PASILLO, niebla), alfa)
                     quad = [a[lado][r], b[lado][r], b[lado][r + 1], a[lado][r + 1]]
                     pygame.draw.polygon(s, c, quad)
-                    pygame.draw.polygon(s, CONTORNO, quad, 2)
+                    pygame.draw.polygon(s, tinta, quad, 2)
 
 
 def lineas_de_velocidad(s, cx, cy, intensidad):
@@ -800,7 +854,7 @@ class IntroInfinito:
     DURACION = T_BARRAS[1] + 0.2
 
     def __init__(self, color=COLOR_PERSONAJE, volumen_efectos=0.8, titulo="INFINITE",
-                 grunge=True, intensidad_grunge=1.0):
+                 grunge=False, intensidad_grunge=0.0, tiempo_fondo=0.0):
         self.color = color
         self.volumen_efectos = volumen_efectos  # se conserva por compatibilidad
         self.titulo = titulo
@@ -809,7 +863,19 @@ class IntroInfinito:
             (self.MINI_W, self.MINI_H), pygame.SRCALPHA
         )
         self.vineta = crear_vineta()
-        self.lienzo = pygame.Surface((ANCHO, ALTO))
+        # Primer plano (pasillo + personaje) con alfa por píxel, para que se funda
+        # con el fondo; ``buffer`` es el fotograma final y ``_sucio`` sirve para
+        # retirar el grunge poco a poco.
+        self.lienzo = pygame.Surface((ANCHO, ALTO), pygame.SRCALPHA)
+        self.buffer = pygame.Surface((ANCHO, ALTO))
+        self._sucio = pygame.Surface((ANCHO, ALTO))
+        # Reloj del fondo: nunca se reinicia (ni con R), así el fondo no se congela
+        # ni salta. Si el juego tiene su propio reloj, se puede pasar aquí.
+        self._t_fondo = float(tiempo_fondo)
+        self.fondo_visible = pygame.Surface((ANCHO, ALTO))
+        self.fondo_trasero = pygame.Surface((ANCHO, ALTO))
+        self._gen_fondo = None
+        self._precalentar_fondo()
         self.fuente_titulo = pygame.font.Font(None, 64)
         self.fuente_titulo.set_bold(True)
         while self.fuente_titulo.size(self.titulo)[0] > ANCHO - 80:
@@ -825,6 +891,39 @@ class IntroInfinito:
     def terminada(self):
         return self.tiempo >= self.DURACION
 
+    @property
+    def tiempo_fondo(self):
+        """Reloj con el que se dibujó el fondo por última vez. El juego puede
+        continuar su propio fondo desde este valor para que el empalme sea exacto."""
+        return self._t_fondo
+
+    def _precalentar_fondo(self):
+        """Dibuja un primer fondo completo ahora (en el constructor) para que la
+        construcción de las caras no cause un tirón durante la animación. Las
+        caras que caen quedan en el estado compartido de fondo.py, así que el
+        juego las sigue desde donde las dejó la intro."""
+        if _fondo is None:
+            _fondo_respaldo(self.fondo_visible, self._t_fondo)
+        else:
+            _fondo.dibujar_fondo_infinito(self.fondo_visible, self._t_fondo, ANCHO, ALTO)
+        self.fondo_trasero.blit(self.fondo_visible, (0, 0))
+
+    def _avanzar_fondo(self):
+        """Avanza UNA etapa del fondo por fotograma en el buffer trasero y lo
+        intercambia al terminar (igual que hace el juego)."""
+        if _fondo is None:
+            _fondo_respaldo(self.fondo_visible, self._t_fondo)
+            return
+        if self._gen_fondo is None:
+            self._gen_fondo = _fondo.dibujar_fondo_infinito_gen(
+                self.fondo_trasero, self._t_fondo, ANCHO, ALTO
+            )
+        try:
+            next(self._gen_fondo)
+        except StopIteration:
+            self._gen_fondo = None
+            self.fondo_visible, self.fondo_trasero = self.fondo_trasero, self.fondo_visible
+
     def reiniciar(self):
         self.tiempo = 0.0
         self.cuadro = 0
@@ -836,6 +935,7 @@ class IntroInfinito:
         if self.terminada:
             return
         self.tiempo += max(0.0, dt)
+        self._t_fondo += max(0.0, dt)
         self.jugador.corre = self.tiempo >= T_ARRANQUE
         self.jugador.actualizar(dt)
         self.pasillo.avanzar(SENTIDO_PASILLO * 0.085 * self.jugador.ritmo)
@@ -850,8 +950,14 @@ class IntroInfinito:
         cx = ANCHO / 2 + math.sin(t * 5.3) * 14 * ritmo
         cy = ALTO * 0.40 - jugador.bob_actual * 2.5 + math.sin(t * 9.0) * 4 * ritmo
 
-        self.lienzo.fill(NIEBLA)
-        self.pasillo.dibujar(self.lienzo, cx, cy, self.semilla, paleta(t))
+        # Fondo real del modo infinito (una etapa por fotograma).
+        self._avanzar_fondo()
+        # Presencia del primer plano: 1 durante la intro y 0 al final, cuando solo
+        # queda el fondo (el mismo que verá el jugador).
+        presencia = 1.0 - suave((t - T_DISOLVER[0]) / (T_DISOLVER[1] - T_DISOLVER[0]))
+
+        self.lienzo.fill((0, 0, 0, 0))
+        self.pasillo.dibujar(self.lienzo, cx, cy, self.semilla, paleta(self._t_fondo))
         lineas_de_velocidad(self.lienzo, cx, cy, ritmo)
 
         self.superficie_personaje.fill((0, 0, 0, 0))
@@ -874,9 +980,13 @@ class IntroInfinito:
         zoom += 0.025 * pulso * ritmo
         angulo = math.sin(t * 4.1) * 2.4 * ritmo
         girado = pygame.transform.rotozoom(self.lienzo, angulo, zoom)
-        cuadro = pygame.Surface((ANCHO, ALTO))
-        cuadro.blit(girado, girado.get_rect(center=(ANCHO // 2, ALTO // 2)))
-        cuadro.blit(self.vineta, (0, 0))
+        cuadro = self.buffer
+        cuadro.blit(self.fondo_visible, (0, 0))
+        if presencia > 0.0:
+            girado.set_alpha(int(255 * presencia))
+            cuadro.blit(girado, girado.get_rect(center=(ANCHO // 2, ALTO // 2)))
+            self.vineta.set_alpha(int(255 * presencia))
+            cuadro.blit(self.vineta, (0, 0))
 
         dt_titulo = t - T_TITULO[0]
         if 0 <= dt_titulo < T_TITULO[1] - T_TITULO[0]:
@@ -898,8 +1008,21 @@ class IntroInfinito:
 
         barras(cuadro, t)
         iris(cuadro, t)
-        if self.grunge is not None:
-            self.grunge.aplicar(cuadro, t)
+        # El grunge se desactiva por defecto para dejar una intro más limpia y
+        # con un look más de pixel art que de película sucia.
+        limpieza = suave((t - T_LIMPIEZA[0]) / (T_LIMPIEZA[1] - T_LIMPIEZA[0]))
+        if self.grunge is not None and limpieza < 1.0:
+            if limpieza <= 0.0:
+                self.grunge.aplicar(cuadro, t)
+            else:
+                sucio = self._sucio
+                sucio.set_alpha(255)
+                sucio.blit(cuadro, (0, 0))
+                self.grunge.aplicar(sucio, t)
+                sucio.set_alpha(int(255 * (1.0 - limpieza)))
+                cuadro.blit(sucio, (0, 0))
+        if not self.grunge:
+            cuadro = pixelar_superficie(cuadro, factor=2)
         if superficie.get_size() == (ANCHO, ALTO):
             superficie.blit(cuadro, (0, 0))
         else:

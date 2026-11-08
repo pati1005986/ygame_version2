@@ -5,6 +5,10 @@ from functools import lru_cache
 
 import pygame
 
+# Referencia directa: se llama decenas de veces por fotograma y así se
+# evita resolver ``pygame.draw.rect`` (dos accesos a atributo) en cada una.
+_dibujar_rect = pygame.draw.rect
+
 
 # ----------------------------------------------------------------------
 # Cachés de módulo (evitan recalcular o reasignar lo mismo cada frame)
@@ -123,6 +127,23 @@ class PersonajeHumanoide:
     DASH_VELOCIDAD = 15.0
     DASH_ENFRIAMIENTO = 24
     RASTRO_FRAMES = 8
+
+    # Lienzo local donde se dibuja el cuerpo. Ajustado al contenido real
+    # (el personaje mide ~40x70 y con pelo/chispas cabe en ~100 px de alto):
+    # antes era 140x180, y ``scale``/``rotate``/``blit`` trabajan sobre todos
+    # sus píxeles, vacíos incluidos. El pivote de giro (centro del lienzo) se
+    # mantiene a 60 px sobre los pies, igual que antes: PIE_Y = ALTO / 2 + 60.
+    # IMPORTANTE: ANCHO / 2 y PIE_Y deben seguir siendo ≡ 6 (mod 8), como en
+    # el lienzo original (70, 150). La grilla de píxeles usa ``round``, que
+    # redondea los empates al par más cercano; con otra paridad algunos
+    # bloques saldrían desplazados una celda respecto al diseño original.
+    LIENZO_ANCHO = 108
+    LIENZO_ALTO = 148
+    LIENZO_PIE_Y = 134
+    # El squash & stretch se cuantiza a 1 % de escala: cada tamaño de destino
+    # se repite entre fotogramas y se reutiliza su buffer (ver ``dibujar``).
+    MAX_BUFFERS_ESCALA = 48
+
     FACTOR_PESO_MOVIMIENTO = 0.52
     FACTOR_PESO_SALTO = 0.72
     DURACION_POTENCIADOR_INFINITO = 480
@@ -208,7 +229,6 @@ class PersonajeHumanoide:
         self.despegue_ts = None
         self._compresion_aterrizaje = 0.76
         self._contador_particulas_caida = 0
-        self._halo_personaje = None
 
         # --- Expresión según el nivel (ver actualizar_nivel) ---
         self._euforico = False
@@ -271,6 +291,10 @@ class PersonajeHumanoide:
         # Tamaño de "pixel" para el look pixel art (bloques, no formas suaves)
         self.pixel = 4
         self._lienzo = None
+        # Buffers de destino para ``transform.scale``, por tamaño de salida.
+        self._buffers_escala = {}
+        # Caché de la cara dibujada (ver ``_dibujar_cara``).
+        self._cache_cara = {}
 
     # ------------------------------------------------------------------
     # Sonido
@@ -377,17 +401,44 @@ class PersonajeHumanoide:
     def _bloque(self, superficie, x, y, ancho, alto, color):
         """Bloque alineado a la grilla (sin bordes redondeados ni AA)."""
         p = self.pixel
-        rx = round(x / p) * p
-        ry = round(y / p) * p
-        ranch = max(p, round(ancho / p) * p)
-        ralto = max(p, round(alto / p) * p)
-        pygame.draw.rect(superficie, color, (rx, ry, ranch, ralto))
+        _dibujar_rect(
+            superficie,
+            color,
+            (
+                round(x / p) * p,
+                round(y / p) * p,
+                max(p, round(ancho / p) * p),
+                max(p, round(alto / p) * p),
+            ),
+        )
 
     def _bloque_contorneado(self, superficie, x, y, ancho, alto, color, color_contorno):
-        """Como ``_bloque`` pero con borde oscuro grueso ("pocket cartoon")."""
-        g = self.pixel
-        self._bloque(superficie, x - g // 2, y - g // 2, ancho + g, alto + g, color_contorno)
-        self._bloque(superficie, x, y, ancho, alto, color)
+        """Como ``_bloque`` pero con borde oscuro grueso ("pocket cartoon").
+
+        Hace el mismo redondeo a la grilla que ``_bloque`` pero en línea:
+        evita dos llamadas a método extra por cada pieza del cuerpo."""
+        p = self.pixel
+        g = p // 2
+        _dibujar_rect(
+            superficie,
+            color_contorno,
+            (
+                round((x - g) / p) * p,
+                round((y - g) / p) * p,
+                max(p, round((ancho + p) / p) * p),
+                max(p, round((alto + p) / p) * p),
+            ),
+        )
+        _dibujar_rect(
+            superficie,
+            color,
+            (
+                round(x / p) * p,
+                round(y / p) * p,
+                max(p, round(ancho / p) * p),
+                max(p, round(alto / p) * p),
+            ),
+        )
 
     @staticmethod
     def _lerp(actual, objetivo, factor):
@@ -413,41 +464,55 @@ class PersonajeHumanoide:
     # ------------------------------------------------------------------
     # Partículas
     # ------------------------------------------------------------------
+    # Cada partícula es una lista [x, y, vx, vy, vida, tam]: más ligera y
+    # rápida de crear/recorrer que un dict. La vida máxima es común.
+    VIDA_PARTICULA = 18
+    MAX_PARTICULAS = 120  # tope: el doble salto y el derrape emiten muchas
+
     def _emitir_particulas(self, cantidad, x, y, dispersion=10, sesgo_x=0.0):
+        particulas = self.particulas
+        cantidad = min(cantidad, self.MAX_PARTICULAS - len(particulas))
         for _ in range(cantidad):
             angulo = random.uniform(math.pi * 0.15, math.pi * 0.85)
             velocidad = random.uniform(1.2, 3.0)
-            self.particulas.append(
-                {
-                    "x": x + random.uniform(-dispersion, dispersion),
-                    "y": y,
-                    "vx": math.cos(angulo) * velocidad + sesgo_x,
-                    "vy": -math.sin(angulo) * velocidad,
-                    "vida": 18,
-                    "vida_max": 18,
-                    "tam": random.uniform(2.5, 4.5),
-                }
+            particulas.append(
+                [
+                    x + random.uniform(-dispersion, dispersion),
+                    y,
+                    math.cos(angulo) * velocidad + sesgo_x,
+                    -math.sin(angulo) * velocidad,
+                    self.VIDA_PARTICULA,
+                    random.uniform(2.5, 4.5),
+                ]
             )
 
     def _actualizar_particulas(self):
-        vivas = []
-        for particula in self.particulas:
-            particula["x"] += particula["vx"]
-            particula["y"] += particula["vy"]
-            particula["vy"] += 0.15
-            particula["vida"] -= 1
-            if particula["vida"] > 0:
-                vivas.append(particula)
-        self.particulas = vivas
+        # Se compacta la lista en el sitio (sin crear una nueva cada frame).
+        particulas = self.particulas
+        vivas = 0
+        for particula in particulas:
+            particula[0] += particula[2]
+            particula[1] += particula[3]
+            particula[3] += 0.15
+            particula[4] -= 1
+            if particula[4] > 0:
+                particulas[vivas] = particula
+                vivas += 1
+        del particulas[vivas:]
 
     def _dibujar_particulas(self, superficie, color_claro, color_oscuro):
-        for particula in self.particulas:
-            factor = particula["vida"] / particula["vida_max"]
-            tam = max(1, int(particula["tam"] * factor))
-            rect = pygame.Rect(0, 0, tam, tam)
-            rect.center = (int(particula["x"]), int(particula["y"]))
+        vida_max = self.VIDA_PARTICULA
+        for x, y, _vx, _vy, vida, tam_base in self.particulas:
+            factor = vida / vida_max
+            tam = max(1, int(tam_base * factor))
+            # Equivale a ``Rect.center = (x, y)``: esquina = centro - tam // 2.
+            mitad = tam // 2
             # Al nacer es más claro y se oscurece al apagarse.
-            pygame.draw.rect(superficie, color_claro if factor > 0.5 else color_oscuro, rect)
+            _dibujar_rect(
+                superficie,
+                color_claro if factor > 0.5 else color_oscuro,
+                (int(x) - mitad, int(y) - mitad, tam, tam),
+            )
 
     def _superficie_bajo_los_pies(self):
         """Y de la plataforma más alta que hay justo debajo del personaje
@@ -1231,10 +1296,10 @@ class PersonajeHumanoide:
         self._dibujar_particulas(superficie, self._tono(1.0), oscuro)
 
         # --- Lienzo local (reutilizado entre fotogramas) ---
-        ANCHO_LIENZO = 140
-        ALTO_LIENZO = 180
+        ANCHO_LIENZO = self.LIENZO_ANCHO
+        ALTO_LIENZO = self.LIENZO_ALTO
         centro_x = ANCHO_LIENZO // 2
-        pie_y = 150
+        pie_y = self.LIENZO_PIE_Y
         if self._lienzo is None:
             self._lienzo = pygame.Surface((ANCHO_LIENZO, ALTO_LIENZO), pygame.SRCALPHA)
         lienzo = self._lienzo
@@ -1343,11 +1408,14 @@ class PersonajeHumanoide:
         if self._euforico:
             self._dibujar_chispas(lienzo, cabeza_x, cabeza_y, lado_cabeza, contorno)
 
-        # Ancla sin deformar (halo): el centro del lienzo original.
-        ancla_halo = (centro_x_mundo, pie_y_mundo - (150 - ALTO_LIENZO // 2))
-
         # --- Squash & stretch con volumen constante, anclado a los pies ---
-        escala_alto = max(0.08, min(1.3, estirar))
+        # Las escalas se cuantizan a 1 % (n_* son enteros: 100 = sin deformar).
+        # Con resolución tan fina la animación no cambia, pero cuando el
+        # personaje está en su forma normal (correr, quieto sin respirar)
+        # se salta por completo el escalado, y los tamaños de destino se
+        # repiten, así que se reutiliza su buffer en vez de reservar otro.
+        n_alto = round(max(0.08, min(1.3, estirar)) * 100)
+        escala_alto = n_alto / 100
         if self.muriendo:
             escala_ancho = 1.0
         else:
@@ -1357,15 +1425,22 @@ class PersonajeHumanoide:
             )
         if self._giro_frames > 0 and not self.muriendo:
             escala_ancho *= 1.0 - (1.0 - self.GIRO_ANCHO_MIN) * self._giro_frames / self.FRAMES_GIRO
-        if abs(escala_alto - 1.0) > 0.01 or abs(escala_ancho - 1.0) > 0.01:
-            # ``scale`` (no ``smoothscale``) para no difuminar el pixel art.
-            lienzo = pygame.transform.scale(
-                lienzo,
-                (
-                    max(1, round(ANCHO_LIENZO * escala_ancho)),
-                    max(1, round(ALTO_LIENZO * escala_alto)),
-                ),
+        n_ancho = round(escala_ancho * 100)
+        if abs(n_alto - 100) > 1 or abs(n_ancho - 100) > 1:
+            tam_destino = (
+                max(1, round(ANCHO_LIENZO * n_ancho / 100)),
+                max(1, round(ALTO_LIENZO * n_alto / 100)),
             )
+            destino = self._buffers_escala.get(tam_destino)
+            if destino is None:
+                if len(self._buffers_escala) >= self.MAX_BUFFERS_ESCALA:
+                    self._buffers_escala.clear()
+                destino = pygame.Surface(tam_destino, pygame.SRCALPHA)
+                self._buffers_escala[tam_destino] = destino
+            # ``scale`` (no ``smoothscale``) para no difuminar el pixel art.
+            # El buffer se sobrescribe entero en cada llamada y solo se usa
+            # dentro de este ``dibujar`` (rotate/mask crean sus propias copias).
+            lienzo = pygame.transform.scale(lienzo, tam_destino, destino)
         alto_deformado = lienzo.get_height()
 
         # --- Giro del doble salto ---
@@ -1374,11 +1449,11 @@ class PersonajeHumanoide:
             lienzo = pygame.transform.rotate(lienzo, angulo)
 
         # Centro del lienzo ya deformado (la rotación no lo mueve), de modo
-        # que los pies -a 150 px del borde superior del lienzo original,
-        # 150 * escala_alto tras deformarlo- queden siempre sobre el suelo.
+        # que los pies -a ``pie_y`` px del borde superior del lienzo original,
+        # ``pie_y * escala_alto`` tras deformarlo- queden siempre sobre el suelo.
         ancla_mundo = (
             centro_x_mundo,
-            pie_y_mundo - 150 * (alto_deformado / ALTO_LIENZO) + alto_deformado / 2,
+            pie_y_mundo - pie_y * (alto_deformado / ALTO_LIENZO) + alto_deformado / 2,
         )
 
         # --- Rastro del dash: siluetas que se desvanecen detrás ---
@@ -1401,24 +1476,6 @@ class PersonajeHumanoide:
         for silueta, ancla, vida in self.rastro:
             silueta.set_alpha(int(120 * vida / self.RASTRO_FRAMES))
             superficie.blit(silueta, silueta.get_rect(center=ancla))
-
-        if self._halo_personaje is None:
-            self._halo_personaje = pygame.Surface((112, 142), pygame.SRCALPHA)
-            pygame.draw.ellipse(
-                self._halo_personaje, (*claro, 15), (6, 5, 100, 132), 12
-            )
-            pygame.draw.ellipse(
-                self._halo_personaje, (*claro, 25), (15, 14, 82, 114), 7
-            )
-            pygame.draw.ellipse(
-                self._halo_personaje, (*brillo, 28), (24, 24, 64, 96), 4
-            )
-        pulso_halo = 0.78 + 0.22 * math.sin(self.tiempo_animacion * 1.5)
-        self._halo_personaje.set_alpha(int(190 * pulso_halo))
-        superficie.blit(
-            self._halo_personaje,
-            self._halo_personaje.get_rect(center=ancla_halo),
-        )
 
         if self.desesperado or self._euforico:
             # Temblor leve: al límite de sus fuerzas (o de pura energía).
@@ -1488,8 +1545,6 @@ class PersonajeHumanoide:
         vez en cuando miran hacia atrás."""
         p = self.pixel
         en_aire = not self.en_suelo
-        separacion_ojo = lado_cabeza * 0.34
-        ojo_y = cabeza_y + lado_cabeza * 0.40
         tam_ojo = p * 3 if en_aire else p * 2
 
         # Mirada: -1 izquierda / 0 centro / 1 derecha (y -1 arriba / 1 abajo)
@@ -1512,7 +1567,7 @@ class PersonajeHumanoide:
         elif self.paranoico:
             # Ojos desorbitados con la mirada temblando de lado a lado.
             tam_ojo = p * 3
-            ciclo = (pygame.time.get_ticks() // 90) % 4
+            ciclo = (ticks // 90) % 4
             mirada = (-1, 0, 1, 0)[ciclo]
             mirada_y = 0
 
@@ -1520,7 +1575,71 @@ class PersonajeHumanoide:
         pupila_dx = round((mirada + 1) / 2 * huecos) * p
         pupila_dy = round((mirada_y + 1) / 2 * huecos) * p
 
-        if self.parpadeando and not euf and not en_aire and not self.paranoico and not self.desesperado and not self.cansado:
+        parpadeo = (
+            self.parpadeando and not euf and not en_aire
+            and not self.paranoico and not self.desesperado and not self.cansado
+        )
+
+        # Ojos y boca son ~15 bloques: se pintan una vez en una superficie
+        # pequeña y se reutilizan mientras no cambie nada de la expresión.
+        # La grilla redondea según la posición absoluta (y el redondeo de
+        # Python es "al par más cercano"), así que la cara se pinta con el
+        # mismo resto módulo 2 * pixel que tendrá en el lienzo: el resultado
+        # es idéntico al de dibujarla directamente.
+        centro_x = int(centro_x)
+        cabeza_y = int(cabeza_y)
+        resto_x = centro_x % (2 * p)
+        resto_y = cabeza_y % (2 * p)
+        # Solo en euforia la expresión depende del reloj: las pupilas ciclan
+        # cada 65 ms (3 estados) y las cejas y la boca cada 110 ms (2 estados).
+        fase = ((ticks // 65) % 3, (ticks // 110) % 2) if euf else 0
+        clave = (
+            resto_x, resto_y, lado_cabeza, tam_ojo, pupila_dx, pupila_dy,
+            parpadeo, en_aire, euf, self.desesperado, self.cansado,
+            self.paranoico, self.dash_restante > 0, fase, color_trazo, color_ojo,
+        )
+        origen_x = 32 + resto_x
+        origen_y = 16 + resto_y
+        cara = self._cache_cara.get(clave)
+        if cara is None:
+            if len(self._cache_cara) >= 96:
+                self._cache_cara.clear()
+            cara = pygame.Surface((72, 64), pygame.SRCALPHA)
+            self._pintar_cara(
+                cara, origen_x, origen_y, lado_cabeza, color_trazo, color_ojo,
+                tam_ojo, pupila_dx, pupila_dy, parpadeo, en_aire, ticks,
+            )
+            self._cache_cara[clave] = cara
+        superficie.blit(cara, (centro_x - origen_x, cabeza_y - origen_y))
+
+        if self.desesperado:
+            # Gota de sudor cayendo por la sien (ciclo de ~0.9 s). Va aparte
+            # de la caché porque se mueve a cada cuadro.
+            lado_sien = 1 if self.direccion >= 0 else -1
+            ciclo_sudor = ticks % 900
+            if ciclo_sudor < 600:
+                progreso = ciclo_sudor / 600
+                gota_x = centro_x + lado_cabeza * 0.58 * lado_sien
+                gota_y = cabeza_y + lado_cabeza * (0.08 + 0.7 * progreso)
+                tam_gota = p if progreso < 0.85 else max(1, p - 1)
+                self._bloque_contorneado(
+                    superficie, gota_x - tam_gota // 2, gota_y, tam_gota, tam_gota, color_ojo, color_trazo
+                )
+
+    def _pintar_cara(
+        self, superficie, centro_x, cabeza_y, lado_cabeza, color_trazo, color_ojo,
+        tam_ojo, pupila_dx, pupila_dy, parpadeo, en_aire, ticks,
+    ):
+        """Pinta ojos, ojeras, cejas y boca (todo menos la gota de sudor).
+        Recibe ya resueltos los datos de la expresión que calcula
+        ``_dibujar_cara``; no lee nada que cambie sin que cambie la clave
+        de caché, salvo los indicadores de estado que forman parte de ella."""
+        p = self.pixel
+        euf = self._euforico
+        separacion_ojo = lado_cabeza * 0.34
+        ojo_y = cabeza_y + lado_cabeza * 0.40
+
+        if parpadeo:
             for lado in (-1, 1):
                 x = centro_x + lado * separacion_ojo
                 self._bloque(superficie, x - p, ojo_y + p, p * 2, p, color_trazo)
@@ -1547,19 +1666,6 @@ class PersonajeHumanoide:
                     self._bloque(superficie, ex, ey - p * 2 - subida, tam_ojo, p, color_trazo)
                     extremo = ex + (tam_ojo - p if lado > 0 else 0)
                     self._bloque(superficie, extremo, ey - p * 3 - subida, p, p, color_trazo)
-
-        if self.desesperado:
-            # Gota de sudor cayendo por la sien (ciclo de ~0.9 s).
-            lado_sien = 1 if self.direccion >= 0 else -1
-            ciclo_sudor = pygame.time.get_ticks() % 900
-            if ciclo_sudor < 600:
-                progreso = ciclo_sudor / 600
-                gota_x = centro_x + lado_cabeza * 0.58 * lado_sien
-                gota_y = cabeza_y + lado_cabeza * (0.08 + 0.7 * progreso)
-                tam_gota = p if progreso < 0.85 else max(1, p - 1)
-                self._bloque_contorneado(
-                    superficie, gota_x - tam_gota // 2, gota_y, tam_gota, tam_gota, color_ojo, color_trazo
-                )
 
         # Boca (todos los bloques son múltiplos del píxel base)
         boca_y = cabeza_y + lado_cabeza * 0.81

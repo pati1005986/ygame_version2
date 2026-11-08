@@ -803,6 +803,7 @@ class Juego:
             self.fuentes.boton_creditos,
             rect.center,
             (255, 255, 255),
+            ancho_max=rect.width - 20,
         )
 
     def _dibujar_partida(self, tiempo):
@@ -979,6 +980,7 @@ class Juego:
             menu.font_prompt,
             rect.center,
             (255, 255, 255),
+            ancho_max=rect.width - 20,
         )
         if hover:
             pulso = (math.sin(pygame.time.get_ticks() / 1000.0 * 4.0) + 1.0) * 0.5

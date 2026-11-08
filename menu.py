@@ -539,6 +539,42 @@ class MenuInicio:
 
         return cuerpo
 
+    def _dibujar_boton_comic(self, lienzo, rect, hover=False):
+        """Dibuja un botón en el lienzo lógico para las pantallas del juego."""
+        color = self.PALETA_BOTONES[2]
+        return self._dibujar_boton_pixel(lienzo, rect, color, hover)
+
+    def _texto_centrado(self, lienzo, contenido, fuente, centro,
+                        color=(255, 255, 255), ancho_max=None):
+        """Dibuja texto centrado, escalando las fuentes internas del menú."""
+        pixelado = fuente in self._fuentes_boton
+        fuentes = self._fuentes_boton if pixelado else (fuente,)
+        factor = self.px if pixelado else 1
+
+        imagen = borde = None
+        for candidata in fuentes:
+            imagen = candidata.render(contenido, False, color)
+            borde = candidata.render(contenido, False, self.COLOR_TINTA)
+            if factor > 1:
+                tamano = (imagen.get_width() * factor, imagen.get_height() * factor)
+                imagen = pygame.transform.scale(imagen, tamano)
+                borde = pygame.transform.scale(borde, tamano)
+            if ancho_max is None or imagen.get_width() <= ancho_max:
+                break
+
+        if ancho_max is not None and imagen.get_width() > ancho_max:
+            alto = max(1, round(imagen.get_height() * ancho_max / imagen.get_width()))
+            tamano = (ancho_max, alto)
+            imagen = pygame.transform.scale(imagen, tamano)
+            borde = pygame.transform.scale(borde, tamano)
+
+        rect = imagen.get_rect(center=centro)
+        grosor = max(1, self.px) if pixelado else 1
+        for dx, dy in ((-grosor, 0), (grosor, 0), (0, -grosor), (0, grosor)):
+            lienzo.blit(borde, rect.move(dx, dy))
+        lienzo.blit(imagen, rect)
+        return rect
+
     def _dibujar_flecha(self, lienzo, cuerpo):
         """Flecha hacia abajo que rebota sobre el botón seleccionado."""
         rebote = int(self.reloj_pulso * 4) % 2

@@ -6,6 +6,7 @@ import random
 import pygame
 
 from idioma import alternar_idioma, texto
+from ui_pixel import FormasPixel, UIPixel
 
 
 class MenuOpciones:
@@ -102,6 +103,10 @@ class MenuOpciones:
             self.configuracion["resolucion"] = validas[0]
         self.tecla_esperada = None
         self._tiempo = 0.0
+        self.ui = UIPixel()
+        self.ui_texto = UIPixel(px=1, antialias=True)
+        self._contador_boton = 0
+        self._ctx_texto = (None, 10)
         self._crear_fuentes()
         self._crear_rectangulos()
         self._formas_abstractas = self._generar_formas_abstractas()
@@ -154,15 +159,16 @@ class MenuOpciones:
         escala_ui = self.configuracion.get("escala_ui", 1.0)
         return base * escala_ui
 
+    # Tamaño de pixel base de esta pantalla: los botones son bajos, así que
+    # usa una rejilla más fina (2) que el menú principal (3).
+    PIXEL_BASE_UI = 2
+
     def _crear_fuentes(self):
-        escala = self._escala()
-        self.fuente_titulo = pygame.font.SysFont(
-            "comicsansms", max(22, int(44 * escala)), bold=True
-        )
-        self.fuente = pygame.font.SysFont("comicsansms", max(12, int(22 * escala)), bold=True)
-        self.fuente_pequena = pygame.font.SysFont(
-            "comicsansms", max(10, int(18 * escala)), bold=True
-        )
+        """Calcula tamaños físicos de texto a partir de la escala visual."""
+        self.ui.establecer_px(UIPixel.px_para(self._escala(), self.PIXEL_BASE_UI))
+        self.fuente_titulo = 18 * self.ui.px
+        self.fuente = 9 * self.ui.px
+        self.fuente_pequena = 8 * self.ui.px
 
     def _crear_rectangulos(self):
         """Calcula todas las filas de opciones como fracción del alto
@@ -180,7 +186,7 @@ class MenuOpciones:
         margen_inferior = max(8, int(self.alto * 0.03))
         y_botones_inferiores = self.alto - alto_boton_inferior - margen_inferior
 
-        y_inicio_filas = self.titulo_y + int(self.fuente_titulo.get_height() * 0.9)
+        y_inicio_filas = self.titulo_y + int(self.fuente_titulo * 1.25 * 0.9)
         y_fin_filas = y_botones_inferiores - margen_inferior
         alto_disponible = max(1, y_fin_filas - y_inicio_filas)
 
@@ -249,231 +255,47 @@ class MenuOpciones:
     # ---------- arte abstracto de fondo ----------
 
     def _generar_formas_abstractas(self):
-        """Genera una composicion fija (semilla estable) de formas geometricas
-        flotantes, tipo collage de arte abstracto."""
-        aleatorio = random.Random(f"opciones-{self.ancho}x{self.alto}")
-        tipos = ("circulo", "triangulo", "cuadrado", "linea")
-        formas = []
-        for _ in range(14):
-            formas.append(
-                {
-                    "tipo": aleatorio.choice(tipos),
-                    "x": aleatorio.uniform(0, self.ancho),
-                    "y": aleatorio.uniform(0, self.alto),
-                    "tam": aleatorio.uniform(40, 140),
-                    "color": aleatorio.choice(self.COLORES_ABSTRACTOS),
-                    "velocidad": aleatorio.uniform(0.2, 0.6),
-                    "fase": aleatorio.uniform(0, math.tau),
-                    "rotacion": aleatorio.uniform(0, 360),
-                    "vel_rotacion": aleatorio.uniform(-15, 15),
-                }
-            )
-        return formas
+        return FormasPixel(
+            self.ui, self.ancho, self.alto, self.COLORES_ABSTRACTOS,
+            f"opciones-{self.ancho}x{self.alto}", cantidad=14,
+        )
 
     def _dibujar_formas_abstractas(self, superficie):
-        for forma in self._formas_abstractas:
-            tam = forma["tam"]
-            offset_x = math.cos(self._tiempo * forma["velocidad"] + forma["fase"]) * 16
-            offset_y = math.sin(self._tiempo * forma["velocidad"] * 0.8 + forma["fase"]) * 16
-            angulo = forma["rotacion"] + self._tiempo * forma["vel_rotacion"]
-
-            lienzo = pygame.Surface((tam * 2.2, tam * 2.2), pygame.SRCALPHA)
-            centro_lienzo = (lienzo.get_width() // 2, lienzo.get_height() // 2)
-
-            if forma["tipo"] == "circulo":
-                pygame.draw.circle(lienzo, forma["color"], centro_lienzo, tam / 2)
-            elif forma["tipo"] == "cuadrado":
-                rect = pygame.Rect(0, 0, tam, tam)
-                rect.center = centro_lienzo
-                pygame.draw.rect(lienzo, forma["color"], rect, border_radius=12)
-            elif forma["tipo"] == "triangulo":
-                r = tam / 2
-                puntos = [
-                    (centro_lienzo[0], centro_lienzo[1] - r),
-                    (centro_lienzo[0] - r, centro_lienzo[1] + r),
-                    (centro_lienzo[0] + r, centro_lienzo[1] + r),
-                ]
-                pygame.draw.polygon(lienzo, forma["color"], puntos)
-            else:  # linea gruesa tipo trazo de pincel
-                pygame.draw.line(
-                    lienzo,
-                    forma["color"],
-                    (centro_lienzo[0] - tam / 2, centro_lienzo[1]),
-                    (centro_lienzo[0] + tam / 2, centro_lienzo[1]),
-                    max(6, int(tam / 8)),
-                )
-
-            lienzo_rotado = pygame.transform.rotate(lienzo, angulo)
-            destino = lienzo_rotado.get_rect(
-                center=(forma["x"] + offset_x, forma["y"] + offset_y)
-            )
-            superficie.blit(lienzo_rotado, destino)
+        self._formas_abstractas.dibujar(superficie, self._tiempo)
 
     # ---------- utilidades de dibujo "caricaturesco" ----------
 
-    def _texto_contorno(self, superficie, contenido, fuente, centro, color_relleno, color_contorno, grosor=3):
-        base = fuente.render(contenido, True, color_contorno)
-        for dx in range(-grosor, grosor + 1):
-            for dy in range(-grosor, grosor + 1):
-                if dx == 0 and dy == 0:
-                    continue
-                if dx * dx + dy * dy > grosor * grosor:
-                    continue
-                rect = base.get_rect(center=(centro[0] + dx, centro[1] + dy))
-                superficie.blit(base, rect)
-        relleno = fuente.render(contenido, True, color_relleno)
-        superficie.blit(relleno, relleno.get_rect(center=centro))
+    def _texto_contorno(self, superficie, contenido, tam, centro, color_relleno, color_contorno=None, grosor=None):
+        """Dibuja texto suavizado con contorno; ``tam`` se expresa en pixeles."""
+        self.ui_texto.texto(superficie, contenido.upper(), centro, color_relleno, tam)
 
-    def _texto_centrado(self, superficie, contenido, fuente, centro, color=(255, 255, 255)):
-        sombra = fuente.render(contenido, True, self.COLOR_TINTA)
-        superficie.blit(sombra, sombra.get_rect(center=(centro[0] + 1, centro[1] + 1)))
-        imagen = fuente.render(contenido, True, color)
-        superficie.blit(imagen, imagen.get_rect(center=centro))
-
-    def _puntos_garabateados(self, rect, fase, semilla, amplitud=1.3, segmentos=3):
-        """Devuelve los puntos de un rectangulo con bordes "temblorosos" a
-        mano en vez de lineas perfectas: la base del estilo comic
-        independiente/fanzine, con temblor estable por boton pero vivo
-        gracias a la fase (tiempo)."""
-        aleatorio = random.Random(semilla)
-        esquinas = [
-            (rect.left, rect.top),
-            (rect.right, rect.top),
-            (rect.right, rect.bottom),
-            (rect.left, rect.bottom),
-        ]
-        puntos = []
-        for i in range(4):
-            x0, y0 = esquinas[i]
-            x1, y1 = esquinas[(i + 1) % 4]
-            fase_arista = aleatorio.uniform(0, math.tau)
-            vertical = x0 == x1
-            for s in range(segmentos):
-                t = s / segmentos
-                x = x0 + (x1 - x0) * t
-                y = y0 + (y1 - y0) * t
-                offset = math.sin(fase * 2.1 + fase_arista + t * 6.0) * amplitud
-                if vertical:
-                    x += offset
-                else:
-                    y += offset
-                puntos.append((x, y))
-        return puntos
-
-    def _rotar_punto(self, punto, centro, angulo_grados):
-        angulo = math.radians(angulo_grados)
-        dx, dy = punto[0] - centro[0], punto[1] - centro[1]
-        cos_a, sin_a = math.cos(angulo), math.sin(angulo)
-        return (centro[0] + dx * cos_a - dy * sin_a, centro[1] + dx * sin_a + dy * cos_a)
-
-    def _dibujar_relleno_halftone(self, superficie, puntos, color_base):
-        """Relleno plano tipo poster con una trama de puntos (Ben-Day) hacia
-        la esquina inferior-derecha para sugerir volumen, y un brillo
-        triangular de "sticker" en la esquina superior-izquierda."""
-        pygame.draw.polygon(superficie, color_base, puntos)
-
-        min_x = min(p[0] for p in puntos)
-        min_y = min(p[1] for p in puntos)
-        max_x = max(p[0] for p in puntos)
-        max_y = max(p[1] for p in puntos)
-        interior = pygame.Rect(min_x, min_y, max_x - min_x, max_y - min_y).inflate(-5, -5)
-        if interior.width < 6 or interior.height < 6:
-            return
-
-        color_trama = tuple(max(0, int(c * 0.6)) for c in color_base)
-        espaciado = max(5, interior.height // 5)
-        radio = max(1, espaciado * 0.26)
-        fila = 0
-        y = interior.top
-        while y < interior.bottom:
-            x = interior.left + (espaciado // 2 if fila % 2 else 0)
-            while x < interior.right:
-                if (x - interior.left) + (y - interior.top) > (interior.width + interior.height) * 0.34:
-                    pygame.draw.circle(superficie, color_trama, (int(x), int(y)), radio)
-                x += espaciado
-            y += espaciado
-            fila += 1
-
-        brillo = pygame.Surface((interior.width, interior.height), pygame.SRCALPHA)
-        puntos_brillo = [
-            (0, interior.height * 0.42),
-            (interior.width * 0.5, 0),
-            (interior.width * 0.2, 0),
-            (0, interior.height * 0.18),
-        ]
-        pygame.draw.polygon(brillo, (255, 255, 255, 75), puntos_brillo)
-        superficie.blit(brillo, interior.topleft)
-
-    def _dibujar_esquina_pelada(self, superficie, rect, hover):
-        """Pequeña esquina de sticker despegandose, para el toque
-        "alternativo" de collage de fanzine."""
-        tam = 13 if hover else 8
-        x, y = rect.right - 2, rect.top + 2
-        flap = [(x, y), (x - tam, y), (x, y + tam)]
-        pygame.draw.polygon(superficie, self.COLOR_SOMBRA_STICKER, [(p[0] + 1, p[1] + 1) for p in flap])
-        pygame.draw.polygon(superficie, self.COLOR_DORSO_STICKER, flap)
-        pygame.draw.line(superficie, self.COLOR_TINTA, (x - tam, y), (x, y + tam), 1)
-
-    def _dibujar_salpicadura(self, superficie, rect, fase):
-        """Motitas de pintura en aerosol alrededor del boton al pasar el
-        mouse, como un sticker recien pegado en una pared de fanzine."""
-        aleatorio = random.Random(f"splash-{rect.x}-{rect.y}-{int(fase * 6)}")
-        color = random.Random(f"splashcolor-{rect.x}-{rect.y}").choice(self.PALETA_BOTONES)
-        for _ in range(4):
-            angulo = aleatorio.uniform(0, math.tau)
-            distancia = aleatorio.uniform(rect.width * 0.4, rect.width * 0.6)
-            x = rect.centerx + math.cos(angulo) * distancia
-            y = rect.centery + math.sin(angulo) * distancia * 0.5
-            radio = aleatorio.uniform(1.3, 3.0)
-            pygame.draw.circle(superficie, color, (int(x), int(y)), radio)
+    def _texto_centrado(self, superficie, contenido, tam, centro, color=(255, 255, 255)):
+        """Texto dentro del último botón dibujado: se encoge si no cabe."""
+        ancho_max, tam_max = self._ctx_texto
+        self.ui_texto.texto(
+            superficie, contenido.upper(), centro, color, min(tam, tam_max),
+            ancho_max=ancho_max,
+        )
 
     def _dibujar_boton_comic(self, superficie, rect, contenido, hover=False, activo=False, radio=14):
-        """Botón estilo cómic-punk/fanzine: relleno plano con trama de
-        puntos, contorno "dibujado a mano" con temblor, sombra dura de
-        sticker despegado, y un aro cian pulsante cuando el boton esta
-        "activo" (esperando una tecla)."""
-        indice_color = (rect.x * 7 + rect.y * 13) % len(self.PALETA_BOTONES)
-        color_base = self.PALETA_BOTONES[indice_color]
-        if activo:
-            color_base = self.COLOR_BOTON_ACTIVO
-        elif hover:
-            color_base = tuple(min(255, int(c * 1.12) + 8) for c in color_base)
-
-        amplitud = 3.0 if activo else (2.6 if hover else 1.3)
-        velocidad = 3.4 if activo else (2.4 if hover else 1.0)
-        semilla = f"boton-{rect.x}-{rect.y}"
-        puntos = self._puntos_garabateados(rect, self._tiempo * velocidad, semilla, amplitud=amplitud)
-
-        elevacion = -3 if (hover or activo) else 0
-        puntos = [(x, y + elevacion) for x, y in puntos]
-
-        despl_sombra = (3, 4) if (hover or activo) else (6, 7)
-        angulo_sombra = 2.0 if (hover or activo) else 3.5
-        centro = (rect.centerx, rect.centery + elevacion)
-        puntos_sombra = [self._rotar_punto(p, centro, angulo_sombra) for p in puntos]
-        puntos_sombra = [(x + despl_sombra[0], y + despl_sombra[1]) for x, y in puntos_sombra]
-        pygame.draw.polygon(superficie, self.COLOR_SOMBRA_STICKER, puntos_sombra)
-
-        self._dibujar_relleno_halftone(superficie, puntos, color_base)
-
-        if activo:
-            # pulso cian tipo comic para indicar "esperando tecla"
-            pulso = 0.5 + 0.5 * math.sin(self._tiempo * 8.0)
-            grosor_pulso = max(2, int(rect.height * 0.1)) + int(pulso * 3)
-            pygame.draw.polygon(superficie, self.COLOR_BOTON_ACTIVO, puntos, width=grosor_pulso)
-        else:
-            pygame.draw.polygon(superficie, self.COLOR_TINTA, puntos, width=max(2, int(rect.height * 0.09)))
-
-        rect_dibujo = pygame.Rect(rect.left, rect.top + elevacion, rect.width, rect.height)
-        if rect.width >= 90 and not activo:
-            self._dibujar_esquina_pelada(superficie, rect_dibujo, hover)
-        if hover and not activo:
-            self._dibujar_salpicadura(superficie, rect_dibujo, self._tiempo)
-
+        """Botón pixel art (ver ``UIPixel.boton``). El color sale del orden de
+        dibujo, así que es estable entre fotogramas. Devuelve el rect del
+        cuerpo para centrar el texto encima."""
+        indice = self._contador_boton
+        self._contador_boton += 1
+        cuerpo = self.ui.boton(
+            superficie, rect, self.ui.color(indice), "",
+            hover=hover, activo=activo, tiempo=self._tiempo, tam=self.fuente,
+        )
+        self._ctx_texto = (
+            cuerpo.w - 4 * self.ui.px,
+            self.ui_texto.tam_para_alto(cuerpo.h, 99),
+        )
         if contenido:
-            self._texto_centrado(superficie, contenido, self.fuente, rect_dibujo.center)
-
-        return rect_dibujo
+            self._texto_centrado(
+                superficie, contenido, self.fuente, cuerpo.center
+            )
+        return cuerpo
 
     # ---------- dibujo principal ----------
 
@@ -497,6 +319,7 @@ class MenuOpciones:
 
     def dibujar(self, superficie, mouse_pos=None, dt=1 / 60):
         self._tiempo += dt
+        self._contador_boton = 0
         posicion_raton = mouse_pos if mouse_pos is not None else pygame.mouse.get_pos()
 
         superficie.fill(self.COLOR_FONDO)
@@ -508,15 +331,14 @@ class MenuOpciones:
         superficie.blit(veladura, (0, 0))
 
         idioma = self.configuracion["idioma"]
-        bamboleo = math.sin(self._tiempo * 3.0) * 3
-        self._texto_contorno(
+        self.ui_texto.titulo(
             superficie,
-            texto(idioma, "options"),
-            self.fuente_titulo,
-            (self.ancho // 2, self.titulo_y + bamboleo),
+            texto(idioma, "options").upper(),
+            (self.ancho // 2, self.titulo_y),
             self.COLOR_TITULO,
-            self.COLOR_TITULO_CONTORNO,
-            grosor=3,
+            tam=self.fuente_titulo,
+            tiempo=self._tiempo,
+            ancho_max=self.ancho - 24,
         )
 
         indice_resolucion = self.configuracion["resolucion"]
@@ -652,6 +474,8 @@ class MenuOpciones:
             hover = rect.collidepoint(posicion_raton)
             rect_dibujo = self._dibujar_boton_comic(superficie, rect, "", hover)
             self._texto_centrado(superficie, texto(idioma, clave), self.fuente, rect_dibujo.center)
+
+        self.ui.scanlines(superficie)
 
     def manejar_evento(self, evento):
         if self.tecla_esperada:

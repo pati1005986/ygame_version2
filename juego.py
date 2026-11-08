@@ -45,8 +45,6 @@ from eventos import (
 from fondo import (
     NIVEL_VISUAL_INFINITO,
     ParticulaAbstracta,
-    dibujar_fondo_infinito,
-    dibujar_fondo_segmentado,
     dibujar_fondo_segmentado_gen,
     dibujar_fondo_infinito_gen,
 )
@@ -239,16 +237,28 @@ class Juego:
             self._gen_fondo = None
 
         if self._gen_fondo is None and (
-            tiempo - self.tiempo_ultimo_fondo >= FRECUENCIA_FONDO
+            tiempo - self.tiempo_ultimo_fondo >= self.frecuencia_fondo
             or nivel_fondo != self.nivel_fondo
         ):
             self._nivel_gen = nivel_fondo
-        if self.modo_infinito:
-            self._gen_fondo = dibujar_fondo_infinito_gen(
-                self.fondo_trasero, tiempo, WIDTH, HEIGHT)
-        else:
-            self._gen_fondo = dibujar_fondo_segmentado_gen(
-                self.fondo_trasero, tiempo, self.hue_fondo, WIDTH, HEIGHT, self.nivel)
+            if self.modo_infinito:
+                self._gen_fondo = dibujar_fondo_infinito_gen(
+                    self.fondo_trasero, tiempo, WIDTH, HEIGHT
+                )
+            else:
+                self._gen_fondo = dibujar_fondo_segmentado_gen(
+                    self.fondo_trasero, tiempo, self.hue_fondo, WIDTH, HEIGHT, self.nivel
+                )
+
+            # Evita mostrar una superficie vacía al entrar por primera vez.
+            if self.nivel_fondo is None:
+                for _ in self._gen_fondo:
+                    pass
+                self.fondo_cache, self.fondo_trasero = self.fondo_trasero, self.fondo_cache
+                self.nivel_fondo = self._nivel_gen
+                self.tiempo_ultimo_fondo = tiempo
+                self._gen_fondo = None
+                return
 
         if self._gen_fondo is not None:
             try:
@@ -840,23 +850,6 @@ class Juego:
         """Nivel que usa el aspecto visual: en infinito es fijo para que el
         juego se vea igual durante toda la partida."""
         return NIVEL_VISUAL_INFINITO if self.modo_infinito else self.nivel
-
-    def _actualizar_fondo(self, tiempo):
-        # El fondo abstracto es lo más pesado de dibujar y sus formas se
-        # mueven lento: a 20 Hz sigue viéndose fluido.
-        nivel_fondo = -1 if self.modo_infinito else self.nivel  # fijo en infinito
-        if (
-            tiempo - self.tiempo_ultimo_fondo >= self.frecuencia_fondo
-            or nivel_fondo != self.nivel_fondo
-        ):
-            if self.modo_infinito:
-                dibujar_fondo_infinito(self.fondo_cache, tiempo, WIDTH, HEIGHT)
-            else:
-                dibujar_fondo_segmentado(
-                    self.fondo_cache, tiempo, self.hue_fondo, WIDTH, HEIGHT, self.nivel
-                )
-            self.nivel_fondo = nivel_fondo
-            self.tiempo_ultimo_fondo = tiempo
 
     def _componer_transicion(self, tiempo):
         # Los dos niveles se dibujan uno junto al otro y la cámara se desliza

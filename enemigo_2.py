@@ -1,9 +1,12 @@
 """Copia del jugador, en negativo y desesperada, que lo persigue.
 
 Es el mismo personaje (mismo esqueleto, gráficos y física), pero con la
-paleta invertida y la expresión de desesperación del jugador (ojos
-entornados con ojeras, sudor y temblor). Corre encorvado y de vez en
-cuando el negativo parpadea, como un fallo de imagen.
+paleta invertida y una expresión de puro terror, más exagerada que la
+desesperación del jugador: ojos desorbitados e inclinados de angustia con
+pupilas diminutas que vigilan a su alrededor, boca que tiembla o grita al
+correr, pelo erizado, gotas de sudor frío y rayitas de temblor.
+Corre encogido, tiembla de pies a cabeza y de vez en cuando el negativo
+parpadea, como un fallo de imagen.
 """
 
 import colorsys
@@ -25,7 +28,7 @@ class _EstadoTeclas:
 
 
 class _ClonNegativo(PersonajeHumanoide):
-    """El personaje con la paleta en negativo y cara de desesperación.
+    """El personaje con la paleta en negativo y cara de terror.
 
     Solo cambia lo visual: la física y las colisiones son las del jugador.
     """
@@ -56,12 +59,117 @@ class _ClonNegativo(PersonajeHumanoide):
             return (255 - base[0], 255 - base[1], 255 - base[2])
         return base
 
+    # ------------------------------------------------------------------
+    # Rostro y pelo aterrados
+    # ------------------------------------------------------------------
+    # La cabeza mide 6x6 "píxeles" (24x24). Todo el rostro se coloca en esa
+    # rejilla (columna 0-5, fila 0-5) para que encaje con el estilo del
+    # jugador. Es el mismo personaje, pero con el miedo muy marcado.
+    ESCLERA = (248, 246, 240)       # ojos siempre blancos, incluso en negativo
+    COLOR_SUDOR = (175, 222, 255)
+
     def _dibujar_cara(self, superficie, centro_x, cabeza_y, lado_cabeza, color_trazo, color_ojo):
-        # El trazo ya llega invertido (sale de ``_tono``); el blanco del ojo
-        # está fijo en el código base, así que se invierte aquí.
-        if self._negativo:
-            color_ojo = (255 - color_ojo[0], 255 - color_ojo[1], 255 - color_ojo[2])
-        super()._dibujar_cara(superficie, centro_x, cabeza_y, lado_cabeza, color_trazo, color_ojo)
+        p = self.pixel
+        if round(lado_cabeza / p) != 6:
+            # Cabeza de otro tamaño: se conserva la cara base del jugador
+            # (con el blanco del ojo invertido, como antes).
+            if self._negativo:
+                color_ojo = (255 - color_ojo[0], 255 - color_ojo[1], 255 - color_ojo[2])
+            super()._dibujar_cara(superficie, centro_x, cabeza_y, lado_cabeza, color_trazo, color_ojo)
+            return
+
+        izq = self._celda(centro_x - lado_cabeza // 2)
+        arriba = self._celda(cabeza_y)
+        ticks = pygame.time.get_ticks()
+        paso = ticks // 70
+        tinta = super()._tono(0.16)  # tinta oscura real: no se invierte
+
+        def celda(col, fila, color, ancho=1, alto=1):
+            pygame.draw.rect(
+                superficie, color,
+                (izq + col * p, arriba + fila * p, ancho * p, alto * p),
+            )
+
+        # --- Ojos desorbitados: 2x3 bloques (el jugador los lleva de 2x2) con
+        # la esquina superior externa recortada, de modo que se inclinan
+        # hacia dentro: la mirada de quien suplica. Blancos incluso en el
+        # negativo para que se vean saltones sobre la cara oscura. ---
+        ojo_izq = ((1, 1), (0, 2), (1, 2), (0, 3), (1, 3))
+        ojo_der = ((4, 1), (4, 2), (5, 2), (4, 3), (5, 3))
+        for col, fila in ojo_izq + ojo_der:
+            celda(col, fila, self.ESCLERA)
+
+        # --- Pupilas diminutas: miran hacia donde corre y, de vez en cuando,
+        # echan un vistazo atrás, como quien sabe que algo lo sigue. ---
+        sentido = self._sentido()
+        if (ticks // 350) % 4 == 3:
+            sentido = -sentido
+        if self.en_suelo:
+            mirada_y = 0
+        else:
+            mirada_y = -1 if self.vel_y < -2 else (1 if self.vel_y > 2 else 0)
+        for col_base in (0, 4):
+            col = col_base + (1 if sentido > 0 else 0)
+            fila = 2 + mirada_y
+            if fila == 1 and col in (0, 5):  # esquina recortada del ojo
+                fila = 2
+            celda(col, fila, tinta)
+
+        # --- Boca: al correr grita (abre y cierra); quieto, le tiembla ---
+        corriendo = abs(self.vel_x) > 1.5 or not self.en_suelo
+        if corriendo:
+            celda(1, 4, color_trazo, 4, 1)
+            if (paso // 2) % 2 == 0:
+                celda(2, 5, color_trazo, 2, 1)
+        elif (ticks // 90) % 2 == 0:
+            for col, fila in ((1, 4), (3, 4), (2, 5), (4, 5)):
+                celda(col, fila, color_trazo)
+        else:
+            for col, fila in ((2, 4), (4, 4), (1, 5), (3, 5)):
+                celda(col, fila, color_trazo)
+
+        # --- Sudor frío: una gota por sien, desfasadas ---
+        for lado, desfase in ((-1, 0), (1, 450)):
+            ciclo = (ticks + desfase) % 900
+            if ciclo >= 650:
+                continue
+            progreso = ciclo / 650
+            gota_x = izq - p if lado < 0 else izq + 6 * p
+            gota_y = arriba + int(progreso * 5) * p
+            alto_gota = p * 2 if progreso < 0.7 else p
+            pygame.draw.rect(superficie, tinta, (gota_x - 1, gota_y - 1, p + 2, alto_gota + 2))
+            pygame.draw.rect(superficie, self.COLOR_SUDOR, (gota_x, gota_y, p, alto_gota))
+
+        # --- Rayitas de temblor a los lados de la cabeza ---
+        cuadro = ticks // 80
+        for lado in (-1, 1):
+            for k in (0, 1):
+                if (cuadro + k + (lado > 0)) % 3 == 0:
+                    continue
+                vibra = (cuadro + k) % 2
+                col = -3 - vibra if lado < 0 else 8 + vibra
+                celda(col, 1 + 2 * k, color_trazo, 1, 2)
+
+    def _dibujar_pelo(self, superficie, centro_x, cabeza_y, color):
+        """Pelo erizado de punta: más alto y revuelto que el del jugador,
+        con los mechones vibrando."""
+        p = self.pixel
+        izq = self._celda(centro_x - 12)
+        arriba = self._celda(cabeza_y)
+        fase = pygame.time.get_ticks() // 70
+        viento = -1 if self.vel_x > 2 else (1 if self.vel_x < -2 else 0)
+        # Altura de cada una de las 6 columnas; 0 deja hueco entre mechones.
+        for col, alto_base in enumerate((3, 0, 4, 1, 3, 2)):
+            if alto_base == 0:
+                continue
+            alto = alto_base + (1 if (fase + col * 2) % 5 == 0 else 0)
+            for nivel in range(alto):
+                # Al correr, las puntas se echan hacia atrás.
+                desvio = viento if nivel >= 2 else 0
+                pygame.draw.rect(
+                    superficie, color,
+                    (izq + (col + desvio) * p, arriba - (nivel + 1) * p, p, p),
+                )
 
     # ------------------------------------------------------------------
     # Lógica visual por fotograma
@@ -76,9 +184,10 @@ class _ClonNegativo(PersonajeHumanoide):
                 estela_viva.append((imagen, ancla, vida))
         self._estela_ecos = estela_viva
 
-        # Postura encorvada al correr; erguido en reposo y en el aire.
+        # Postura encogida de miedo: muy encorvado al correr y, aun quieto,
+        # con las rodillas flexionadas.
         caminando = abs(self.vel_x) > 0.4 and self.en_suelo
-        self._encorvado = self._lerp(self._encorvado, 0.35 if caminando else 0.0, 0.2)
+        self._encorvado = self._lerp(self._encorvado, 0.4 if caminando else 0.2, 0.2)
 
         # Parpadeo del negativo: unos pocos cuadros con los colores
         # originales y un pequeño tirón lateral.
@@ -111,6 +220,7 @@ class _ClonNegativo(PersonajeHumanoide):
             self.pose_aire,
             self.amplitud_paso,
             self.tiempo_animacion,
+            self.balanceo_actual,
         )
         sentido = self._sentido()
         try:
@@ -131,6 +241,10 @@ class _ClonNegativo(PersonajeHumanoide):
                 )
                 self.amplitud_paso = max(self.amplitud_paso, 0.55)
                 self.tiempo_animacion = self._fase_trepamiento
+            # Tiritona: los brazos (y algo las piernas) se sacuden en
+            # contrafase unas 9 veces por segundo.
+            temblor = 3 if self.amplitud_paso < 0.3 else 2
+            self.balanceo_actual += temblor if (pygame.time.get_ticks() // 55) % 2 else -temblor
             self.rect.x += self._glitch_dx
             clip_original = superficie.get_clip()
             if self._progreso_reaparicion < 1.0:
@@ -172,6 +286,7 @@ class _ClonNegativo(PersonajeHumanoide):
                 self.pose_aire,
                 self.amplitud_paso,
                 self.tiempo_animacion,
+                self.balanceo_actual,
             ) = guardado
 
 

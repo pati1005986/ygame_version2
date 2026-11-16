@@ -38,7 +38,6 @@ class Presentador:
     def __init__(self, ancho, alto, resolucion, flags=0):
         self.screen = pygame.display.set_mode(resolucion, flags)
         self.lienzo = pygame.Surface((ancho, alto))
-        self._escalada = None
 
     def presentar(self):
         tamano_pantalla = self.screen.get_size()
@@ -46,13 +45,9 @@ class Presentador:
             self.screen.blit(self.lienzo, (0, 0))
             return
 
-        if self._escalada is None or self._escalada.get_size() != tamano_pantalla:
-            self._escalada = pygame.Surface(tamano_pantalla).convert()
-        # ``scale`` es notablemente más rápido que ``smoothscale`` y para el
-        # estilo pixel-art/caricaturesco del juego la diferencia visual es
-        # mínima. Esta operación corre 60 veces por segundo.
-        pygame.transform.scale(self.lienzo, tamano_pantalla, self._escalada)
-        self.screen.blit(self._escalada, (0, 0))
+        # Escala directamente a la ventana: evita crear/copiar una superficie
+        # intermedia y conserva los bordes nítidos del estilo del juego.
+        pygame.transform.scale(self.lienzo, tamano_pantalla, self.screen)
 
     def posicion_raton_logica(self):
         """Posición del ratón convertida a coordenadas del lienzo lógico."""

@@ -12,11 +12,64 @@ parpadea, como un fallo de imagen.
 import colorsys
 import math
 import random
+from array import array
 
 import pygame
 
 from constantes import HEIGHT
 from personaje import PersonajeHumanoide
+
+
+_CACHE_SONIDOS_AMENAZANTES = {}
+
+
+def _crear_sonidos_amenazantes():
+    """Genera un zumbido grave y un rugido breve según el formato del mixer."""
+    formato = pygame.mixer.get_init()
+    if not formato or formato[1] != -16:
+        return None, None
+    if formato in _CACHE_SONIDOS_AMENAZANTES:
+        return _CACHE_SONIDOS_AMENAZANTES[formato]
+
+    frecuencia_muestreo, _, canales = formato
+    zumbido = array("h")
+    cantidad = frecuencia_muestreo * 2
+    for indice in range(cantidad):
+        tiempo = indice / frecuencia_muestreo
+        modulacion = 0.72 + 0.13 * math.cos(math.tau * 0.5 * tiempo)
+        onda = (
+            0.58 * math.sin(math.tau * 54 * tiempo)
+            + 0.27 * math.sin(math.tau * 57 * tiempo)
+            + 0.15 * math.sin(math.tau * 108 * tiempo)
+        )
+        muestra = round(5000 * modulacion * onda)
+        zumbido.extend([muestra] * canales)
+
+    rugido = array("h")
+    generador = random.Random(217)
+    fase = 0.0
+    ruido_filtrado = 0.0
+    cantidad = round(frecuencia_muestreo * 0.9)
+    for indice in range(cantidad):
+        progreso = indice / cantidad
+        envolvente = math.sin(math.pi * progreso) ** 0.8
+        frecuencia = 92 - 48 * progreso
+        fase += math.tau * frecuencia / frecuencia_muestreo
+        ruido_filtrado = ruido_filtrado * 0.92 + generador.uniform(-1, 1) * 0.08
+        onda = (
+            0.65 * math.sin(fase)
+            + 0.22 * math.sin(fase * 2.03)
+            + 0.18 * ruido_filtrado
+        )
+        muestra = round(13500 * envolvente * onda)
+        rugido.extend([muestra] * canales)
+
+    sonidos = (
+        pygame.mixer.Sound(buffer=zumbido.tobytes()),
+        pygame.mixer.Sound(buffer=rugido.tobytes()),
+    )
+    _CACHE_SONIDOS_AMENAZANTES[formato] = sonidos
+    return sonidos
 
 
 class _EstadoTeclas:
@@ -311,6 +364,11 @@ class PerseguidorSepia:
         self.personaje = _ClonNegativo(
             x, y, self.COLOR_SEPIA, volumen_efectos=0.0
         )
+        self.volumen_efectos = 0.0
+        self._sonido_ambiente, self._sonido_rugido = _crear_sonidos_amenazantes()
+        self._canal_ambiente = None
+        self._canal_rugido = None
+        self._proximo_rugido = pygame.time.get_ticks() + random.randint(2500, 5000)
         self.personaje.dash_habilitado = False
         self.activa = True
         self._manteniendo_salto = False
@@ -356,6 +414,9 @@ class PerseguidorSepia:
         desquiciada y anularía la expresión de desesperación del clon.
         """
         clon = self.personaje
+        self.ajustar_volumen_efectos(
+            getattr(jugador, "volumen_efectos", self.volumen_efectos)
+        )
         factor_persecucion = (
             0.82 if getattr(jugador, "potenciador_infinito", False) else 1.0
         )
@@ -377,6 +438,53 @@ class PerseguidorSepia:
             clon.color = tuple(color[:3])
             clon._halo_personaje = None
             clon._silueta_color = None
+
+    def ajustar_volumen_efectos(self, volumen):
+        """Respeta el control general de efectos de sonido."""
+        self.volumen_efectos = max(0.0, min(1.0, float(volumen)))
+        if self.volumen_efectos == 0:
+            self.detener_audio()
+
+    def detener_audio(self):
+        """Detiene los sonidos propios al cambiar de nivel o acabar la partida."""
+        for canal in (self._canal_ambiente, self._canal_rugido):
+            if canal is not None:
+                canal.stop()
+        self._canal_ambiente = None
+        self._canal_rugido = None
+
+    def _actualizar_audio(self, objetivo):
+        if self._sonido_ambiente is None or self.volumen_efectos <= 0:
+            return
+
+        distancia = math.hypot(
+            self.rect.centerx - objetivo.centerx,
+            self.rect.centery - objetivo.centery,
+        )
+        proximidad = max(0.0, 1.0 - distancia / 520)
+        if proximidad <= 0:
+            if self._canal_ambiente is not None:
+                self._canal_ambiente.stop()
+                self._canal_ambiente = None
+            return
+
+        if self._canal_ambiente is None or not self._canal_ambiente.get_busy():
+            self._canal_ambiente = self._sonido_ambiente.play(loops=-1)
+        intensidad = proximidad ** 1.5
+        self._canal_ambiente.set_volume(0.32 * self.volumen_efectos * intensidad)
+
+        ahora = pygame.time.get_ticks()
+        if (
+            distancia < 360
+            and ahora >= self._proximo_rugido
+            and self._sonido_rugido is not None
+            and (self._canal_rugido is None or not self._canal_rugido.get_busy())
+        ):
+            self._sonido_rugido.set_volume(
+                0.5 * self.volumen_efectos * intensidad
+            )
+            self._canal_rugido = self._sonido_rugido.play()
+            self._proximo_rugido = ahora + random.randint(4500, 8000)
 
     def _plataforma_siguiente(self, plataformas, direccion, objetivo):
         actual = self.personaje.plataforma_actual
@@ -423,6 +531,7 @@ class PerseguidorSepia:
     def mover(self, plataformas, objetivo):
         if not self.activa:
             return
+        self._actualizar_audio(objetivo)
 
         if self._jugador_agarrado is not None:
             jugador = self._jugador_agarrado
@@ -598,6 +707,7 @@ class PerseguidorSepia:
         jugador.pesado = not modo_infinito
         self.personaje.vel_x = 0.0
         self.personaje.vel_y = 0
+        self._proximo_rugido = pygame.time.get_ticks()
         return True
 
     def soltar_jugador(self):
@@ -609,6 +719,7 @@ class PerseguidorSepia:
         self.agarre_expirado = False
         self._agarre_modo_infinito = False
         self.personaje._trepamiento_progreso = 1.0
+        self.detener_audio()
 
     def derrotar(self, direccion):
         if not self.activa:
@@ -616,6 +727,7 @@ class PerseguidorSepia:
         if self._jugador_agarrado is not None:
             return False
         self.activa = False
+        self.detener_audio()
         return True
 
     def dibujar(self, superficie, tiempo):

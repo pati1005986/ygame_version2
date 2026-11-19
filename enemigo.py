@@ -34,8 +34,48 @@ Diseño y mirada:
 
 import math
 import random
+from array import array
 
 import pygame
+
+
+_CACHE_GRUNIDOS = {}
+
+
+def _crear_grunidos():
+    """Genera dos gruñidos ásperos compatibles con el formato del mixer."""
+    formato = pygame.mixer.get_init()
+    if not formato or formato[1] != -16:
+        return ()
+    if formato in _CACHE_GRUNIDOS:
+        return _CACHE_GRUNIDOS[formato]
+
+    frecuencia_muestreo, _, canales = formato
+    sonidos = []
+    for semilla, tono_base in ((19, 76), (43, 91)):
+        rng = random.Random(semilla)
+        muestras = array("h")
+        fase = 0.0
+        ruido_filtrado = 0.0
+        cantidad = round(frecuencia_muestreo * 0.48)
+        for indice in range(cantidad):
+            progreso = indice / cantidad
+            envolvente = math.sin(math.pi * progreso) ** 0.75
+            tono = tono_base - 24 * progreso + 4 * math.sin(progreso * math.tau * 2)
+            fase += math.tau * tono / frecuencia_muestreo
+            ruido_filtrado = ruido_filtrado * 0.88 + rng.uniform(-1, 1) * 0.12
+            onda = (
+                0.55 * math.sin(fase)
+                + 0.28 * math.sin(2.07 * fase + 0.3)
+                + 0.17 * ruido_filtrado
+            )
+            muestra = round(15000 * envolvente * onda)
+            muestras.extend([muestra] * canales)
+        sonidos.append(pygame.mixer.Sound(buffer=muestras.tobytes()))
+
+    _CACHE_GRUNIDOS[formato] = tuple(sonidos)
+    return _CACHE_GRUNIDOS[formato]
+
 
 PATRULLA = "patrulla"
 ESPERA = "espera"
@@ -78,6 +118,10 @@ class EntidadGris:
         self.fase = random.uniform(0, math.tau)
         self.activa = True
         self.derrotado = False
+        self.volumen_efectos = 0.0
+        self._sonidos_grunido = _crear_grunidos()
+        self._canal_grunido = None
+        self._proximo_grunido = pygame.time.get_ticks() + random.randint(2400, 4800)
         self.reloj = 0
         self._semilla = random.randrange(1_000_000)
 
@@ -132,6 +176,27 @@ class EntidadGris:
         """0.0-1.0 según cercanía al jugador (para viñeta, temblor, sonido)."""
         return self.intensidad_alerta
 
+    def ajustar_volumen_efectos(self, volumen):
+        """Ajusta los gruñidos al volumen general de efectos del juego."""
+        self.volumen_efectos = max(0.0, min(1.0, float(volumen)))
+        if self._canal_grunido is not None:
+            if self.volumen_efectos == 0:
+                self._canal_grunido.stop()
+                self._canal_grunido = None
+            else:
+                self._canal_grunido.set_volume(self.volumen_efectos * 0.48)
+
+    def _grunir(self):
+        if (
+            not self._sonidos_grunido
+            or self.volumen_efectos <= 0
+            or (self._canal_grunido is not None and self._canal_grunido.get_busy())
+        ):
+            return
+        sonido = random.choice(self._sonidos_grunido)
+        sonido.set_volume(self.volumen_efectos * random.uniform(0.38, 0.55))
+        self._canal_grunido = sonido.play()
+
     def esta_persiguiendo(self):
         return self.alerta
 
@@ -143,6 +208,9 @@ class EntidadGris:
         self.estado = PATRULLA
         self.sospecha = 0.0
         self.intensidad_alerta = 0.0
+        if self._canal_grunido is not None:
+            self._canal_grunido.stop()
+            self._canal_grunido = None
         self.vel_x = 8.0 * (1 if direccion >= 0 else -1)
         self.vel_y = -9.0
         self._resto_x = 0.0
@@ -242,6 +310,7 @@ class EntidadGris:
             if anterior != BUSQUEDA:
                 self.cuadros_exclamacion = 30
             self.cuadros_memoria = self.tiempo_memoria
+            self._grunir()
         elif nuevo == PATRULLA:
             self.sospecha = 0.0
 
@@ -393,6 +462,10 @@ class EntidadGris:
         # 2. cognición
         if objetivo_rect is not None:
             self._pensar(ve, oye, objetivo_rect, dx_real)
+            ahora = pygame.time.get_ticks()
+            if self.estado == PERSECUCION and ahora >= self._proximo_grunido:
+                self._grunir()
+                self._proximo_grunido = ahora + random.randint(2800, 5200)
             rango_aviso = max(self.rango_deteccion, self.distancia_alerta_maxima + 1)
             crudo = (rango_aviso - distancia) / (rango_aviso - self.distancia_alerta_maxima)
             self.intensidad_alerta = max(0.0, min(1.0, crudo))

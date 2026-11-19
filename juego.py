@@ -582,6 +582,9 @@ class Juego:
 
     def _mover_enemigos(self):
         for entidad in self.entidades:
+            ajustar_volumen = getattr(entidad, "ajustar_volumen_efectos", None)
+            if callable(ajustar_volumen):
+                ajustar_volumen(self.configuracion["volumen_efectos"])
             if hasattr(entidad, "sincronizar_jugador"):
                 entidad.sincronizar_jugador(self.jugador)
             entidad.mover(self.plataformas, self.jugador.rect)
